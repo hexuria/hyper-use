@@ -1,0 +1,196 @@
+use std::collections::HashMap;
+
+use hyper_use_core::{tokenize, InteractionManifold, InteractionRegion, Relation};
+use hyper_use_geometry::{normalize, size_class, spatial_relations, zones};
+use hyper_use_hyper::{bind, bundle, permute, relation_shift, BipolarVector, Encoder};
+
+use crate::error::ResonanceError;
+
+const ROLE_WEIGHT: f64 = 2.0;
+const LABEL_WEIGHT: f64 = 3.0;
+const POSITION_WEIGHT: f64 = 2.0;
+const SHAPE_WEIGHT: f64 = 1.0;
+const ACTION_WEIGHT: f64 = 1.0;
+const PARENT_WEIGHT: f64 = 1.0;
+const NEIGHBOR_WEIGHT: f64 = 0.25;
+const STATE_WEIGHT: f64 = 0.5;
+const SOURCE_WEIGHT: f64 = 0.5;
+
+pub(crate) struct Memory<'a> {
+    encoder: &'a Encoder,
+    cache: HashMap<(String, String), BipolarVector>,
+}
+
+impl<'a> Memory<'a> {
+    pub(crate) fn new(encoder: &'a Encoder) -> Self {
+        Self {
+            encoder,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn symbol(&mut self, namespace: &str, symbol: &str) -> Result<BipolarVector, ResonanceError> {
+        let key = (namespace.to_owned(), symbol.to_owned());
+        if let Some(hit) = self.cache.get(&key) {
+            return Ok(hit.clone());
+        }
+        let encoded = self.encoder.encode(namespace, symbol)?;
+        self.cache.insert(key, encoded.clone());
+        Ok(encoded)
+    }
+
+    fn bound(
+        &mut self,
+        key: &str,
+        value_namespace: &str,
+        value: &str,
+    ) -> Result<BipolarVector, ResonanceError> {
+        let key_vec = self.symbol("key", key)?;
+        let value_vec = self.symbol(value_namespace, value)?;
+        Ok(bind(&key_vec, &value_vec)?)
+    }
+}
+
+/// Compose a region signature.
+///
+/// The bundle, in order, is:
+/// role, label tokens, position zones, shape, actions, parent (permuted),
+/// neighborhood relations (permuted, excluding the parent id), content state,
+/// and source bits.
+///
+/// Penalty flags are intentionally absent. They are applied later as
+/// subtractions so a disabled control does not hide inside the hypervector.
+pub(crate) fn region_signature(
+    manifold: &InteractionManifold,
+    region: &InteractionRegion,
+    memory: &mut Memory<'_>,
+) -> Result<BipolarVector, ResonanceError> {
+    let mut parts = Vec::new();
+    parts.push((
+        memory.bound("role", "role", region.role().as_str())?,
+        ROLE_WEIGHT,
+    ));
+    for token in tokenize(region.label()) {
+        parts.push((memory.bound("label", "label", &token)?, LABEL_WEIGHT));
+    }
+    let normalized = normalize(region.rect(), manifold.viewport())?;
+    for zone in zones(normalized) {
+        parts.push((
+            memory.bound("position", "position", zone.as_str())?,
+            POSITION_WEIGHT,
+        ));
+    }
+    parts.push((
+        memory.bound("shape", "shape", size_class(normalized).as_str())?,
+        SHAPE_WEIGHT,
+    ));
+    for action in region.actions() {
+        parts.push((
+            memory.bound("action", "action", action.as_str())?,
+            ACTION_WEIGHT,
+        ));
+    }
+    if let Some(parent_id) = region.parent() {
+        if let Some(parent) = manifold.get(parent_id) {
+            push_permuted(
+                &mut parts,
+                memory,
+                "parent",
+                parent.role().as_str(),
+                PARENT_WEIGHT,
+            )?;
+            for token in tokenize(parent.label()) {
+                push_permuted(&mut parts, memory, "parent", &token, PARENT_WEIGHT)?;
+            }
+        }
+    }
+    for other in manifold.regions() {
+        if other.id() == region.id() || Some(other.id()) == region.parent() {
+            continue;
+        }
+        let other_norm = normalize(other.rect(), manifold.viewport())?;
+        for relation in spatial_relations(normalized, other_norm) {
+            if !is_neighborhood(relation) {
+                continue;
+            }
+            push_permuted(
+                &mut parts,
+                memory,
+                relation.as_str(),
+                other.role().as_str(),
+                NEIGHBOR_WEIGHT,
+            )?;
+        }
+    }
+    let (x, y, w, h) = region.rect().quantize_milli();
+    let state = format!(
+        "{}|{}|{x}|{y}|{w}|{h}",
+        region.role().as_str(),
+        region.label()
+    );
+    parts.push((memory.bound("state", "state", &state)?, STATE_WEIGHT));
+    for source in region.sources().iter() {
+        let name = source_name(source.bits());
+        parts.push((memory.bound("source", "source", name)?, SOURCE_WEIGHT));
+    }
+    Ok(bundle(&parts)?)
+}
+
+fn is_neighborhood(relation: Relation) -> bool {
+    matches!(
+        relation,
+        Relation::Near
+            | Relation::Above
+            | Relation::Below
+            | Relation::AlignedX
+            | Relation::AlignedY
+            | Relation::Overlaps
+    )
+}
+
+fn push_permuted(
+    parts: &mut Vec<(BipolarVector, f64)>,
+    memory: &mut Memory<'_>,
+    relation: &str,
+    filler_symbol: &str,
+    weight: f64,
+) -> Result<(), ResonanceError> {
+    let shift = relation_shift(relation, memory.encoder.dims());
+    let filler = memory.symbol("filler", filler_symbol)?;
+    let permuted = permute(&filler, shift);
+    let relation_vec = memory.symbol("relation", relation)?;
+    parts.push((bind(&relation_vec, &permuted)?, weight));
+    Ok(())
+}
+
+pub(crate) fn query_probes(
+    query: &hyper_use_core::LocateQuery,
+    memory: &mut Memory<'_>,
+) -> Result<Vec<BipolarVector>, ResonanceError> {
+    let mut probes = Vec::new();
+    if let Some(role) = query.role_ref() {
+        probes.push(memory.bound("role", "role", role.as_str())?);
+    }
+    if let Some(text) = query.text_ref() {
+        for token in tokenize(text) {
+            probes.push(memory.bound("label", "label", &token)?);
+        }
+    }
+    if let Some(zone) = query.position_ref() {
+        probes.push(memory.bound("position", "position", zone.as_str())?);
+    }
+    if let Some(action) = query.action_ref() {
+        probes.push(memory.bound("action", "action", action.as_str())?);
+    }
+    Ok(probes)
+}
+
+fn source_name(bits: u8) -> &'static str {
+    match bits {
+        0b0001 => "dom",
+        0b0010 => "accessibility",
+        0b0100 => "screenshot",
+        0b1000 => "cua",
+        _ => "unknown",
+    }
+}

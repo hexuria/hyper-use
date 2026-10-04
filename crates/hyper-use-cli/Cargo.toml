@@ -1,0 +1,21 @@
+[package]
+name = "hyper-use-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "hyper-use command line"
+
+[dependencies]
+hyper-use-core = { path = "../hyper-use-core" }
+hyper-use-hyper = { path = "../hyper-use-hyper" }
+hyper-use-resonance = { path = "../hyper-use-resonance" }
+
+[lib]
+name = "hyper_use_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hyper-use"
+path = "src/main.rs"

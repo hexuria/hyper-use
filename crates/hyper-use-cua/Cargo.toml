@@ -1,0 +1,10 @@
+[package]
+name = "hyper-use-cua"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Computer-use pixel surface. Phase 1 does not capture or click the screen."
+
+[dependencies]

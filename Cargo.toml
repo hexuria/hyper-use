@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hyper-use-core",
+    "crates/hyper-use-geometry",
+    "crates/hyper-use-hyper",
+    "crates/hyper-use-observe",
+    "crates/hyper-use-resonance",
+    "crates/hyper-use-browser",
+    "crates/hyper-use-macos",
+    "crates/hyper-use-cua",
+    "crates/hyper-use-executor",
+    "crates/hyper-use-protocol",
+    "crates/hyper-use-mcp",
+    "crates/hyper-use-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+rust-version = "1.99"

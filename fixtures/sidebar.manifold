@@ -1,0 +1,15 @@
+# hyper-use manifold fixture v1
+# Left nav Settings, Profile below it, Help above it, a duplicate Settings
+# on the right, and controls that should be penalized.
+viewport w=1440 h=900
+
+region id=nav role=navigation label="Sidebar" x=0 y=0 w=240 h=900 actions=scroll sources=dom,accessibility
+region id=main role=generic label="Content" x=240 y=0 w=1200 h=900 sources=dom,accessibility
+region id=nav-help role=button label="Help" x=16 y=80 w=200 h=36 actions=click parent=nav sources=dom,accessibility
+region id=nav-settings role=button label="Settings" x=16 y=180 w=200 h=36 actions=click parent=nav sources=dom,accessibility
+region id=nav-profile role=button label="Profile" x=16 y=230 w=200 h=36 actions=click parent=nav sources=dom,accessibility
+region id=nav-disabled role=button label="Export" x=16 y=400 w=200 h=36 actions=click parent=nav sources=dom,accessibility flags=disabled
+region id=nav-hidden role=button label="Admin" x=16 y=460 w=200 h=36 actions=click parent=nav sources=dom flags=hidden
+region id=offscreen-undo role=button label="Undo" x=16 y=1100 w=200 h=36 actions=click sources=screenshot flags=offscreen
+region id=zero-ghost role=button label="Ghost" x=16 y=520 w=0 h=0 actions=click parent=nav sources=dom
+region id=main-settings role=button label="Settings" x=980 y=180 w=160 h=36 actions=click parent=main sources=dom,accessibility

@@ -1,0 +1,11 @@
+[package]
+name = "hyper-use-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "MCP tool names for hyper-use (no server runtime in phase 1)"
+
+[dependencies]
+hyper-use-protocol = { path = "../hyper-use-protocol" }

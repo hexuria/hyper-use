@@ -1,0 +1,14 @@
+[package]
+name = "hyper-use-executor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Action executor trait and backend policy order"
+
+[dependencies]
+hyper-use-core = { path = "../hyper-use-core" }
+hyper-use-browser = { path = "../hyper-use-browser" }
+hyper-use-macos = { path = "../hyper-use-macos" }
+hyper-use-cua = { path = "../hyper-use-cua" }

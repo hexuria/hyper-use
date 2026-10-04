@@ -1,0 +1,10 @@
+[package]
+name = "hyper-use-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Browser observation surface. Phase 1 does not open a CDP connection."
+
+[dependencies]

@@ -427,6 +427,66 @@ mod tests {
     }
 
     #[test]
+    fn region_id_persists_across_a_move_an_enabled_change_and_a_press() {
+        // Identity is the region id, not the rectangle or the enabled bit.
+        // A press addresses that id; it does not mint a new one.
+        let id = "sign-in";
+        let before = manifold(vec![button(id, "Sign in", 16.0, 180.0)]);
+        let moved = manifold(vec![button(id, "Sign in", 16.0, 240.0)]);
+        let delta = diff(&before, &moved);
+        assert!(delta.added().is_empty());
+        assert!(delta.removed().is_empty());
+        assert_eq!(delta.changed()[0].id().as_str(), id);
+        assert!(delta.changed()[0].fields().contains(&ChangedField::Rect));
+        let matching = match_regions(
+            &before,
+            &moved,
+            structural_similarity,
+            STRUCTURAL_MATCH_THRESHOLD,
+        );
+        assert_eq!(matching.pairs()[0].kind(), MatchKind::IdenticalId);
+        assert_eq!(matching.pairs()[0].before().as_str(), id);
+        assert_eq!(matching.pairs()[0].after().as_str(), id);
+
+        let enabled = moved.get_str(id).unwrap().flags().disabled();
+        assert!(!enabled);
+        let disabled_region = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new(id).unwrap(),
+            role: Role::Button,
+            label: "Sign in".into(),
+            rect: Rect::try_new(16.0, 240.0, 40.0, 20.0).unwrap(),
+            actions: vec![Action::Click],
+            parent: None,
+            sources: SourceMask::DOM,
+            flags: {
+                let mut flags = RegionFlags::none();
+                flags.set_disabled(true);
+                flags
+            },
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap();
+        let disabled = manifold(vec![disabled_region]);
+        let delta = diff(&moved, &disabled);
+        assert!(delta.removed().is_empty());
+        assert_eq!(delta.changed()[0].id().as_str(), id);
+        assert!(delta.changed()[0].fields().contains(&ChangedField::Flags));
+        assert!(!delta.changed()[0].fields().contains(&ChangedField::Rect));
+
+        // A press is an executor event aimed at the same id. The manifold
+        // still contains that id afterwards; the id is not a function of the click.
+        let pressed = disabled.clone();
+        assert!(pressed.get_str(id).is_some());
+        assert_eq!(pressed.get_str(id).unwrap().id().as_str(), id);
+        assert!(pressed
+            .get_str(id)
+            .unwrap()
+            .actions()
+            .contains(&Action::Click));
+        assert!(diff(&disabled, &pressed).is_empty());
+    }
+
+    #[test]
     fn flag_change_is_visible_without_a_rect_change() {
         let before = manifold(vec![button("a", "Export", 0.0, 0.0)]);
         let disabled = InteractionRegion::try_new(RegionParts {

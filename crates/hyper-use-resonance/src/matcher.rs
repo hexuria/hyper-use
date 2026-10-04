@@ -1,0 +1,328 @@
+//! Two locate matchers behind one trait.
+//!
+//! [`WeightedMatcher`] is the product default. [`HgraMatcher`] is the
+//! hyperdimensional ranker (`locate_with`). They are not two copies of one
+//! score: the weighted matcher never calls the encoder. There is no benchmark
+//! that picks a winner.
+
+use hyper_use_core::{token_recall, InteractionManifold, InteractionRegion, LocateQuery, RegionId};
+use hyper_use_hyper::{Dims, Encoder};
+
+use crate::{
+    actionability_score, geometric_score, locate_with, penalty_total, ResonanceError,
+    ResonanceModel,
+};
+
+/// One ranked region. `rank` is 1-based. `confidence` is that matcher's total,
+/// not a probability and not comparable across matchers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Match {
+    rank: usize,
+    id: RegionId,
+    confidence: f64,
+}
+
+impl Match {
+    pub fn rank(&self) -> usize {
+        self.rank
+    }
+
+    pub fn id(&self) -> &RegionId {
+        &self.id
+    }
+
+    pub fn confidence(&self) -> f64 {
+        self.confidence
+    }
+}
+
+/// Rank every region. Implementations must be pure: same query and manifold,
+/// same order, including the region-id tie-break.
+pub trait RegionMatcher {
+    fn rank(
+        &self,
+        query: &LocateQuery,
+        manifold: &InteractionManifold,
+    ) -> Result<Vec<Match>, ResonanceError>;
+}
+
+/// Positive weights for [`WeightedMatcher`]. Basis points must sum to 100.
+/// Penalties are not stored here; the matcher subtracts [`ResonanceModel::V1`]'s
+/// penalty table and ignores that model's positive weights.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeightedModel {
+    semantic_bp: u16,
+    geometric_bp: u16,
+    actionability_bp: u16,
+}
+
+/// Unvalidated weighted parts. [`WeightedBasisPoints::try_model`] is the gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeightedBasisPoints {
+    pub semantic: u16,
+    pub geometric: u16,
+    pub actionability: u16,
+}
+
+impl WeightedBasisPoints {
+    pub const SUM_BP: u32 = 100;
+
+    pub fn sum_bp(self) -> u32 {
+        u32::from(self.semantic) + u32::from(self.geometric) + u32::from(self.actionability)
+    }
+
+    pub fn try_model(self) -> Result<WeightedModel, ResonanceError> {
+        let sum = self.sum_bp();
+        if sum != Self::SUM_BP {
+            return Err(ResonanceError::WeightsDoNotSum { sum });
+        }
+        Ok(WeightedModel {
+            semantic_bp: self.semantic,
+            geometric_bp: self.geometric,
+            actionability_bp: self.actionability,
+        })
+    }
+}
+
+impl WeightedModel {
+    /// Semantic 0.50, geometric 0.30, actionability 0.20. No hypervector term.
+    pub const V1: Self = Self {
+        semantic_bp: 50,
+        geometric_bp: 30,
+        actionability_bp: 20,
+    };
+
+    pub const fn semantic(self) -> f64 {
+        self.semantic_bp as f64 / 100.0
+    }
+
+    pub const fn geometric(self) -> f64 {
+        self.geometric_bp as f64 / 100.0
+    }
+
+    pub const fn actionability(self) -> f64 {
+        self.actionability_bp as f64 / 100.0
+    }
+
+    pub const fn basis_point_sum(self) -> u16 {
+        self.semantic_bp + self.geometric_bp + self.actionability_bp
+    }
+}
+
+const _: () = assert!(WeightedModel::V1.basis_point_sum() == 100);
+
+/// Deterministic baseline. Semantic text and role combine by minimum, so a
+/// role hit cannot hide a text miss. An absent constraint scores `1` (it was
+/// not asked). Penalties match [`ResonanceModel::V1`] and are subtracted after.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeightedMatcher {
+    model: WeightedModel,
+}
+
+impl WeightedMatcher {
+    pub const fn new(model: WeightedModel) -> Self {
+        Self { model }
+    }
+}
+
+impl Default for WeightedMatcher {
+    fn default() -> Self {
+        Self {
+            model: WeightedModel::V1,
+        }
+    }
+}
+
+impl RegionMatcher for WeightedMatcher {
+    fn rank(
+        &self,
+        query: &LocateQuery,
+        manifold: &InteractionManifold,
+    ) -> Result<Vec<Match>, ResonanceError> {
+        let mut ranked = Vec::with_capacity(manifold.len());
+        for region in manifold.regions() {
+            let confidence = weighted_total(self.model, manifold, region, query);
+            debug_assert!(confidence.is_finite());
+            ranked.push(Match {
+                rank: 0,
+                id: region.id().clone(),
+                confidence,
+            });
+        }
+        sort_matches(&mut ranked);
+        Ok(ranked)
+    }
+}
+
+/// The hyperdimensional ranker. `locate` / `locate_with` remain the
+/// implementation; this type only adapts them to [`RegionMatcher`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HgraMatcher {
+    dims: Dims,
+    model: ResonanceModel,
+}
+
+impl HgraMatcher {
+    pub const fn new(dims: Dims, model: ResonanceModel) -> Self {
+        Self { dims, model }
+    }
+}
+
+impl Default for HgraMatcher {
+    fn default() -> Self {
+        Self {
+            dims: Dims::DEFAULT,
+            model: ResonanceModel::V1,
+        }
+    }
+}
+
+impl RegionMatcher for HgraMatcher {
+    fn rank(
+        &self,
+        query: &LocateQuery,
+        manifold: &InteractionManifold,
+    ) -> Result<Vec<Match>, ResonanceError> {
+        let ranked = locate_with(manifold, query, &Encoder::new(self.dims), self.model)?;
+        let mut out = Vec::with_capacity(ranked.len());
+        for candidate in ranked {
+            out.push(Match {
+                rank: candidate.rank(),
+                id: candidate.id().clone(),
+                confidence: candidate.score().total(),
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// Library default. The CLI uses this unless `--matcher hgra` is set.
+pub fn default_matcher() -> WeightedMatcher {
+    WeightedMatcher::default()
+}
+
+fn weighted_total(
+    model: WeightedModel,
+    manifold: &InteractionManifold,
+    region: &InteractionRegion,
+    query: &LocateQuery,
+) -> f64 {
+    let semantic = weighted_semantic(query, region);
+    let geometric = geometric_score(manifold.viewport(), region.rect(), query);
+    let actionability = actionability_score(region, query);
+    let penalty = penalty_total(manifold.viewport(), region, ResonanceModel::V1);
+    model.semantic() * semantic
+        + model.geometric() * geometric
+        + model.actionability() * actionability
+        - penalty
+}
+
+/// Minimum of the constraints that were actually set. Absent text and role
+/// score `1`. A text miss is `0` even when the role matches.
+fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
+    let mut present = Vec::new();
+    if let Some(text) = query.text_ref() {
+        present.push(token_recall(text, region.label()));
+    }
+    if let Some(role) = query.role_ref() {
+        present.push(if region.role() == role { 1.0 } else { 0.0 });
+    }
+    present.into_iter().fold(1.0, f64::min)
+}
+
+fn sort_matches(ranked: &mut [Match]) {
+    ranked.sort_by(|left, right| {
+        right
+            .confidence
+            .total_cmp(&left.confidence)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for (index, candidate) in ranked.iter_mut().enumerate() {
+        candidate.rank = index + 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper_use_core::{
+        Action, InteractionRegion, Rect, RegionFlags, RegionId, RegionParts, Role, SourceMask,
+        UnitInterval,
+    };
+
+    fn button(id: &str, label: &str, flags: RegionFlags) -> InteractionRegion {
+        InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new(id).unwrap(),
+            role: Role::Button,
+            label: label.into(),
+            rect: Rect::try_new(16.0, 40.0, 80.0, 20.0).unwrap(),
+            actions: vec![Action::Click],
+            parent: None,
+            sources: SourceMask::DOM,
+            flags,
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn weighted_weights_reject_a_bad_sum_and_disabled_drops_by_the_penalty() {
+        let err = WeightedBasisPoints {
+            semantic: 40,
+            geometric: 30,
+            actionability: 20,
+        }
+        .try_model()
+        .unwrap_err();
+        assert_eq!(err, ResonanceError::WeightsDoNotSum { sum: 90 });
+        assert_eq!(
+            err.to_string(),
+            "positive weights sum to 90 basis points, expected 100"
+        );
+        assert_eq!(WeightedModel::V1.basis_point_sum(), 100);
+
+        let viewport = Rect::try_viewport(0.0, 0.0, 1440.0, 900.0).unwrap();
+        let clean = InteractionManifold::try_new(
+            viewport,
+            vec![button("only", "Settings", RegionFlags::none())],
+            0,
+        )
+        .unwrap();
+        let mut flags = RegionFlags::none();
+        flags.set_disabled(true);
+        let disabled =
+            InteractionManifold::try_new(viewport, vec![button("only", "Settings", flags)], 0)
+                .unwrap();
+        let query = LocateQuery::new()
+            .text("Settings")
+            .unwrap()
+            .role(Role::Button);
+        let matcher = WeightedMatcher::default();
+        let clean_score = matcher.rank(&query, &clean).unwrap()[0].confidence();
+        let disabled_score = matcher.rank(&query, &disabled).unwrap()[0].confidence();
+        assert!((clean_score - 1.0).abs() < 1e-12, "{clean_score}");
+        assert!(
+            (clean_score - disabled_score - ResonanceModel::V1.penalty_disabled()).abs() < 1e-12,
+            "{clean_score} {disabled_score}"
+        );
+    }
+
+    #[test]
+    fn text_miss_is_not_rescued_by_a_role_hit() {
+        let viewport = Rect::try_viewport(0.0, 0.0, 200.0, 200.0).unwrap();
+        let manifold = InteractionManifold::try_new(
+            viewport,
+            vec![button("help", "Help", RegionFlags::none())],
+            0,
+        )
+        .unwrap();
+        let query = LocateQuery::new()
+            .text("Settings")
+            .unwrap()
+            .role(Role::Button);
+        let score = WeightedMatcher::default().rank(&query, &manifold).unwrap()[0].confidence();
+        // semantic min(0, 1) = 0, geometric unconstrained 1, actionability 1.
+        let expected = WeightedModel::V1.geometric() + WeightedModel::V1.actionability();
+        assert!((score - expected).abs() < 1e-12, "{score}");
+    }
+}

@@ -14,14 +14,17 @@ pub const TOOL_LOCATE: &str = "hyper-use.locate";
 pub const TOOL_INSPECT: &str = "hyper-use.inspect";
 /// `hyper-use.act`
 pub const TOOL_ACT: &str = "hyper-use.act";
+/// `hyper-use.diff`
+pub const TOOL_DIFF: &str = "hyper-use.diff";
 /// `hyper-use.verify`
 pub const TOOL_VERIFY: &str = "hyper-use.verify";
 
-pub const TOOLS: [&str; 5] = [
+pub const TOOLS: [&str; 6] = [
     TOOL_OBSERVE,
     TOOL_LOCATE,
     TOOL_INSPECT,
     TOOL_ACT,
+    TOOL_DIFF,
     TOOL_VERIFY,
 ];
 
@@ -34,6 +37,7 @@ pub fn tool_for_phase(phase: hyper_use_protocol::LoopPhase) -> &'static str {
         LoopPhase::Locate => TOOL_LOCATE,
         LoopPhase::Inspect => TOOL_INSPECT,
         LoopPhase::Act => TOOL_ACT,
+        LoopPhase::Diff => TOOL_DIFF,
         LoopPhase::Verify => TOOL_VERIFY,
     }
 }

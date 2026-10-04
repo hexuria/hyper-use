@@ -9,6 +9,7 @@ description = "Action executor trait and backend policy order"
 
 [dependencies]
 hyper-use-core = { path = "../hyper-use-core" }
+hyper-use-protocol = { path = "../hyper-use-protocol" }
 hyper-use-browser = { path = "../hyper-use-browser" }
 hyper-use-macos = { path = "../hyper-use-macos" }
 hyper-use-cua = { path = "../hyper-use-cua" }

@@ -1,8 +1,9 @@
 //! Computer-use surface for hyper-use.
 //!
-//! Phase 1 is a stub. There is no screenshot loop and no synthesized pointer.
-//! CUA remains the last resort in the executor policy, behind structured
-//! browser and accessibility backends that do not exist yet.
+//! There is no screenshot loop and no synthesized pointer.
+//! CUA remains the last resort in the executor policy. The browser CDP
+//! client exists; this backend still returns not-implemented. hyper-use
+//! does not call CUA on a low-confidence act.
 
 #![forbid(unsafe_code)]
 

@@ -1,4 +1,4 @@
-//! `hyper-use` command line. Phase 1 loads a fixture and ranks a locate query.
+//! `hyper-use` command line. Locate, observe, act, diff, and verify.
 
 #![forbid(unsafe_code)]
 

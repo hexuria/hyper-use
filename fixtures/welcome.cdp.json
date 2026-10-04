@@ -1,0 +1,108 @@
+{
+  "calls": [
+    {
+      "method": "Page.getLayoutMetrics",
+      "params": {},
+      "result": {
+        "cssLayoutViewport": {
+          "clientWidth": 1280,
+          "clientHeight": 720,
+          "pageX": 0,
+          "pageY": 0
+        }
+      }
+    },
+    {
+      "method": "DOM.getDocument",
+      "params": {
+        "depth": -1,
+        "pierce": false
+      },
+      "result": {
+        "root": {
+          "nodeId": 1,
+          "backendNodeId": 1,
+          "nodeType": 9,
+          "nodeName": "#document",
+          "children": [
+            {
+              "nodeId": 30,
+              "backendNodeId": 300,
+              "nodeType": 1,
+              "nodeName": "H1",
+              "attributes": [],
+              "children": [
+                {
+                  "nodeId": 31,
+                  "backendNodeId": 31,
+                  "nodeType": 3,
+                  "nodeName": "#text",
+                  "nodeValue": "Welcome"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "Accessibility.getFullAXTree",
+      "params": {},
+      "result": {
+        "nodes": [
+          {
+            "nodeId": "ax30",
+            "backendDOMNodeId": 300,
+            "ignored": false,
+            "role": {
+              "value": "heading"
+            },
+            "name": {
+              "value": "Welcome"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "nodeId": 30
+      },
+      "result": {
+        "model": {
+          "content": [
+            100,
+            40,
+            300,
+            40,
+            300,
+            80,
+            100,
+            80
+          ]
+        }
+      }
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "backendNodeId": 300
+      },
+      "result": {
+        "model": {
+          "content": [
+            100,
+            40,
+            300,
+            40,
+            300,
+            80,
+            100,
+            80
+          ]
+        }
+      }
+    }
+  ]
+}

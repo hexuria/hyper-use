@@ -1,18 +1,26 @@
 # hyper-use
 
-The product, crates, and binary are `hyper-use`. HGRA is the name of the technique in docs only. A crate or binary named `hgra` is a bug.
+The product, crates, and binary are `hyper-use`. HGRA is the name of one matcher. A crate or binary named `hgra` is a bug.
 
-Phase 1 ranks a static manifold. It does not drive a browser, macOS, or a pointer.
+hyper-use is not an agent. Operations are observe, locate, inspect, act, diff, verify. No navigate.
 
-Public API is 0.1 and unstable until 1.0. Toolchain pin: Rust 1.99.0.
+The product default matcher is `WeightedMatcher`. `HgraMatcher` is selectable. Do not claim one won without a benchmark.
+
+Phase 2 speaks CDP through one transport trait. Replay fixtures and a live websocket share that trait. macOS and CUA stay unimplemented. A low-confidence act does not call CUA.
+
+Public API is 0.1 and unstable until 1.0. Toolchain pin: Rust 1.99.0. `publish = false`.
 
 ## Verification
 
-Deterministic ranking and the bipolar algebra are owned by unit tests and `proptest`. Do not add a second model of `locate_with` in TLA+, Lean, or a fixture interpreter.
+Deterministic ranking and the bipolar algebra are owned by unit tests and `proptest`. Do not add a second model of `locate_with` or of `WeightedMatcher::rank`.
 
-`write_fixture` / `parse_fixture` own the fixture grammar. `structural_similarity` is a different metric, not a second ranker.
+`write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP replay parsing is a different grammar. `structural_similarity` is a different metric, not a second ranker. Fusion is the only DOM/accessibility merge.
 
-Miri, Loom, Kani, TLA+, and Lean are not justified: there is no `unsafe`, no atomics, no threads, and no recovery protocol. `#![forbid(unsafe_code)]` is on every crate.
+Region identity across a move, an enabled change, and a press is owned by the observe id-diff test. It is not a second identity service.
+
+Miri, Loom, Kani, TLA+, and Lean are not justified: there is no `unsafe`, no atomics, no threads, and no recovery protocol. `#![forbid(unsafe_code)]` is on every crate. The CDP client is blocking and single-threaded. A websocket read is not a concurrent protocol.
+
+Fuzz of CDP JSON is USEFUL later. A 16-case proptest that garbage scripts do not panic is the owner for now. Fixtures are local; a live socket is Chrome on loopback.
 
 > Any change to observable semantics names the verification boundary it affects.
 
@@ -23,7 +31,7 @@ Miri, Loom, Kani, TLA+, and Lean are not justified: there is no `unsafe`, no ato
 ```
 Verification impact
 
-[ ] Pure Rust deterministic behavior
+[x] Pure Rust deterministic behavior
 [ ] Concurrency / interleaving
 [ ] System model
 [ ] Crash-recovery / replay
@@ -32,10 +40,10 @@ Verification impact
 [ ] Proof kernel
 [ ] Workflow / DSL
 [ ] Unsafe / memory
-[ ] Property-test / fuzz surface
+[x] Property-test / fuzz surface
 [ ] No verification architecture impact
 
-Reason:
-Affected invariants:
-Tests or proofs updated:
+Reason: Phase 2 adds weighted ranking, CDP parse/fusion/press/verify, and the JEV task types. Replay is a fixture, not crash recovery. The websocket client is one blocking call stream, so no system model was added.
+Affected invariants: default locate is weighted; HGRA remains selectable; fusion merges a 1px DOM/AX pair and refuses different labels; press prefers a DOM click; verify fails with ExpectedTextMissing; confidence below 550 millis does not click; a region id survives move, enabled change, and press.
+Tests or proofs updated: resonance matcher tests, browser fusion and session tests, executor confidence test, CLI command tests, observe identity test, protocol contract test. No second formal model.
 ```

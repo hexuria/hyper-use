@@ -46,12 +46,25 @@ the viewport scores 0.8 and does not merge.
 
 ## Dependencies
 
-No `unsafe`. No LLM, CDP, or macOS bindings.
-The library crates depend only on each other. `proptest` 1.11 is a
-dev-dependency of `hyper-use-hyper` and `hyper-use-resonance` (the lockfile
-also pulls its `rand` stack). It is not a public dependency and is not linked
-into the `hyper-use` binary. Fixture syntax is a small line format so serde
-is not required. JSON output from the CLI is written by hand.
+No `unsafe`. No LLM. No macOS bindings. No browser framework.
+
+`proptest` 1.11 is a dev-dependency of `hyper-use-hyper`, `hyper-use-resonance`,
+and `hyper-use-browser`. It is not linked into the `hyper-use` binary.
+Manifold fixtures stay a small line format. CLI JSON is still written by hand.
+
+Phase 2 adds two crates, only on `hyper-use-browser`, not on the ranker:
+
+- `serde_json` 1. Parses CDP result JSON. The public transport trait takes
+  and returns JSON strings, so `serde_json::Value` is not part of the public
+  signature. Hand-rolling a JSON parser was discarded: CDP documents are real
+  JSON, and a private parser would be a second grammar with worse errors.
+- `tungstenite` 0.26, default features off, `handshake` on. Blocking
+  `ws://` client. `wss://` is refused so a TLS stack is not pulled in.
+  A from-scratch websocket was discarded: masking and the upgrade handshake
+  are easy to get wrong, and this crate is not the product. Chromium,
+  headless_chrome, and fantoccini were discarded as too large.
+
+The ranker crates still do not depend on either.
 
 Crate versions are 0.1.0 and `publish = false`. The public API is unstable
 until 1.0. There is no `From` for `RegionId` or for a float weight table:
@@ -96,9 +109,19 @@ model of the same score without a conformance fixture.
 
 ## What this code cannot do
 
-- No browser, no macOS accessibility, no computer-use clicks, no MCP transport.
-  Those crates return a status string or `ExecutorError::NotImplemented`.
-  They do not panic.
+- No macOS accessibility, no computer-use clicks, no MCP transport.
+  macOS and CUA return `ExecutorError::NotImplemented`. A browser stub with
+  no session does too. `BrowserExecutor` does not.
+- No navigation and no JEV runtime. `ComputerTask` is one locate or one act.
+- The weighted matcher and HGRA are not calibrated to each other. A confidence
+  of 0.55 is the act gate for a scored total. It is not a probability.
+- Live CDP does not launch Chrome. `wss://` is refused. Occlusion is not
+  detected. Unlabeled generic DOM containers are not regions unless they are
+  a known control tag or carry a label or an explicit role.
+- Fusion can merge two same-label controls whose centers are within 8px even
+  when IoU is low. A duplicate accessibility node for one DOM node is left
+  as its own region.
+- CDP snapshots store `captured_at_ms = 0`. The ranker does not read a clock.
 - No learned embeddings and no LLM. Symbols are the fixed encoder.
 - A bundle component that sums to exactly 0 becomes `+1`. There is no other
   tie-break inside the vector. Equal locate scores break by `RegionId`
@@ -138,3 +161,49 @@ assertion `left == right` failed
 
 The return was restored. The test asserts `Err(HyperError::EmptySymbol)`, not
 `is_err()`.
+
+## Phase 2 browser and matchers
+
+The product default locate path is `WeightedMatcher` (semantic 50, geometric
+30, actionability 20, basis points, sum 100). Text and role combine by
+minimum so a role hit cannot hide a text miss. Penalties are
+`ResonanceModel::V1`'s penalty table. The hypervector weight is not applied.
+`HgraMatcher` calls `locate_with` and nothing else. `locate` / `locate_with`
+remain the HGRA entry points so existing penalty tests keep their meaning.
+The CLI default is weighted. `--matcher hgra` selects the other. No benchmark
+says which is better. Do not add a third score that averages them.
+
+Act confidence gate: scored totals below 550 millis (0.55) return
+`ExecutorError::ConfidenceBelowThreshold` and do not touch the transport.
+`ActConfidence::Inspected` is the operator naming a region id. Those two
+states are an enum, not a bool plus an optional score. The refusal is also
+representable as `ComputerResult::refused` with `executed = false`. That
+value is a journal record, not a second executor. CUA is not invoked.
+
+CDP methods, in order, for one observation: `Page.getLayoutMetrics`,
+`DOM.getDocument` depth -1, `Accessibility.getFullAXTree`, then
+`DOM.getBoxModel` per DOM node id, then `DOM.getBoxModel` per accessibility
+backend id. Press, when a DOM node id exists: `DOM.resolveNode` then
+`Runtime.callFunctionOn` of `function(){this.click()}`. A CDP error on that
+call falls through to `DOM.focus`, then to `Input.dispatchMouseEvent`.
+A missing script entry is `CdpError::NoScriptedResponse` and does not fall
+through, so a short fixture cannot become a silent coordinate click.
+`press` in the CLI is `Action::Click`. Other actions return
+`BrowserError::UnsupportedAction`.
+
+Fusion v1: label Jaccard >= 0.5 or either label empty; roles equal or either
+generic; IoU >= 0.5 or centroid distance <= 8px. Greedy, highest IoU. The
+stored rect is the DOM rect. The id is `n{backendNodeId}`.
+
+`ComputerTask` has constructors `locate` and `act` only. Constraints and
+expected outcome are data. There is no planner.
+
+Verifiers for this phase: unit tests with exact `Err` variants
+(`ExpectedTextMissing`, `RegionStillPresent`, `ConfidenceBelowThreshold`,
+`WeightsDoNotSum`, `NoScriptedResponse`). proptest (16 cases) owns "garbage
+CDP scripts do not panic". No Miri, Loom, Kani, TLA+, or Lean. The websocket
+is one blocking reader. That is not a concurrent protocol. No second model
+of fusion or of either ranker.
+
+Live Chrome: a read-only `Browser.getVersion` may be run against an
+already-open debugging port. Clicks in tests use the replay transport.

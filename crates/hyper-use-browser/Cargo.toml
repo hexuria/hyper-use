@@ -5,6 +5,15 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
-description = "Browser observation surface. Phase 1 does not open a CDP connection."
+description = "CDP browser session for hyper-use. Replay and websocket share one client."
 
 [dependencies]
+hyper-use-core = { path = "../hyper-use-core" }
+hyper-use-geometry = { path = "../hyper-use-geometry" }
+serde_json = "1"
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+
+[dev-dependencies]
+hyper-use-observe = { path = "../hyper-use-observe" }
+hyper-use-resonance = { path = "../hyper-use-resonance" }
+proptest = "1.7"

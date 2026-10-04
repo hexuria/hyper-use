@@ -5,13 +5,11 @@
 
 #![forbid(unsafe_code)]
 
-use std::fs;
-use std::path::Path;
 use std::str::FromStr;
 
-use hyper_use_core::{parse_fixture, Action, LocateQuery, Role, Zone};
-use hyper_use_hyper::{Dims, Encoder};
-use hyper_use_resonance::{locate_with, ResonanceModel};
+use hyper_use_core::{Action, LocateQuery, Role, Zone};
+use hyper_use_hyper::Dims;
+use hyper_use_resonance::{HgraMatcher, RegionMatcher, ResonanceModel, WeightedMatcher};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -27,9 +25,32 @@ pub enum CliError {
     UnknownAction(String),
     BadDims(String),
     EmptyText,
-    Io { path: String, message: String },
+    Io {
+        path: String,
+        message: String,
+    },
     Fixture(String),
     Locate(String),
+    ExpectedTextMissing {
+        expected: String,
+    },
+    RegionStillPresent {
+        id: String,
+    },
+    ConfidenceBelowThreshold {
+        confidence_millis: i32,
+        minimum_millis: i32,
+    },
+    NonFiniteConfidence,
+    DimsRequireHgra,
+    MissingSource,
+    Browser(String),
+    UnknownMatcher(String),
+    MissingRegion,
+    MissingVerb,
+    BadConfidence(String),
+    MissingExpect,
+    UnknownRegion(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -51,6 +72,27 @@ impl std::fmt::Display for CliError {
             Self::Io { path, message } => write!(f, "cannot read {path}: {message}"),
             Self::Fixture(message) => write!(f, "fixture: {message}"),
             Self::Locate(message) => write!(f, "locate: {message}"),
+            Self::ExpectedTextMissing { expected } => {
+                write!(f, "expected text `{expected}` did not appear")
+            }
+            Self::RegionStillPresent { id } => write!(f, "region `{id}` is still present"),
+            Self::ConfidenceBelowThreshold {
+                confidence_millis,
+                minimum_millis,
+            } => write!(
+                f,
+                "confidence {confidence_millis} is below the act minimum {minimum_millis}"
+            ),
+            Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
+            Self::DimsRequireHgra => f.write_str("--dims is only valid with --matcher hgra"),
+            Self::MissingSource => f.write_str("command requires --fixture <path> or --cdp [url]"),
+            Self::Browser(message) => write!(f, "browser: {message}"),
+            Self::UnknownMatcher(name) => write!(f, "unknown matcher `{name}`"),
+            Self::MissingRegion => f.write_str("act requires a region id"),
+            Self::MissingVerb => f.write_str("act requires a verb (`press`)"),
+            Self::BadConfidence(value) => write!(f, "bad confidence `{value}`"),
+            Self::MissingExpect => f.write_str("verify requires --expect-text or --expect-absent"),
+            Self::UnknownRegion(id) => write!(f, "unknown region `{id}`"),
         }
     }
 }
@@ -58,7 +100,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use locate --fixture <path> [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--dims 512|1024|2048|4096] [--json]\n"
+    "hyper-use observe|locate|inspect|act|diff|verify\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -69,6 +111,11 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
     }
     match args[0].as_str() {
         "locate" => locate_command(&args[1..]),
+        "observe" => crate::session_cmd::observe_command(&args[1..]),
+        "act" => crate::session_cmd::act_command(&args[1..]),
+        "verify" => crate::session_cmd::verify_command(&args[1..]),
+        "diff" => crate::session_cmd::diff_command(&args[1..]),
+        "inspect" => crate::session_cmd::inspect_command(&args[1..]),
         other => Err(CliError::UnknownCommand(other.to_owned())),
     }
 }
@@ -80,6 +127,8 @@ fn locate_command(args: &[String]) -> Result<String, CliError> {
     let mut position: Option<String> = None;
     let mut action: Option<String> = None;
     let mut dims: Option<String> = None;
+    let mut matcher: Option<String> = None;
+    let mut cdp: Option<String> = None;
     let mut json = false;
     let mut index = 0;
     while index < args.len() {
@@ -96,6 +145,21 @@ fn locate_command(args: &[String]) -> Result<String, CliError> {
             set_once("action", &mut action, value.to_owned())?;
         } else if let Some(value) = arg.strip_prefix("--dims=") {
             set_once("dims", &mut dims, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--matcher=") {
+            set_once("matcher", &mut matcher, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--cdp=") {
+            set_once("cdp", &mut cdp, value.to_owned())?;
+        } else if arg == "--cdp" {
+            if cdp.is_some() {
+                return Err(CliError::DuplicateFlag("--cdp"));
+            }
+            let next = args.get(index + 1);
+            if next.is_some_and(|value| !value.starts_with("--")) {
+                cdp = Some(next.unwrap().clone());
+                index += 1;
+            } else {
+                cdp = Some(hyper_use_browser::DEFAULT_CDP_HTTP.to_owned());
+            }
         } else if arg == "--json" {
             if json {
                 return Err(CliError::DuplicateFlag("--json"));
@@ -110,6 +174,7 @@ fn locate_command(args: &[String]) -> Result<String, CliError> {
                 "position" => Some(&mut position),
                 "action" => Some(&mut action),
                 "dims" => Some(&mut dims),
+                "matcher" => Some(&mut matcher),
                 _ => None,
             };
             let Some(slot) = slot else {
@@ -124,34 +189,53 @@ fn locate_command(args: &[String]) -> Result<String, CliError> {
             }
             set_once(name, slot, value.clone())?;
         } else {
-            return Err(CliError::UnknownFlag(arg.clone()));
+            set_once("text", &mut text, arg.clone())?;
         }
         index += 1;
     }
-    let fixture = fixture.ok_or(CliError::MissingFixture)?;
+    if fixture.is_none() && cdp.is_none() {
+        return Err(CliError::MissingFixture);
+    }
+    if fixture.is_some() && cdp.is_some() {
+        return Err(CliError::DuplicateFlag("--cdp"));
+    }
     let query = build_query(text, role, position, action)?;
-    let dims = match dims {
-        None => Dims::DEFAULT,
-        Some(raw) => {
-            let parsed = usize::from_str(&raw).map_err(|_| CliError::BadDims(raw.clone()))?;
-            Dims::try_from_usize(parsed).map_err(|_| CliError::BadDims(raw))?
+    let matcher_name = matcher.unwrap_or_else(|| "weighted".to_owned());
+    if dims.is_some() && matcher_name != "hgra" {
+        return Err(CliError::DimsRequireHgra);
+    }
+    let manifold = session_cmd::load_source(fixture.as_deref(), cdp.as_deref())?;
+    let ranked = match matcher_name.as_str() {
+        "weighted" => WeightedMatcher::default()
+            .rank(&query, &manifold)
+            .map_err(|err| CliError::Locate(err.to_string()))?,
+        "hgra" => {
+            let dims = match dims {
+                None => Dims::DEFAULT,
+                Some(raw) => {
+                    let parsed =
+                        usize::from_str(&raw).map_err(|_| CliError::BadDims(raw.clone()))?;
+                    Dims::try_from_usize(parsed).map_err(|_| CliError::BadDims(raw))?
+                }
+            };
+            HgraMatcher::new(dims, ResonanceModel::V1)
+                .rank(&query, &manifold)
+                .map_err(|err| CliError::Locate(err.to_string()))?
         }
+        other => return Err(CliError::UnknownMatcher(other.to_owned())),
     };
-    let body = fs::read_to_string(Path::new(&fixture)).map_err(|err| CliError::Io {
-        path: fixture.clone(),
-        message: err.to_string(),
-    })?;
-    let manifold = parse_fixture(&body).map_err(|err| CliError::Fixture(err.to_string()))?;
-    let ranked = locate_with(&manifold, &query, &Encoder::new(dims), ResonanceModel::V1)
-        .map_err(|err| CliError::Locate(err.to_string()))?;
     if json {
-        Ok(render_json(&manifold, &ranked))
+        Ok(render_json(&manifold, &matcher_name, &ranked))
     } else {
         Ok(render_text(&manifold, &ranked))
     }
 }
 
-fn set_once(name: &str, slot: &mut Option<String>, value: String) -> Result<(), CliError> {
+pub(crate) fn set_once(
+    name: &str,
+    slot: &mut Option<String>,
+    value: String,
+) -> Result<(), CliError> {
     if slot.is_some() {
         return Err(CliError::DuplicateFlag(flag_name(name)));
     }
@@ -159,7 +243,7 @@ fn set_once(name: &str, slot: &mut Option<String>, value: String) -> Result<(), 
     Ok(())
 }
 
-fn flag_name(name: &str) -> &'static str {
+pub(crate) fn flag_name(name: &str) -> &'static str {
     match name {
         "fixture" => "--fixture",
         "text" => "--text",
@@ -168,6 +252,13 @@ fn flag_name(name: &str) -> &'static str {
         "action" => "--action",
         "dims" => "--dims",
         "json" => "--json",
+        "matcher" => "--matcher",
+        "cdp" => "--cdp",
+        "confidence" => "--confidence",
+        "expect-text" => "--expect-text",
+        "expect-absent" => "--expect-absent",
+        "before" => "--before",
+        "after" => "--after",
         _ => "--flag",
     }
 }
@@ -201,7 +292,7 @@ fn build_query(
 
 fn render_text(
     manifold: &hyper_use_core::InteractionManifold,
-    ranked: &[hyper_use_resonance::RankedCandidate],
+    ranked: &[hyper_use_resonance::Match],
 ) -> String {
     let mut out = String::new();
     for candidate in ranked {
@@ -214,7 +305,7 @@ fn render_text(
             "{}\t{}\t{:.6}\t{}\t{}\n",
             candidate.rank(),
             candidate.id(),
-            candidate.score().total(),
+            candidate.confidence(),
             role,
             label
         ));
@@ -224,15 +315,13 @@ fn render_text(
 
 fn render_json(
     manifold: &hyper_use_core::InteractionManifold,
-    ranked: &[hyper_use_resonance::RankedCandidate],
+    matcher: &str,
+    ranked: &[hyper_use_resonance::Match],
 ) -> String {
     let mut out = String::new();
     out.push_str("{\n");
     out.push_str("  \"product\": \"hyper-use\",\n");
-    out.push_str(&format!(
-        "  \"weights_version\": {},\n",
-        ResonanceModel::V1.version()
-    ));
+    out.push_str(&format!("  \"matcher\": \"{matcher}\",\n"));
     out.push_str("  \"candidates\": [\n");
     for (index, candidate) in ranked.iter().enumerate() {
         let region = manifold.get(candidate.id());
@@ -240,7 +329,6 @@ fn render_json(
         let role = region
             .map(|region| region.role().as_str())
             .unwrap_or("unknown");
-        let score = candidate.score();
         let comma = if index + 1 == ranked.len() { "" } else { "," };
         out.push_str("    {\n");
         out.push_str(&format!("      \"rank\": {},\n", candidate.rank()));
@@ -250,30 +338,10 @@ fn render_json(
         ));
         out.push_str(&format!("      \"role\": \"{role}\",\n"));
         out.push_str(&format!("      \"label\": \"{}\",\n", json_escape(label)));
-        out.push_str(&format!("      \"score\": {:.6},\n", score.total()));
         out.push_str(&format!(
-            "      \"hypervector\": {:.6},\n",
-            score.hypervector()
+            "      \"confidence\": {:.6}\n",
+            candidate.confidence()
         ));
-        out.push_str(&format!("      \"semantic\": {:.6},\n", score.semantic()));
-        out.push_str(&format!(
-            "      \"source_agreement\": {:.6},\n",
-            score.source_agreement()
-        ));
-        out.push_str(&format!("      \"geometric\": {:.6},\n", score.geometric()));
-        out.push_str(&format!(
-            "      \"actionability\": {:.6},\n",
-            score.actionability()
-        ));
-        out.push_str(&format!(
-            "      \"temporal_stability\": {:.6},\n",
-            score.temporal_stability()
-        ));
-        out.push_str(&format!(
-            "      \"contextual_consistency\": {:.6},\n",
-            score.contextual_consistency()
-        ));
-        out.push_str(&format!("      \"penalty\": {:.6}\n", score.penalty()));
         out.push_str(&format!("    }}{comma}\n"));
     }
     out.push_str("  ]\n}\n");
@@ -296,9 +364,12 @@ fn json_escape(text: &str) -> String {
     out
 }
 
+pub(crate) mod session_cmd;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -358,6 +429,120 @@ mod tests {
         assert!(stdout.contains("\"product\": \"hyper-use\""));
         assert!(stdout.contains("\"rank\": 1"));
         assert!(!stdout.contains("hgra"));
+    }
+
+    fn cdp_fixture(name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures")
+            .join(name)
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn locate_sign_in_on_cdp_fixture_ranks_the_button_first() {
+        let path = cdp_fixture("sign-in.cdp.json");
+        let stdout = execute(&args(&["locate", "Sign in", "--fixture", &path])).unwrap();
+        let first = stdout.lines().next().unwrap();
+        assert!(first.starts_with("1\tn100\t"), "{stdout}");
+        assert!(first.contains("Sign in"));
+        let json = execute(&args(&["locate", "Sign in", "--fixture", &path, "--json"])).unwrap();
+        assert!(json.contains("\"matcher\": \"weighted\""));
+        assert!(json.find("\"id\": \"n100\"").unwrap() < json.find("\"id\": \"n200\"").unwrap());
+    }
+
+    #[test]
+    fn act_press_records_dom_semantic_and_low_confidence_is_exact() {
+        let path = cdp_fixture("sign-in-press.cdp.json");
+        let stdout = execute(&args(&["act", "n100", "press", "--fixture", &path])).unwrap();
+        assert_eq!(stdout, "n100\tpress\tdom-semantic\texecuted\n");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--confidence",
+            "0.49",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "confidence 490 is below the act minimum 550"
+        );
+    }
+
+    #[test]
+    fn verify_missing_text_is_exact_and_welcome_succeeds() {
+        let err = execute(&args(&[
+            "verify",
+            "--fixture",
+            &cdp_fixture("sign-in.cdp.json"),
+            "--expect-text",
+            "Welcome",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::ExpectedTextMissing {
+                expected: "Welcome".into(),
+            }
+        );
+        assert_eq!(err.to_string(), "expected text `Welcome` did not appear");
+        let stdout = execute(&args(&[
+            "verify",
+            "--fixture",
+            &cdp_fixture("welcome.cdp.json"),
+            "--expect-text",
+            "Welcome",
+        ]))
+        .unwrap();
+        assert_eq!(stdout, "verified\n");
+    }
+
+    #[test]
+    fn diff_reports_removed_sign_in() {
+        let stdout = execute(&args(&[
+            "diff",
+            "--before",
+            &cdp_fixture("sign-in.cdp.json"),
+            "--after",
+            &cdp_fixture("welcome.cdp.json"),
+        ]))
+        .unwrap();
+        assert!(stdout.contains("removed\tn100\n"), "{stdout}");
+        assert!(stdout.contains("added\tn300\n"), "{stdout}");
+    }
+
+    #[test]
+    fn hgra_matcher_still_ranks_sidebar_settings_first() {
+        let path = fixture();
+        let stdout = execute(&args(&[
+            "locate",
+            "--fixture",
+            &path,
+            "--text",
+            "Settings",
+            "--role",
+            "button",
+            "--position",
+            "left",
+            "--matcher",
+            "hgra",
+        ]))
+        .unwrap();
+        assert!(
+            stdout.lines().next().unwrap().contains("nav-settings"),
+            "{stdout}"
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ jobs:
         with:
           components: clippy, rustfmt
       # Miri, Loom, and Kani are not justified: no unsafe, no atomics, no threads.
+      # Browser tests use a CDP replay fixture. The ignored live test is not in CI.
       # cargo-deny / RUSTSEC is useful later and skipped: cargo-deny is not
       # installed here, and no crate is network-facing or unsafe.
       # cargo-semver-checks is not justified until a crate is published.

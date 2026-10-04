@@ -1,5 +1,10 @@
 //! Resonance ranking for a static interaction manifold.
 //!
+//! The product default is [`WeightedMatcher`]: semantic match, geometry,
+//! actionability, and the versioned penalties. It does not build hypervectors.
+//! [`locate`] and [`HgraMatcher`] keep the hyperdimensional ranker. Neither
+//! matcher is a measured winner; there is no benchmark that says so.
+//!
 //! [`locate`] builds a bipolar signature for every region, probes it with the
 //! structured [`LocateQuery`], and combines that cosine with semantic, source,
 //! geometric, actionability, temporal, and contextual terms. Penalties are
@@ -16,8 +21,14 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod matcher;
 mod model;
 mod signature;
+
+pub use matcher::{
+    default_matcher, HgraMatcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher,
+    WeightedModel,
+};
 
 use hyper_use_core::{
     token_recall, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionId, SourceMask,
@@ -609,5 +620,26 @@ mod tests {
         let wide = region_signature(&manifold, region, &other).unwrap();
         let err = cosine(&once, &wide).unwrap_err();
         assert!(matches!(err, HyperError::DimMismatch { .. }));
+    }
+
+    #[test]
+    fn weighted_and_hgra_both_rank_sidebar_settings_first() {
+        let manifold = parse_fixture(include_str!("../../../fixtures/sidebar.manifold")).unwrap();
+        let query = settings_query();
+        let weighted = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        let hgra = HgraMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(weighted[0].id().as_str(), "nav-settings");
+        assert_eq!(weighted[0].rank(), 1);
+        assert_eq!(hgra[0].id().as_str(), "nav-settings");
+        assert_eq!(hgra[0].rank(), 1);
+        assert_eq!(
+            default_matcher().rank(&query, &manifold).unwrap()[0]
+                .id()
+                .as_str(),
+            "nav-settings"
+        );
+        // No benchmark compares these totals. Do not treat a higher number as a win.
+        assert!(weighted[0].confidence().is_finite());
+        assert!(hgra[0].confidence().is_finite());
     }
 }

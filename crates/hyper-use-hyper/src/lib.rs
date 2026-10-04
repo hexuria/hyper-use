@@ -254,7 +254,15 @@ pub fn bundle(parts: &[(BipolarVector, f64)]) -> Result<BipolarVector, HyperErro
     }
     let data = acc
         .into_iter()
-        .map(|sum| if sum > 0.0 { 1 } else if sum < 0.0 { -1 } else { 1 })
+        .map(|sum| {
+            if sum > 0.0 {
+                1
+            } else if sum < 0.0 {
+                -1
+            } else {
+                1
+            }
+        })
         .collect();
     Ok(BipolarVector { dims, data })
 }
@@ -311,14 +319,21 @@ mod tests {
 
     #[test]
     fn unsupported_dims_and_bad_components_are_errors() {
-        assert_eq!(Dims::try_from_usize(256), Err(HyperError::UnsupportedDims(256)));
+        assert_eq!(
+            Dims::try_from_usize(256),
+            Err(HyperError::UnsupportedDims(256))
+        );
         assert_eq!(
             Dims::try_from_usize(256).unwrap_err().to_string(),
             "dims 256 are not one of 512, 1024, 2048, 4096"
         );
         let err = BipolarVector::try_from_bipolar(vec![0; 512]).unwrap_err();
         assert_eq!(err, HyperError::InvalidComponent { index: 0, value: 0 });
-        assert!(BipolarVector::try_from_bipolar(vec![2; 512]).is_err());
+        assert_eq!(
+            BipolarVector::try_from_bipolar(vec![2; 512]).unwrap_err(),
+            HyperError::InvalidComponent { index: 0, value: 2 }
+        );
+        assert_eq!(Dims::try_from_usize(7), Err(HyperError::UnsupportedDims(7)));
     }
 
     #[test]
@@ -347,7 +362,9 @@ mod tests {
             "profile",
             "help",
         ];
-        let namespaces = ["role", "label", "position", "action", "relation", "shape", "key"];
+        let namespaces = [
+            "role", "label", "position", "action", "relation", "shape", "key",
+        ];
         for dims in [Dims::D512, Dims::D1024, Dims::D2048] {
             let encoder = Encoder::new(dims);
             for namespace in namespaces {
@@ -362,10 +379,9 @@ mod tests {
             let left = encoder.encode("role", "button").unwrap();
             let right = encoder.encode("label", "settings").unwrap();
             assert_eq!(bind(&left, &right).unwrap(), bind(&right, &left).unwrap());
-            let flipped = BipolarVector::try_from_bipolar(
-                left.as_slice().iter().map(|v| -v).collect(),
-            )
-            .unwrap();
+            let flipped =
+                BipolarVector::try_from_bipolar(left.as_slice().iter().map(|v| -v).collect())
+                    .unwrap();
             assert_eq!(cosine(&left, &flipped).unwrap(), -1.0);
         }
     }
@@ -413,10 +429,7 @@ mod tests {
         assert_eq!(permute(&vector, 0), vector);
         assert_eq!(permute(&vector, vector.len()), vector);
         assert_eq!(shifted.as_slice()[0], vector.as_slice()[1]);
-        assert_eq!(
-            shifted.as_slice()[vector.len() - 1],
-            vector.as_slice()[0]
-        );
+        assert_eq!(shifted.as_slice()[vector.len() - 1], vector.as_slice()[0]);
         let shift = relation_shift("parent", Dims::D512);
         assert!((1..512).contains(&shift));
         assert_ne!(permute(&vector, shift), vector);
@@ -428,9 +441,46 @@ mod tests {
         let b = BipolarVector::try_from_bipolar(vec![1; 1024]).unwrap();
         assert!(matches!(
             bind(&a, &b),
-            Err(HyperError::DimMismatch { left: 512, right: 1024 })
+            Err(HyperError::DimMismatch {
+                left: 512,
+                right: 1024
+            })
         ));
-        assert!(cosine(&a, &b).is_err());
+        assert_eq!(
+            cosine(&a, &b).unwrap_err(),
+            HyperError::DimMismatch {
+                left: 512,
+                right: 1024
+            }
+        );
+    }
+
+    #[test]
+    fn bind_is_commutative_and_its_own_inverse() {
+        let encoder = Encoder::new(Dims::D512);
+        let left = encoder.encode("role", "button").unwrap();
+        let right = encoder.encode("label", "settings").unwrap();
+        let bound = bind(&left, &right).unwrap();
+        assert_eq!(bound, bind(&right, &left).unwrap());
+        assert_eq!(bind(&bound, &right).unwrap(), left);
+        assert_eq!(bind(&bound, &left).unwrap(), right);
+        assert!(bind(&left, &left)
+            .unwrap()
+            .as_slice()
+            .iter()
+            .all(|v| *v == 1));
+        // Quarter-weights are exact dyadics. Adding 0.25 twice matches one 0.5,
+        // in either order. Neighbor coalescing in the ranker depends on this.
+        let twice = bundle(&[(left.clone(), 0.25), (left.clone(), 0.25)]).unwrap();
+        let once = bundle(&[(left.clone(), 0.5)]).unwrap();
+        assert_eq!(twice, once);
+        let flipped = bundle(&[(right.clone(), 0.25), (left.clone(), 0.25)]).unwrap();
+        let flipped_back = bundle(&[(left.clone(), 0.25), (right, 0.25)]).unwrap();
+        assert_eq!(flipped, flipped_back);
+        let wide = Encoder::new(Dims::D4096);
+        let once = wide.encode("role", "button").unwrap();
+        assert_eq!(once, wide.encode("role", "button").unwrap());
+        assert_eq!(cosine(&once, &once).unwrap(), 1.0);
     }
 
     #[test]

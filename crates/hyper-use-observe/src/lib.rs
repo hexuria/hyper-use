@@ -199,7 +199,11 @@ fn rect_changed(before: &InteractionRegion, after: &InteractionRegion) -> bool {
 /// `0.4 * role + 0.4 * jaccard + 0.2 * closeness`. Closeness falls to zero at
 /// 400 pixels of center distance. Identical regions score `1`.
 pub fn structural_similarity(before: &InteractionRegion, after: &InteractionRegion) -> f64 {
-    let role = if before.role() == after.role() { 1.0 } else { 0.0 };
+    let role = if before.role() == after.role() {
+        1.0
+    } else {
+        0.0
+    };
     let label = token_jaccard(before.label(), after.label());
     let distance = before.rect().center().distance(after.rect().center());
     let closeness = (1.0 - distance / 400.0).max(0.0);
@@ -241,8 +245,12 @@ pub fn match_regions(
     let mut candidates = Vec::new();
     for before_id in &before_open {
         for after_id in &after_open {
-            let left = before.get(before_id).expect("open id is in the before snapshot");
-            let right = after.get(after_id).expect("open id is in the after snapshot");
+            let left = before
+                .get(before_id)
+                .expect("open id is in the before snapshot");
+            let right = after
+                .get(after_id)
+                .expect("open id is in the after snapshot");
             let score = similarity(left, right);
             candidates.push((score, before_id.clone(), after_id.clone()));
         }
@@ -316,8 +324,12 @@ mod tests {
     }
 
     fn manifold(regions: Vec<InteractionRegion>) -> InteractionManifold {
-        InteractionManifold::try_new(Rect::try_viewport(0.0, 0.0, 800.0, 600.0).unwrap(), regions, 0)
-            .unwrap()
+        InteractionManifold::try_new(
+            Rect::try_viewport(0.0, 0.0, 800.0, 600.0).unwrap(),
+            regions,
+            0,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -334,11 +346,19 @@ mod tests {
         let after = manifold(vec![after_regions.remove(0), after_regions.remove(0)]);
         let delta = diff(&before, &after);
         assert_eq!(
-            delta.added().iter().map(RegionId::as_str).collect::<Vec<_>>(),
+            delta
+                .added()
+                .iter()
+                .map(RegionId::as_str)
+                .collect::<Vec<_>>(),
             vec!["c"]
         );
         assert_eq!(
-            delta.removed().iter().map(RegionId::as_str).collect::<Vec<_>>(),
+            delta
+                .removed()
+                .iter()
+                .map(RegionId::as_str)
+                .collect::<Vec<_>>(),
             vec!["a"]
         );
         assert_eq!(delta.changed().len(), 1);

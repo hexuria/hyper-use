@@ -33,9 +33,7 @@ impl fmt::Display for CoreError {
             }
             Self::NonFiniteCoordinate => f.write_str("coordinate must be finite"),
             Self::NegativeExtent => f.write_str("width and height must be non-negative"),
-            Self::NonPositiveViewport => {
-                f.write_str("viewport width and height must be positive")
-            }
+            Self::NonPositiveViewport => f.write_str("viewport width and height must be positive"),
             Self::DuplicateRegion(id) => write!(f, "duplicate region id `{id}`"),
             Self::StabilityOutOfRange => {
                 f.write_str("temporal stability must be a finite value in [0, 1]")
@@ -64,6 +62,8 @@ pub enum FixtureError {
     DuplicateViewport { line: usize },
     /// The same region id appeared twice.
     DuplicateRegion { line: usize, id: String },
+    /// `write_fixture` cannot emit a viewport whose origin is not `(0, 0)`.
+    UnsupportedViewportOrigin,
 }
 
 impl fmt::Display for FixtureError {
@@ -76,6 +76,9 @@ impl fmt::Display for FixtureError {
             }
             Self::DuplicateRegion { line, id } => {
                 write!(f, "fixture line {line}: duplicate region id `{id}`")
+            }
+            Self::UnsupportedViewportOrigin => {
+                f.write_str("fixture format cannot represent a viewport whose origin is not (0, 0)")
             }
         }
     }

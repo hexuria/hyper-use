@@ -5,6 +5,133 @@ use crate::rect::Rect;
 use crate::region::{InteractionRegion, RegionParts};
 use crate::vocab::{Action, RegionFlags, Role, SourceMask};
 
+/// Serialize a manifold into the fixture line format.
+///
+/// This is the same grammar [`parse_fixture`] reads. It is not a second
+/// parser. A viewport whose origin is not `(0, 0)` cannot be represented;
+/// that returns [`FixtureError::UnsupportedViewportOrigin`] instead of
+/// silently dropping the origin.
+pub fn write_fixture(manifold: &InteractionManifold) -> Result<String, FixtureError> {
+    let viewport = manifold.viewport();
+    if viewport.x() != 0.0 || viewport.y() != 0.0 {
+        return Err(FixtureError::UnsupportedViewportOrigin);
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "viewport w={} h={}\n",
+        format_num(viewport.width()),
+        format_num(viewport.height())
+    ));
+    for region in manifold.regions() {
+        out.push_str("region");
+        push_raw(&mut out, "id", region.id().as_str());
+        push_raw(&mut out, "role", region.role().as_str());
+        push_raw(&mut out, "label", &quote(region.label()));
+        let rect = region.rect();
+        push_raw(&mut out, "x", &format_num(rect.x()));
+        push_raw(&mut out, "y", &format_num(rect.y()));
+        push_raw(&mut out, "w", &format_num(rect.width()));
+        push_raw(&mut out, "h", &format_num(rect.height()));
+        if !region.actions().is_empty() {
+            let actions = region
+                .actions()
+                .iter()
+                .map(|action| action.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            push_raw(&mut out, "actions", &actions);
+        }
+        if let Some(parent) = region.parent() {
+            push_raw(&mut out, "parent", parent.as_str());
+        }
+        if region.sources() != SourceMask::NONE {
+            push_raw(&mut out, "sources", &format_sources(region.sources()));
+        }
+        if region.flags().bits() != 0 {
+            push_raw(&mut out, "flags", &format_flags(region.flags()));
+        }
+        if region.temporal_stability().get() != UnitInterval::ONE.get() {
+            push_raw(
+                &mut out,
+                "stability",
+                &format_num(region.temporal_stability().get()),
+            );
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn push_raw(out: &mut String, key: &str, value: &str) {
+    out.push(' ');
+    out.push_str(key);
+    out.push('=');
+    out.push_str(value);
+}
+
+fn quote(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' | '"' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn format_num(value: f64) -> String {
+    // Debug for f64 is a round-trip format.
+    format!("{value:?}")
+}
+
+fn format_sources(mask: SourceMask) -> String {
+    let mut names = Vec::new();
+    for source in mask.iter() {
+        let name = match source.bits() {
+            0b0001 => "dom",
+            0b0010 => "accessibility",
+            0b0100 => "screenshot",
+            0b1000 => "cua",
+            _ => continue,
+        };
+        names.push(name);
+    }
+    names.join(",")
+}
+
+fn format_flags(flags: RegionFlags) -> String {
+    let mut names = Vec::new();
+    if flags.disabled() {
+        names.push("disabled");
+    }
+    if flags.hidden() {
+        names.push("hidden");
+    }
+    if flags.occluded() {
+        names.push("occluded");
+    }
+    if flags.offscreen() {
+        names.push("offscreen");
+    }
+    if flags.stale() {
+        names.push("stale");
+    }
+    if flags.ambiguous() {
+        names.push("ambiguous");
+    }
+    if flags.detached() {
+        names.push("detached");
+    }
+    names.join(",")
+}
+
 /// Parse a static manifold fixture.
 ///
 /// ```text
@@ -36,21 +163,23 @@ pub fn parse_fixture(input: &str) -> Result<InteractionManifold, FixtureError> {
                 if viewport.is_some() {
                     return Err(FixtureError::DuplicateViewport { line: line_no });
                 }
-                viewport = Some(parse_viewport(&tokens[1..]).map_err(|message| {
-                    FixtureError::Line {
-                        line: line_no,
-                        message,
-                    }
-                })?);
+                viewport =
+                    Some(
+                        parse_viewport(&tokens[1..]).map_err(|message| FixtureError::Line {
+                            line: line_no,
+                            message,
+                        })?,
+                    );
             }
             "region" => {
                 let region = parse_region(&tokens[1..]).map_err(|message| FixtureError::Line {
                     line: line_no,
                     message,
                 })?;
-                if regions.iter().any(|existing: &InteractionRegion| {
-                    existing.id() == region.id()
-                }) {
+                if regions
+                    .iter()
+                    .any(|existing: &InteractionRegion| existing.id() == region.id())
+                {
                     return Err(FixtureError::DuplicateRegion {
                         line: line_no,
                         id: region.id().to_string(),
@@ -209,9 +338,7 @@ fn pairs(tokens: &[String]) -> Result<Vec<(String, String)>, String> {
 }
 
 fn optional<'a>(map: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    map.iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.as_str())
+    map.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
 fn required<'a>(map: &'a [(String, String)], key: &str) -> Result<&'a str, String> {

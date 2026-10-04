@@ -45,9 +45,16 @@ pub enum Request {
     Observe,
     Locate(LocateQuery),
     /// Inspect is required when locate does not separate a single target.
-    Inspect { region_id: RegionId },
-    Act { region_id: RegionId, action: Action },
-    Verify { region_id: RegionId },
+    Inspect {
+        region_id: RegionId,
+    },
+    Act {
+        region_id: RegionId,
+        action: Action,
+    },
+    Verify {
+        region_id: RegionId,
+    },
 }
 
 #[cfg(test)]
@@ -75,7 +82,10 @@ mod tests {
             _ => panic!("expected act"),
         }
         let locate = Request::Locate(
-            LocateQuery::new().text("Settings").unwrap().role(Role::Button),
+            LocateQuery::new()
+                .text("Settings")
+                .unwrap()
+                .role(Role::Button),
         );
         assert!(matches!(locate, Request::Locate(_)));
     }

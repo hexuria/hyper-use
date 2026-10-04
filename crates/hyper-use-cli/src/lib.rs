@@ -142,13 +142,8 @@ fn locate_command(args: &[String]) -> Result<String, CliError> {
         message: err.to_string(),
     })?;
     let manifold = parse_fixture(&body).map_err(|err| CliError::Fixture(err.to_string()))?;
-    let ranked = locate_with(
-        &manifold,
-        &query,
-        &Encoder::new(dims),
-        ResonanceModel::V1,
-    )
-    .map_err(|err| CliError::Locate(err.to_string()))?;
+    let ranked = locate_with(&manifold, &query, &Encoder::new(dims), ResonanceModel::V1)
+        .map_err(|err| CliError::Locate(err.to_string()))?;
     if json {
         Ok(render_json(&manifold, &ranked))
     } else {
@@ -188,8 +183,7 @@ fn build_query(
         query = query.text(text).map_err(|_| CliError::EmptyText)?;
     }
     if let Some(role) = role {
-        let parsed = Role::parse(&role.to_ascii_lowercase())
-            .ok_or(CliError::UnknownRole(role))?;
+        let parsed = Role::parse(&role.to_ascii_lowercase()).ok_or(CliError::UnknownRole(role))?;
         query = query.role(parsed);
     }
     if let Some(position) = position {
@@ -198,8 +192,8 @@ fn build_query(
         query = query.position(parsed);
     }
     if let Some(action) = action {
-        let parsed = Action::parse(&action.to_ascii_lowercase())
-            .ok_or(CliError::UnknownAction(action))?;
+        let parsed =
+            Action::parse(&action.to_ascii_lowercase()).ok_or(CliError::UnknownAction(action))?;
         query = query.action(parsed);
     }
     Ok(query)
@@ -368,14 +362,8 @@ mod tests {
 
     #[test]
     fn empty_text_is_rejected() {
-        let err = execute(&args(&[
-            "locate",
-            "--fixture",
-            &fixture(),
-            "--text",
-            "...",
-        ]))
-        .unwrap_err();
+        let err =
+            execute(&args(&["locate", "--fixture", &fixture(), "--text", "..."])).unwrap_err();
         assert_eq!(err, CliError::EmptyText);
         assert_eq!(
             err.to_string(),

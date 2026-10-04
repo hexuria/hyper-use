@@ -20,15 +20,14 @@ mod model;
 mod signature;
 
 use hyper_use_core::{
-    token_recall, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionId,
-    SourceMask,
+    token_recall, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionId, SourceMask,
 };
-use hyper_use_geometry::{is_fully_offscreen, zones, normalize};
+use hyper_use_geometry::{is_fully_offscreen, normalize, zones};
 use hyper_use_hyper::{cosine, Dims, Encoder};
 
 pub use error::ResonanceError;
 pub use hyper_use_hyper::BipolarVector;
-pub use model::ResonanceModel;
+pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
 
 use signature::{query_probes, region_signature as compose_signature, Memory};
 
@@ -345,6 +344,37 @@ mod tests {
         let model = ResonanceModel::V1;
         assert_eq!(model.version(), 1);
         assert_eq!(model.weight_basis_point_sum(), 100);
+        let rebuilt = model
+            .weight_basis_points()
+            .try_model(model.version(), model.penalty_basis_points())
+            .unwrap();
+        assert_eq!(rebuilt, model);
+        let mut bad = model.weight_basis_points();
+        bad.hypervector = 34;
+        let err = bad.try_model(1, model.penalty_basis_points()).unwrap_err();
+        assert_eq!(err, ResonanceError::WeightsDoNotSum { sum: 99 });
+        assert_eq!(
+            err.to_string(),
+            "positive weights sum to 99 basis points, expected 100"
+        );
+        let overflow = WeightBasisPoints {
+            hypervector: u16::MAX,
+            semantic: u16::MAX,
+            source_agreement: u16::MAX,
+            geometric: u16::MAX,
+            actionability: u16::MAX,
+            temporal_stability: u16::MAX,
+            contextual_consistency: u16::MAX,
+        };
+        let err = overflow
+            .try_model(1, model.penalty_basis_points())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ResonanceError::WeightsDoNotSum {
+                sum: 7 * u32::from(u16::MAX)
+            }
+        );
         assert_eq!(model.hypervector(), 0.35);
         assert_eq!(model.semantic(), 0.20);
         assert_eq!(model.source_agreement(), 0.15);
@@ -372,9 +402,15 @@ mod tests {
         for (left, right) in once.iter().zip(twice.iter()) {
             assert_eq!(left.id(), right.id());
             assert_eq!(left.rank(), right.rank());
-            assert_eq!(left.score().total().to_bits(), right.score().total().to_bits());
+            assert_eq!(
+                left.score().total().to_bits(),
+                right.score().total().to_bits()
+            );
         }
-        let ids: Vec<_> = once.iter().map(|candidate| candidate.id().as_str()).collect();
+        let ids: Vec<_> = once
+            .iter()
+            .map(|candidate| candidate.id().as_str())
+            .collect();
         assert_eq!(ids, ["a", "b", "c"]);
     }
 
@@ -384,12 +420,36 @@ mod tests {
         let encoder = Encoder::new(Dims::D512);
         let model = ResonanceModel::V1;
         let cases: [(&str, RegionFlags, f64); 7] = [
-            ("disabled", with_flag(|flags| flags.set_disabled(true)), model.penalty_disabled()),
-            ("hidden", with_flag(|flags| flags.set_hidden(true)), model.penalty_hidden()),
-            ("occluded", with_flag(|flags| flags.set_occluded(true)), model.penalty_occluded()),
-            ("stale", with_flag(|flags| flags.set_stale(true)), model.penalty_stale()),
-            ("ambiguous", with_flag(|flags| flags.set_ambiguous(true)), model.penalty_ambiguous()),
-            ("offscreen", with_flag(|flags| flags.set_offscreen(true)), model.penalty_offscreen()),
+            (
+                "disabled",
+                with_flag(|flags| flags.set_disabled(true)),
+                model.penalty_disabled(),
+            ),
+            (
+                "hidden",
+                with_flag(|flags| flags.set_hidden(true)),
+                model.penalty_hidden(),
+            ),
+            (
+                "occluded",
+                with_flag(|flags| flags.set_occluded(true)),
+                model.penalty_occluded(),
+            ),
+            (
+                "stale",
+                with_flag(|flags| flags.set_stale(true)),
+                model.penalty_stale(),
+            ),
+            (
+                "ambiguous",
+                with_flag(|flags| flags.set_ambiguous(true)),
+                model.penalty_ambiguous(),
+            ),
+            (
+                "offscreen",
+                with_flag(|flags| flags.set_offscreen(true)),
+                model.penalty_offscreen(),
+            ),
             (
                 "detached",
                 with_flag(|flags| flags.set_detached(true)),
@@ -397,7 +457,13 @@ mod tests {
             ),
         ];
         for (name, flags, expected_drop) in cases {
-            let clean = manifold(vec![sample("only", "Settings", 16.0, RegionFlags::none(), 80.0)]);
+            let clean = manifold(vec![sample(
+                "only",
+                "Settings",
+                16.0,
+                RegionFlags::none(),
+                80.0,
+            )]);
             let penalized = manifold(vec![sample("only", "Settings", 16.0, flags, 80.0)]);
             let clean_score = locate_with(&clean, &query, &encoder, model).unwrap()[0]
                 .score()
@@ -427,7 +493,8 @@ mod tests {
         let visible_score = locate_with(&visible, &query, &encoder, ResonanceModel::V1).unwrap();
         let zero_score = locate_with(&zero, &query, &encoder, ResonanceModel::V1).unwrap();
         assert!(
-            (zero_score[0].score().penalty() - ResonanceModel::V1.penalty_zero_size()).abs() < 1e-12
+            (zero_score[0].score().penalty() - ResonanceModel::V1.penalty_zero_size()).abs()
+                < 1e-12
         );
         assert!(zero_score[0].score().total() < visible_score[0].score().total());
 
@@ -444,8 +511,20 @@ mod tests {
         })
         .unwrap();
         let on = sample("off", "Undo", 16.0, RegionFlags::none(), 80.0);
-        let off_ranked = locate_with(&manifold(vec![off]), &LocateQuery::new().text("Undo").unwrap(), &encoder, ResonanceModel::V1).unwrap();
-        let on_ranked = locate_with(&manifold(vec![on]), &LocateQuery::new().text("Undo").unwrap(), &encoder, ResonanceModel::V1).unwrap();
+        let off_ranked = locate_with(
+            &manifold(vec![off]),
+            &LocateQuery::new().text("Undo").unwrap(),
+            &encoder,
+            ResonanceModel::V1,
+        )
+        .unwrap();
+        let on_ranked = locate_with(
+            &manifold(vec![on]),
+            &LocateQuery::new().text("Undo").unwrap(),
+            &encoder,
+            ResonanceModel::V1,
+        )
+        .unwrap();
         assert!(off_ranked[0].score().penalty() >= ResonanceModel::V1.penalty_offscreen() - 1e-12);
         assert!(off_ranked[0].score().total() < on_ranked[0].score().total());
     }
@@ -460,14 +539,20 @@ mod tests {
         assert_eq!(once[0].rank(), 1);
         assert!(once[0].score().geometric() == 1.0);
         assert!(once[0].score().semantic() == 1.0);
-        let main = once.iter().find(|c| c.id().as_str() == "main-settings").unwrap();
+        let main = once
+            .iter()
+            .find(|c| c.id().as_str() == "main-settings")
+            .unwrap();
         assert!(once[0].score().total() > main.score().total());
         assert!(main.rank() > 1);
         let ids_once: Vec<_> = once.iter().map(|c| c.id().as_str()).collect();
         let ids_twice: Vec<_> = twice.iter().map(|c| c.id().as_str()).collect();
         assert_eq!(ids_once, ids_twice);
         for (left, right) in once.iter().zip(twice.iter()) {
-            assert_eq!(left.score().total().to_bits(), right.score().total().to_bits());
+            assert_eq!(
+                left.score().total().to_bits(),
+                right.score().total().to_bits()
+            );
         }
         assert_eq!(once.len(), manifold.len());
         let help = relations_help_above(&manifold);
@@ -508,7 +593,13 @@ mod tests {
 
     #[test]
     fn signature_is_deterministic_and_dim_mismatch_surfaces() {
-        let manifold = manifold(vec![sample("a", "Settings", 16.0, RegionFlags::none(), 80.0)]);
+        let manifold = manifold(vec![sample(
+            "a",
+            "Settings",
+            16.0,
+            RegionFlags::none(),
+            80.0,
+        )]);
         let region = manifold.get_str("a").unwrap();
         let encoder = Encoder::new(Dims::D512);
         let once = region_signature(&manifold, region, &encoder).unwrap();

@@ -160,7 +160,11 @@ mod tests {
     fn policy_prefers_browser_then_macos_then_cua() {
         assert_eq!(
             DEFAULT_POLICY_ORDER,
-            [ExecutorKind::Browser, ExecutorKind::Macos, ExecutorKind::Cua]
+            [
+                ExecutorKind::Browser,
+                ExecutorKind::Macos,
+                ExecutorKind::Cua
+            ]
         );
         assert_eq!(
             select_executor(&[ExecutorKind::Cua, ExecutorKind::Browser]).unwrap(),
@@ -170,7 +174,10 @@ mod tests {
             select_executor(&[ExecutorKind::Cua, ExecutorKind::Macos]).unwrap(),
             ExecutorKind::Macos
         );
-        assert_eq!(select_executor(&[ExecutorKind::Cua]).unwrap(), ExecutorKind::Cua);
+        assert_eq!(
+            select_executor(&[ExecutorKind::Cua]).unwrap(),
+            ExecutorKind::Cua
+        );
         let err = select_executor(&[]).unwrap_err();
         assert_eq!(err, ExecutorError::NoneAvailable);
         assert_eq!(err.to_string(), "no executor is available");
@@ -184,9 +191,14 @@ mod tests {
             let err = executor.execute(&request).unwrap_err();
             assert_eq!(err, ExecutorError::NotImplemented(kind));
             assert!(err.to_string().contains("not implemented"));
-            assert!(kind.status().contains("not implemented") || kind.status().contains("later phase"));
+            assert!(
+                kind.status().contains("not implemented") || kind.status().contains("later phase")
+            );
         }
-        assert_eq!(hyper_use_browser::BrowserStub.status(), hyper_use_browser::STATUS);
+        assert_eq!(
+            hyper_use_browser::BrowserStub.status(),
+            hyper_use_browser::STATUS
+        );
         assert_eq!(hyper_use_macos::MacosStub.status(), hyper_use_macos::STATUS);
         assert_eq!(hyper_use_cua::CuaStub.status(), hyper_use_cua::STATUS);
     }

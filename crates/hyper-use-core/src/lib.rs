@@ -17,7 +17,7 @@ mod text;
 mod vocab;
 
 pub use error::{CoreError, FixtureError};
-pub use fixture::parse_fixture;
+pub use fixture::{parse_fixture, write_fixture};
 pub use id::{RegionId, StateFingerprint, UnitInterval};
 pub use manifold::InteractionManifold;
 pub use query::LocateQuery;
@@ -186,6 +186,84 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+        let err = parse_fixture("viewport w=10 h=10\nviewport w=2 h=2\n").unwrap_err();
+        assert_eq!(err, FixtureError::DuplicateViewport { line: 2 });
+        assert_eq!(err.to_string(), "fixture line 2: duplicate viewport");
+        let err = parse_fixture(
+            "viewport w=10 h=10\nregion id=a role=button label=A x=0 y=0 w=1 h=1\nregion id=a role=button label=B x=1 y=1 w=1 h=1\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            FixtureError::DuplicateRegion {
+                line: 3,
+                id: "a".into(),
+            }
+        );
+        let err = parse_fixture("viewport w=10 h=10\nregion id=a label=\"open\n").unwrap_err();
+        assert_eq!(
+            err,
+            FixtureError::Line {
+                line: 2,
+                message: "unclosed quote".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn fixture_roundtrip_preserves_the_manifold() {
+        let original = parse_fixture(include_str!("../../../fixtures/sidebar.manifold")).unwrap();
+        let written = write_fixture(&original).unwrap();
+        let again = parse_fixture(&written).unwrap();
+        assert_eq!(original, again);
+
+        let quoted = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("quote").unwrap(),
+            role: Role::Button,
+            label: "Say \"hi\"".into(),
+            rect: Rect::try_new(1.5, 2.0, 3.0, 4.0).unwrap(),
+            actions: vec![Action::Type, Action::Click],
+            parent: Some(RegionId::try_new("nav").unwrap()),
+            sources: SourceMask::DOM.union(SourceMask::CUA),
+            flags: {
+                let mut flags = RegionFlags::none();
+                flags.set_disabled(true);
+                flags.set_stale(true);
+                flags
+            },
+            temporal_stability: UnitInterval::try_new(0.5).unwrap(),
+        })
+        .unwrap();
+        let parent = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("nav").unwrap(),
+            role: Role::Navigation,
+            label: "Sidebar".into(),
+            rect: Rect::try_new(0.0, 0.0, 10.0, 10.0).unwrap(),
+            actions: vec![],
+            parent: None,
+            sources: SourceMask::NONE,
+            flags: RegionFlags::none(),
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap();
+        let viewport = Rect::try_viewport(0.0, 0.0, 100.0, 80.0).unwrap();
+        let manifold = InteractionManifold::try_new(viewport, vec![quoted, parent], 0).unwrap();
+        let parsed = parse_fixture(&write_fixture(&manifold).unwrap()).unwrap();
+        assert_eq!(parsed, manifold);
+        assert_eq!(parsed.get_str("quote").unwrap().label(), "Say \"hi\"");
+
+        let shifted = InteractionManifold::try_new(
+            Rect::try_viewport(4.0, 0.0, 100.0, 80.0).unwrap(),
+            vec![region("only", "Only", 1.0)],
+            0,
+        )
+        .unwrap();
+        let err = write_fixture(&shifted).unwrap_err();
+        assert_eq!(err, FixtureError::UnsupportedViewportOrigin);
+        assert_eq!(
+            err.to_string(),
+            "fixture format cannot represent a viewport whose origin is not (0, 0)"
+        );
     }
 
     #[test]

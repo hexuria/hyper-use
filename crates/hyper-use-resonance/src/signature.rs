@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use hyper_use_core::{tokenize, InteractionManifold, InteractionRegion, Relation};
 use hyper_use_geometry::{normalize, size_class, spatial_relations, zones};
@@ -6,6 +6,8 @@ use hyper_use_hyper::{bind, bundle, permute, relation_shift, BipolarVector, Enco
 
 use crate::error::ResonanceError;
 
+// Relative bundle weights. Not a probability distribution: they do not sum
+// to 1, and normalizing them would change the signature. See DECISIONS.md.
 const ROLE_WEIGHT: f64 = 2.0;
 const LABEL_WEIGHT: f64 = 3.0;
 const POSITION_WEIGHT: f64 = 2.0;
@@ -104,6 +106,11 @@ pub(crate) fn region_signature(
             }
         }
     }
+    // Neighbors that share a relation and a role produce the same bipolar
+    // vector. `NEIGHBOR_WEIGHT` is 1/4, so `weight * count` is the same f64
+    // as adding `weight` once per neighbor, and the bundle sum stays an exact
+    // multiple of 1/4. Collapsing them does not change a sign.
+    let mut neighbor_hits: BTreeMap<(&str, &str), u32> = BTreeMap::new();
     for other in manifold.regions() {
         if other.id() == region.id() || Some(other.id()) == region.parent() {
             continue;
@@ -113,14 +120,19 @@ pub(crate) fn region_signature(
             if !is_neighborhood(relation) {
                 continue;
             }
-            push_permuted(
-                &mut parts,
-                memory,
-                relation.as_str(),
-                other.role().as_str(),
-                NEIGHBOR_WEIGHT,
-            )?;
+            *neighbor_hits
+                .entry((relation.as_str(), other.role().as_str()))
+                .or_insert(0) += 1;
         }
+    }
+    for ((relation, role), count) in neighbor_hits {
+        push_permuted(
+            &mut parts,
+            memory,
+            relation,
+            role,
+            NEIGHBOR_WEIGHT * f64::from(count),
+        )?;
     }
     let (x, y, w, h) = region.rect().quantize_milli();
     let state = format!(

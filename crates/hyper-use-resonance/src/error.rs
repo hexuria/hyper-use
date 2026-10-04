@@ -8,6 +8,10 @@ use hyper_use_hyper::HyperError;
 pub enum ResonanceError {
     Hyper(HyperError),
     Geometry(GeometryError),
+    /// Positive basis points did not sum to 100. `sum` is the integer total.
+    WeightsDoNotSum {
+        sum: u32,
+    },
 }
 
 impl fmt::Display for ResonanceError {
@@ -15,6 +19,12 @@ impl fmt::Display for ResonanceError {
         match self {
             Self::Hyper(err) => write!(f, "hypervector error: {err}"),
             Self::Geometry(err) => write!(f, "geometry error: {err}"),
+            Self::WeightsDoNotSum { sum } => {
+                write!(
+                    f,
+                    "positive weights sum to {sum} basis points, expected 100"
+                )
+            }
         }
     }
 }
@@ -24,6 +34,7 @@ impl std::error::Error for ResonanceError {
         match self {
             Self::Hyper(err) => Some(err),
             Self::Geometry(err) => Some(err),
+            Self::WeightsDoNotSum { .. } => None,
         }
     }
 }

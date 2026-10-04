@@ -15,9 +15,7 @@
 
 use std::fmt;
 
-use hyper_use_core::{
-    InteractionManifold, Rect, RegionId, Relation, SizeClass, Zone,
-};
+use hyper_use_core::{InteractionManifold, Rect, RegionId, Relation, SizeClass, Zone};
 
 /// Normalized rectangle. Components are fractions of the viewport, not pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,9 +67,7 @@ pub enum GeometryError {
 impl fmt::Display for GeometryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NonPositiveViewport => {
-                f.write_str("viewport width and height must be positive")
-            }
+            Self::NonPositiveViewport => f.write_str("viewport width and height must be positive"),
             Self::UnknownRegion(id) => write!(f, "unknown region `{id}`"),
         }
     }
@@ -269,7 +265,10 @@ mod tests {
     fn rejects_non_positive_viewport() {
         let rect = Rect::try_new(0.0, 0.0, 1.0, 1.0).unwrap();
         let bad = Rect::try_new(0.0, 0.0, 0.0, 10.0).unwrap();
-        assert_eq!(normalize(rect, bad), Err(GeometryError::NonPositiveViewport));
+        assert_eq!(
+            normalize(rect, bad),
+            Err(GeometryError::NonPositiveViewport)
+        );
     }
 
     #[test]

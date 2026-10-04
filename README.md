@@ -31,3 +31,4 @@ CUA) and so every stub refuses to act. Do not treat a stub status string as a
 working backend.
 
 The toolchain is pinned to Rust 1.99.0 in `rust-toolchain.toml`.
+Versions are 0.1.0. The public API is unstable until 1.0.

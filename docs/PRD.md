@@ -68,6 +68,22 @@ Both implement `RegionMatcher::rank`.
 Both rank the sidebar Settings control first on `fixtures/sidebar.manifold`.
 That is not a benchmark. Neither matcher is claimed to have won.
 
+
+## Fixture agreement
+
+`cargo run -p hyper-use-cli --example fixture_compare` ranks
+`sidebar.manifold`, `sign-in.cdp.json`, `welcome.cdp.json`, and
+`sign-in-press.cdp.json` with `WeightedMatcher`. Only the press fixture is
+acted, through the replay executor, and only when locate confidence clears
+0.55. Stdout is one JSON document: region id, confidence, and `executed` on
+that press. Unmeasured keys are omitted. This is not a Browser Use score and
+it is not a `ComputerResult` (that type always sets `executed` and `verified`).
+
+`typesafe-sdk` 0.2 is an optional `jev` feature of the CLI, off in the default
+build. With `HYPER_USE_JEV=1` it asks one choice per case. `agree` is whether
+that choice equals the region id, or `press` / `do-not-press` against
+`executed`. It is not a win. Browser Use is not started.
+
 ## Identity
 
 A region id is not a coordinate and not an enabled bit. The same id remains
@@ -83,7 +99,7 @@ when the backend id does.
    press, refresh, verify. Fixture-proven.
 3. JEV contract types. This tree. Task and result only. No JEV runtime.
 4. MCP, CLI, and skill surfaces. `hyper-use mcp` serves the six tools over stdio JSON-RPC. No navigate tool.
-5. Evaluation against the current JEV to Browser Use path. Not started.
+5. Fixture id and action agreement only. `WeightedMatcher` on four local fixtures, plus an optional System One choice. Browser Use is not started.
 6. Hyper matcher experiment. The ranker is selectable. No bake-off yet.
 7. CUA fusion. Not started. The stub still refuses.
 8. macOS. Last. The accessibility crate and the Mac app stay stubs.

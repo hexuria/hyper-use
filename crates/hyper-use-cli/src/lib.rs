@@ -370,7 +370,12 @@ fn json_escape(text: &str) -> String {
     out
 }
 
+mod compare;
 pub(crate) mod session_cmd;
+
+#[cfg(feature = "jev")]
+pub use compare::fixture_compare_live;
+pub use compare::{fixture_compare, CompareError, FixtureReport};
 
 #[cfg(test)]
 mod tests {

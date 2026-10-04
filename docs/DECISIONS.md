@@ -275,3 +275,43 @@ or of fusion was added.
 matcher and `HgraMatcher` with `ResonanceModel::V1` do not return it on a
 manifold this crate just parsed. There is no fixture for it. A click is not
 substituted.
+
+## Fixture comparison, not a Browser Use score
+
+The first comparison is the `fixture_compare` example in `hyper-use-cli`. It
+parses `sidebar.manifold`, `sign-in.cdp.json`, `welcome.cdp.json`, and
+`sign-in-press.cdp.json`, ranks with `WeightedMatcher`, and acts only on the
+press fixture through `BrowserExecutor` and `ReplayTransport`.
+`press-only.cdp.json` is omitted because it has no observation. Sign-in is not
+diffed against welcome. `HgraMatcher` is not ranked here.
+
+`executed` is true only after an action receipt. A scored confidence below 550
+millis does not call the transport, and `executed` is false. A manifold file
+cannot act, so the sidebar case has no `executed` field. The JSON is not a
+`ComputerResult`: that type always carries `executed` and `verified`, which
+would make a locate look like a fake refusal.
+
+`typesafe-sdk` 0.2, feature `blocking`, is an optional `jev` feature of the
+CLI crate only. It is not a path dependency, not a ranker dependency, and not
+a second matcher. `cargo build` and `cargo test` do not compile it, so the
+default `hyper-use` binary does not link Tokio. Enabling `jev` does: the SDK's
+blocking client owns a current-thread runtime. That build is not the default.
+Live calls run only when the feature and `HYPER_USE_JEV=1` are both set. Each
+case is one `Client::from_env()` `system_one` choice. The model and base URL
+come from the environment. State is the manifold (viewport, id, role, label,
+rect), not a screenshot. The prompt does not contain the 0.55 rule or the
+correct action. The client reads `choice` and does not read usage. `agree` is
+id equality, or `press` / `do-not-press` against `executed`. It is not a win
+and not a benchmark.
+
+Downside accepted: four fixtures and one press. A live choice can disagree and
+the run still succeeds, because this slice measures agreement, not a product
+winner. Browser Use is not started. No tokens, screenshots, retries, latency,
+or winner are recorded.
+
+Verifier: the fixture test owns region ids, `executed` only on the press case,
+absence of `jev` and `agree`, and confidence equal to a second `rank` of the
+same manifold. The low-confidence arm owns "the transport log stays empty".
+No Miri, Loom, Kani, or benchmark harness. The optional feature is typechecked
+with `cargo check -p hyper-use-cli --features jev` and is not part of default CI.
+

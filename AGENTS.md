@@ -6,7 +6,7 @@ hyper-use is not an agent. Operations are observe, locate, inspect, act, diff, v
 
 The product default matcher is `WeightedMatcher`. `HgraMatcher` is selectable. Do not claim one won without a benchmark.
 
-Phase 2 speaks CDP through one transport trait. Replay fixtures and a live websocket share that trait. macOS and CUA stay unimplemented. A low-confidence act does not call CUA.
+Phase 2 speaks CDP through one transport trait. Replay fixtures and a live websocket share that trait. macOS stays unimplemented. The CUA pixel driver stays unimplemented. Opt-in `cua` is a semantic replay, not fusion. A low-confidence act does not call CUA.
 
 Public API is 0.1 and unstable until 1.0. Toolchain pin: Rust 1.99.0. `publish = false`.
 
@@ -75,7 +75,7 @@ Tests or proofs updated: hyper-use-mcp server tests, a 16-case proptest that ran
 
 ## Browser Use executor
 
-`browser-use` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. The CDP press path is unchanged. macOS and CUA stay unimplemented. A scored confidence below 550 millis does not call the replay transport.
+`browser-use` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. The CDP press path is unchanged. macOS stays unimplemented. A scored confidence below 550 millis does not call the replay transport.
 
 ```
 Verification impact
@@ -93,6 +93,31 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: the Browser Use path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
-Affected invariants: default act stays the CDP browser press; Browser Use is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos and cua still return NotImplemented.
+Affected invariants: default act stays the CDP browser press; Browser Use is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented. The CUA stub executor still returns NotImplemented; the opt-in replay is a later section.
 Tests or proofs updated: browser-use replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
+```
+
+
+## CUA semantic handoff
+
+`cua` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. This is not a CUA fusion benchmark. The CDP press path and the Browser Use path are unchanged. macOS stays unimplemented. A scored confidence below 550 millis does not call the CUA transport. `CuaStub` still says pixel actuation is a later phase.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: the CUA path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
+Affected invariants: default act stays the CDP browser press; CUA is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented; a missing CDP session does not select CUA.
+Tests or proofs updated: cua replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
 ```

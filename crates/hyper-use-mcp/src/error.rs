@@ -51,6 +51,13 @@ pub enum ToolError {
     BrowserUseScript {
         message: String,
     },
+    CuaIsReplay,
+    CuaRejected {
+        message: String,
+    },
+    CuaScript {
+        message: String,
+    },
     InvalidArguments(String),
     Io {
         path: String,
@@ -97,6 +104,9 @@ impl ToolError {
             Self::BrowserUseIsReplay => "BrowserUseIsReplay",
             Self::BrowserUseRejected { .. } => "BrowserUseRejected",
             Self::BrowserUseScript { .. } => "BrowserUseScript",
+            Self::CuaIsReplay => "CuaIsReplay",
+            Self::CuaRejected { .. } => "CuaRejected",
+            Self::CuaScript { .. } => "CuaScript",
             Self::InvalidArguments(_) => "InvalidArguments",
             Self::Io { .. } => "Io",
             Self::Fixture(_) => "Fixture",
@@ -133,6 +143,12 @@ impl ToolError {
             }
             Self::BrowserUseScript { message } => {
                 json!({"variant": "BrowserUseScript", "message": message})
+            }
+            Self::CuaRejected { message } => {
+                json!({"variant": "CuaRejected", "message": message})
+            }
+            Self::CuaScript { message } => {
+                json!({"variant": "CuaScript", "message": message})
             }
             Self::InvalidArguments(message) => {
                 json!({"variant": "InvalidArguments", "message": message})
@@ -202,6 +218,15 @@ impl fmt::Display for ToolError {
             }
             Self::BrowserUseScript { message } => {
                 write!(f, "invalid browser-use script: {message}")
+            }
+            Self::CuaIsReplay => {
+                f.write_str("cua act uses a replay fixture, not a live CDP endpoint")
+            }
+            Self::CuaRejected { message } => {
+                write!(f, "cua rejected the semantic act: {message}")
+            }
+            Self::CuaScript { message } => {
+                write!(f, "invalid cua script: {message}")
             }
             Self::InvalidArguments(message) => write!(f, "invalid arguments: {message}"),
             Self::Io { path, message } => write!(f, "cannot read {path}: {message}"),

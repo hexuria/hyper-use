@@ -109,10 +109,11 @@ model of the same score without a conformance fixture.
 
 ## What this code cannot do
 
-- No macOS accessibility. macOS and CUA return `ExecutorError::NotImplemented`.
+- No macOS accessibility. macOS returns `ExecutorError::NotImplemented`.
   A browser stub with no session does too. `BrowserExecutor` does not.
-  `BrowserUseExecutor` is a replay of one semantic act, not a live agent.
-  MCP stdio exists. It is not a second browser and it does not navigate.
+  `BrowserUseExecutor` and `CuaExecutor` are each a replay of one semantic act,
+  not a live agent and not a fusion benchmark. The pixel CUA driver is still
+  `CuaStub`. MCP stdio exists. It is not a second browser and it does not navigate.
 - No navigation and no JEV runtime. `ComputerTask` is one locate or one act.
 - The weighted matcher and HGRA are not calibrated to each other. A confidence
   of 0.55 is the act gate for a scored total. It is not a probability.
@@ -358,4 +359,68 @@ selection: high confidence records `browser-use-semantic`, low confidence on
 a rejecting script is still `executed: false`, and `macos` is
 `NotImplemented`. No Miri, Loom, Kani, or benchmark harness. No second model
 of the ranker. No live Browser Use process.
+
+## CUA semantic handoff, not a fusion benchmark
+
+CUA is an opt-in act backend, not a fallback and not an agent.
+`ExecutorKind::Cua` is absent from `DEFAULT_POLICY_ORDER`, next to
+`ExecutorKind::BrowserUse`. `select_executor` therefore keeps the CDP browser
+press when CUA is also listed, and returns `NoneAvailable` when CUA is the
+only listed kind. `select_act_executor(None, _)` drops both opt-in kinds
+before that walk. The host names `cua` with `select_requested`. A missing CDP
+session does not delegate.
+
+The request is a `hyper_use_cua::SemanticRequest`: region id, role, label, and
+action. `to_wire` writes only those four keys. A fixture that carries `goal`,
+`url`, `x`, `y`, `coordinates`, `navigate`, `task`, `screenshot`, `tokens`,
+`latency`, or `retries` is `CuaError::BadScript`. The script kind is
+`cua-replay`. A `browser-use-replay` document is rejected, so the two grammars
+are not interchangeable. There is no coordinate click on this path. The CDP
+press order is unchanged, and the Browser Use path is unchanged.
+
+`ReplayTransport` in `hyper-use-cua` is the only CUA transport. It records
+every `submit` and then either returns a `TransportReceipt` or
+`CuaError::Rejected`. It does not start a process. A receipt whose id or
+action differs from the request is `ParamsMismatch` after the call. The
+region id and the action are checked before the confidence gate, so an unknown
+region or a different action does not submit. A scored total below 550 millis
+returns `ConfidenceBelowThreshold` and leaves the transport log empty.
+`StubExecutor` for `cua` still returns `NotImplemented` and does not panic.
+macOS stays `NotImplemented`. `CuaStub::status` stays the pixel-driver
+sentence. That stub is not a fusion score.
+
+Downside accepted: the replay script is the resolved target. This slice does
+not observe pixels, does not fuse a screenshot with the manifold, and does not
+speak to a live computer-use process. A host that has not already located the
+region has nothing to hand over. Removing CUA from the old last-resort slot
+means a host that only lists `cua` as available no longer receives that kind
+from `select_executor`; it must name it. That is intentional. This is not a
+success rate, a token count, a screenshot comparison, a retry policy, a
+latency, or a win over CDP or Browser Use.
+
+`serde_json` parses the replay document inside `hyper-use-cua`, as it does for
+Browser Use. `to_wire` returns a `String`. `serde_json::Value` is not part of
+the public signature. No ranker crate depends on it.
+
+Verifier: unit tests own the wire keys, the exact `Rejected`, `BadScript`, and
+`ParamsMismatch` variants, and "the log stays empty below 550 millis". A
+16-case proptest owns the key set for generated labels, and a 16-case proptest
+owns the gate for integer millis in `0..550`. CLI and MCP tests own selection:
+high confidence records `cua-semantic`, low confidence on a rejecting script
+is still `executed: false`, an unnamed executor does not accept a `cua-replay`
+script, and `macos` is `NotImplemented`. No Miri, Loom, Kani, or benchmark
+harness. No second model of the ranker. No live CUA process. No fusion metric.
+
+Error litmus, 2026-10-05: the empty-label `return Err` in
+`hyper_use_cua::SemanticRequest::new` was temporarily replaced with
+`let _skipped = CuaError::BadScript { message: "label must not be empty".into() };`.
+`cargo test -p hyper-use-cua --lib -- --exact tests::empty_label_and_unknown_role_are_script_errors`
+failed:
+
+```
+called `Result::unwrap_err()` on an `Ok` value: SemanticRequest { region_id: RegionId("n100"), role: Button, label: "", action: Click }
+```
+
+The return was restored. The test then asserts
+`Err(CuaError::BadScript { message: "label must not be empty" })`, not `is_err()`.
 

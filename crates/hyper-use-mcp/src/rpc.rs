@@ -156,7 +156,7 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "act" => (
-            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use hands the located region id, role, and label to a replay transport. It does not take a goal or a multi-step plan, and it is not a benchmark. A confidence below 0.55 returns executed false and does not click. Omit confidence only when the region was already inspected. Does not take x or y.",
+            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use and executor cua each hand the located region id, role, and label to a replay transport. Neither is in the default policy order, neither changes the page, and neither is a fusion benchmark. A confidence below 0.55 returns executed false and does not click. Omit confidence only when the region was already inspected. Does not take x or y.",
             {
                 let mut props = source_props();
                 props.insert("region".into(), json!({"type": "string"}));
@@ -170,7 +170,7 @@ fn tool_spec(name: &str) -> Value {
                     json!({
                         "type": "string",
                         "enum": ["browser", "browser-use", "macos", "cua"],
-                        "description": "Default browser is the CDP press. browser-use is an opt-in semantic replay. macos and cua are not implemented."
+                        "description": "Default browser is the CDP press. browser-use and cua are opt-in semantic replays and are not fallbacks. macos is not implemented."
                     }),
                 );
                 props

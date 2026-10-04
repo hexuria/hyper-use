@@ -63,6 +63,13 @@ pub enum CliError {
     BrowserUseScript {
         message: String,
     },
+    CuaIsReplay,
+    CuaRejected {
+        message: String,
+    },
+    CuaScript {
+        message: String,
+    },
     /// `mcp` is served by the binary, which owns stdin. This library call does not.
     McpIsStdio,
 }
@@ -123,6 +130,15 @@ impl std::fmt::Display for CliError {
             Self::BrowserUseScript { message } => {
                 write!(f, "invalid browser-use script: {message}")
             }
+            Self::CuaIsReplay => {
+                f.write_str("cua act uses a replay fixture, not a live CDP endpoint")
+            }
+            Self::CuaRejected { message } => {
+                write!(f, "cua rejected the semantic act: {message}")
+            }
+            Self::CuaScript { message } => {
+                write!(f, "invalid cua script: {message}")
+            }
             Self::McpIsStdio => {
                 f.write_str("mcp serves JSON-RPC on stdio; run the hyper-use binary")
             }
@@ -133,7 +149,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>] [--executor browser|browser-use|macos|cua]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\nDefault executor is the CDP browser press. --executor browser-use sends region id, role, and label through a replay fixture. It does not navigate and it is not a benchmark. macos and cua are not implemented.\n"
+    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>] [--executor browser|browser-use|macos|cua]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\nDefault executor is the CDP browser press. --executor browser-use and --executor cua each send region id, role, and label through a replay fixture. They are not in the default policy order, they do not navigate, and they are not a fusion benchmark. macos is not implemented.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -588,6 +604,72 @@ mod tests {
             }
         );
         assert_eq!(macos.to_string(), "macos executor is not implemented");
+        let cua = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp_fixture("sign-in.cua.json"),
+            "--executor",
+            "cua",
+            "--confidence",
+            "0.55",
+        ]))
+        .unwrap();
+        assert_eq!(cua, "n100\tpress\tcua-semantic\texecuted\n");
+        let low = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp_fixture("sign-in.cua.json"),
+            "--executor",
+            "cua",
+            "--confidence",
+            "0.49",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            low,
+            CliError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+        let rejected = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp_fixture("sign-in-reject.cua.json"),
+            "--executor",
+            "cua",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            rejected,
+            CliError::CuaRejected {
+                message: "control refused the semantic act".into(),
+            }
+        );
+        assert_eq!(
+            rejected.to_string(),
+            "cua rejected the semantic act: control refused the semantic act"
+        );
+        let replay = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--cdp",
+            "--executor",
+            "cua",
+        ]))
+        .unwrap_err();
+        assert_eq!(replay, CliError::CuaIsReplay);
+        assert_eq!(
+            replay.to_string(),
+            "cua act uses a replay fixture, not a live CDP endpoint"
+        );
         let unknown = execute(&args(&[
             "act",
             "n100",

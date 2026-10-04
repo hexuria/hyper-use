@@ -283,6 +283,116 @@ fn browser_use_act_is_semantic_and_low_confidence_does_not_execute() {
 }
 
 #[test]
+fn cua_act_is_semantic_and_low_confidence_does_not_execute() {
+    let pressed = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cua.json"),
+            "region": "n100",
+            "action": "press",
+            "executor": "cua",
+            "confidence": 0.55
+        }),
+    )
+    .unwrap();
+    assert_eq!(pressed["executed"], true);
+    assert_eq!(pressed["executor"], "cua");
+    assert_eq!(pressed["mechanism"], "cua-semantic");
+    assert_eq!(pressed["target"]["id"], "n100");
+    assert_eq!(pressed["target"]["role"], "button");
+    assert_eq!(pressed["target"]["label"], "Sign in");
+    assert_eq!(pressed["action"], "click");
+    assert!(pressed.get("x").is_none());
+    assert!(pressed.get("goal").is_none());
+    assert!(pressed["target"].get("x").is_none());
+
+    let refused = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-reject.cua.json"),
+            "region": "n100",
+            "executor": "cua",
+            "confidence": 0.49
+        }),
+    )
+    .unwrap();
+    assert_eq!(refused["executed"], false);
+    assert_eq!(refused["fallback"], "low-confidence");
+    assert_eq!(refused["executor"], Value::Null);
+    assert!(refused["mechanism"].is_null());
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-reject.cua.json"),
+            "region": "n100",
+            "executor": "cua"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::CuaRejected {
+            message: "control refused the semantic act".into(),
+        }
+    );
+    assert_eq!(
+        err.to_value(),
+        json!({
+            "variant": "CuaRejected",
+            "message": "control refused the semantic act"
+        })
+    );
+    assert_eq!(
+        err.to_string(),
+        "cua rejected the semantic act: control refused the semantic act"
+    );
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cua.json"),
+            "region": "n100",
+            "executor": "cua",
+            "cdp": "http://127.0.0.1:9222"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::CuaIsReplay);
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cua.json"),
+            "region": "n100",
+            "executor": "cua",
+            "goal": "sign the user in"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::GoalNotAccepted);
+
+    let default_act = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cua.json"),
+            "region": "n100"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(
+        default_act,
+        ToolError::Browser(
+            "invalid CDP script: script must be an object with a calls array".into(),
+        )
+    );
+    assert_eq!(
+        default_act.to_string(),
+        "browser: invalid CDP script: script must be an object with a calls array"
+    );
+}
+
+#[test]
 fn error_variants_are_exact() {
     let sign_in = fixture("sign-in.cdp.json");
     let err = call("observe", json!({})).unwrap_err();

@@ -16,8 +16,8 @@ use hyper_use_core::{
 };
 use hyper_use_executor::{
     gate_scored_confidence, select_act_executor, ActionExecutor, ActionReceipt, ActionRequest,
-    BrowserExecutor, BrowserUseError, BrowserUseExecutor, ExecutorError, ExecutorKind,
-    StubExecutor,
+    BrowserExecutor, BrowserUseError, BrowserUseExecutor, CuaError, CuaExecutor, ExecutorError,
+    ExecutorKind, StubExecutor,
 };
 use hyper_use_hyper::Dims;
 use hyper_use_observe::diff;
@@ -199,7 +199,8 @@ fn act(arguments: &Value) -> Result<Value, ToolError> {
     })?;
     match selected {
         ExecutorKind::BrowserUse => act_browser_use(arguments),
-        ExecutorKind::Macos | ExecutorKind::Cua => act_stub(selected, arguments),
+        ExecutorKind::Cua => act_cua(arguments),
+        ExecutorKind::Macos => act_stub(selected, arguments),
         ExecutorKind::Browser => act_browser(arguments),
         other => Err(ToolError::NotImplemented {
             executor: other.as_str().to_owned(),
@@ -393,10 +394,67 @@ fn act_stub(kind: ExecutorKind, arguments: &Value) -> Result<Value, ToolError> {
     }
 }
 
+fn act_cua(arguments: &Value) -> Result<Value, ToolError> {
+    if opt_str(arguments, "cdp")?.is_some() {
+        return Err(ToolError::CuaIsReplay);
+    }
+    let region = require_region(arguments)?;
+    let _action = parse_press_action(arguments)?;
+    let confidence = parse_confidence(arguments)?;
+    let path = opt_str(arguments, "fixture")?.ok_or(ToolError::MissingFixture)?;
+    let body = read_path(path)?;
+    let mut executor = CuaExecutor::from_replay(&body).map_err(map_cua_script)?;
+    if executor.target().region_id() != &region {
+        return Err(ToolError::UnknownRegion(region.to_string()));
+    }
+    let mut request = ActionRequest::new(region.clone(), Action::Click);
+    if let Some(score) = confidence {
+        request = request.scored(score);
+    }
+    let target = json!({
+        "id": executor.target().region_id().as_str(),
+        "role": executor.target().role().as_str(),
+        "label": executor.target().label(),
+    });
+    match executor.execute(&request) {
+        Ok(receipt) => {
+            let mut body = outcome(
+                "act",
+                target,
+                Some(Action::Click.as_str()),
+                true,
+                false,
+                empty_delta(),
+                confidence,
+                None,
+                Some(receipt.kind().as_str()),
+            );
+            insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
+            Ok(body)
+        }
+        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
+            Some(score) => Ok(refused_target(target, score)),
+            None => Err(ToolError::Browser(
+                "unscored act was refused for confidence".into(),
+            )),
+        },
+        Err(err) => Err(map_executor(err)),
+    }
+}
+
 fn map_browser_use_script(err: BrowserUseError) -> ToolError {
     match err {
         BrowserUseError::BadScript { message } => ToolError::BrowserUseScript { message },
         other => ToolError::BrowserUseScript {
+            message: other.to_string(),
+        },
+    }
+}
+
+fn map_cua_script(err: CuaError) -> ToolError {
+    match err {
+        CuaError::BadScript { message } => ToolError::CuaScript { message },
+        other => ToolError::CuaScript {
             message: other.to_string(),
         },
     }
@@ -478,6 +536,17 @@ fn map_executor(err: ExecutorError) -> ToolError {
                 ToolError::BrowserUseScript { message }
             }
             other => ToolError::BrowserUseScript {
+                message: other.to_string(),
+            },
+        },
+        ExecutorError::Cua(err) => match err {
+            CuaError::UnknownRegion(id) => ToolError::UnknownRegion(id),
+            CuaError::UnsupportedAction(action) => ToolError::UnsupportedAction(action),
+            CuaError::Rejected { message } => ToolError::CuaRejected { message },
+            CuaError::BadScript { message } | CuaError::ParamsMismatch { message } => {
+                ToolError::CuaScript { message }
+            }
+            other => ToolError::CuaScript {
                 message: other.to_string(),
             },
         },

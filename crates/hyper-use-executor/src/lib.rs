@@ -1,19 +1,19 @@
 //! Execution policy for hyper-use.
 //!
-//! Policy order is fixed: browser, then macOS accessibility, then computer-use
-//! pixels. The first available backend wins. Availability is an input; this
-//! crate does not probe the operating system.
+//! Policy order is fixed: browser, then macOS accessibility. The first
+//! available backend in that order wins. Availability is an input; this crate
+//! does not probe the operating system.
 //!
 //! [`BrowserExecutor`] performs a browser press when it holds a CDP session.
-//! [`BrowserUseExecutor`] hands an already located region to a Browser Use
-//! replay transport as a region id, role, label, and action. It is not in
-//! [`DEFAULT_POLICY_ORDER`]: a missing CDP session does not delegate to it.
-//! macOS and CUA still return [`ExecutorError::NotImplemented`]. A scored
-//! confidence below [`MIN_ACT_CONFIDENCE_MILLIS`] returns
+//! [`BrowserUseExecutor`] and [`CuaExecutor`] each hand an already located
+//! region to a replay transport as a region id, role, label, and action.
+//! Neither is in [`DEFAULT_POLICY_ORDER`]: a missing CDP session does not
+//! delegate to either. macOS still returns [`ExecutorError::NotImplemented`].
+//! A pixel CUA driver does not exist; [`hyper_use_cua::CuaStub`] says so.
+//! A scored confidence below [`MIN_ACT_CONFIDENCE_MILLIS`] returns
 //! [`ExecutorError::ConfidenceBelowThreshold`] and does not click, and it does
-//! not call the Browser Use transport. [`ActConfidence::Inspected`] is the
-//! operator naming a region; the gate does not apply. There is no CUA call
-//! anywhere in this crate.
+//! not call the Browser Use or CUA transport. [`ActConfidence::Inspected`] is
+//! the operator naming a region; the gate does not apply.
 
 #![forbid(unsafe_code)]
 
@@ -25,20 +25,22 @@ use hyper_use_browser_use::{
     BrowserUseTransport, ReplayTransport, SemanticRequest, STATUS as BROWSER_USE_STATUS,
 };
 use hyper_use_core::{Action, RegionId};
+pub use hyper_use_cua::CuaError;
+use hyper_use_cua::{
+    CuaTransport, ReplayTransport as CuaReplayTransport, SemanticRequest as CuaSemanticRequest,
+    STATUS as CUA_STATUS,
+};
 use hyper_use_protocol::{ComputerResult, FallbackReason, MatcherConfidence};
 
 /// Preference order when more than one backend can perform an action.
-pub const DEFAULT_POLICY_ORDER: [ExecutorKind; 3] = [
-    ExecutorKind::Browser,
-    ExecutorKind::Macos,
-    ExecutorKind::Cua,
-];
+pub const DEFAULT_POLICY_ORDER: [ExecutorKind; 2] = [ExecutorKind::Browser, ExecutorKind::Macos];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ExecutorKind {
     Browser,
     Macos,
+    /// Opt-in semantic handoff. Not a member of [`DEFAULT_POLICY_ORDER`].
     Cua,
     /// Opt-in. Not a member of [`DEFAULT_POLICY_ORDER`].
     BrowserUse,
@@ -58,7 +60,7 @@ impl ExecutorKind {
         match self {
             Self::Browser => hyper_use_browser::STATUS,
             Self::Macos => hyper_use_macos::STATUS,
-            Self::Cua => hyper_use_cua::STATUS,
+            Self::Cua => CUA_STATUS,
             Self::BrowserUse => BROWSER_USE_STATUS,
         }
     }
@@ -138,6 +140,8 @@ pub enum ExecutedVia {
     Browser(ActMechanism),
     /// Region id, role, label, and action. No coordinates and no goal.
     BrowserUseSemantic,
+    /// Region id, role, label, and action. No coordinates, no goal, no fusion.
+    CuaSemantic,
 }
 
 impl ExecutedVia {
@@ -145,6 +149,7 @@ impl ExecutedVia {
         match self {
             Self::Browser(mechanism) => mechanism.as_str(),
             Self::BrowserUseSemantic => "browser-use-semantic",
+            Self::CuaSemantic => "cua-semantic",
         }
     }
 }
@@ -181,9 +186,10 @@ impl ActionReceipt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ExecutorError {
-    /// The backend has no session. macOS and CUA are always this.
+    /// The backend has no session. macOS is always this.
     /// A browser stub is this; [`BrowserExecutor`] is not.
     /// A Browser Use stub is this; [`BrowserUseExecutor`] is not.
+    /// A CUA stub is this; [`CuaExecutor`] is not.
     NotImplemented(ExecutorKind),
     /// No entry in the policy order was present in the available set.
     NoneAvailable,
@@ -197,6 +203,7 @@ pub enum ExecutorError {
     NonFiniteConfidence,
     Browser(BrowserError),
     BrowserUse(BrowserUseError),
+    Cua(CuaError),
 }
 
 impl fmt::Display for ExecutorError {
@@ -219,6 +226,7 @@ impl fmt::Display for ExecutorError {
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
             Self::Browser(err) => write!(f, "{err}"),
             Self::BrowserUse(err) => write!(f, "{err}"),
+            Self::Cua(err) => write!(f, "{err}"),
         }
     }
 }
@@ -231,7 +239,7 @@ pub trait ActionExecutor {
     fn execute(&mut self, request: &ActionRequest) -> Result<ActionReceipt, ExecutorError>;
 }
 
-/// Backend that always refuses. Used until a real browser, AX, or CUA driver exists.
+/// Backend that always refuses. Used for macOS, and for a named backend with no session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StubExecutor {
     kind: ExecutorKind,
@@ -256,7 +264,7 @@ impl ActionExecutor for StubExecutor {
     }
 }
 
-/// Browser backend. macOS and CUA are not constructed here.
+/// Browser backend. macOS, Browser Use, and CUA are not constructed here.
 pub struct BrowserExecutor<T: CdpTransport> {
     session: BrowserSession<T>,
 }
@@ -368,6 +376,78 @@ impl<T: BrowserUseTransport> ActionExecutor for BrowserUseExecutor<T> {
     }
 }
 
+/// CUA backend. The target is the region hyper-use already resolved.
+/// Submitting it is not navigation, not fusion, and not a goal.
+pub struct CuaExecutor<T: CuaTransport> {
+    transport: T,
+    target: CuaSemanticRequest,
+}
+
+impl<T: CuaTransport> CuaExecutor<T> {
+    pub fn new(transport: T, target: CuaSemanticRequest) -> Self {
+        Self { transport, target }
+    }
+
+    pub fn target(&self) -> &CuaSemanticRequest {
+        &self.target
+    }
+
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+}
+
+impl CuaExecutor<CuaReplayTransport> {
+    pub fn from_replay(script: &str) -> Result<Self, CuaError> {
+        let transport = CuaReplayTransport::parse(script)?;
+        let target = transport.expected().clone();
+        Ok(Self { transport, target })
+    }
+}
+
+impl<T: CuaTransport> ActionExecutor for CuaExecutor<T> {
+    fn kind(&self) -> ExecutorKind {
+        ExecutorKind::Cua
+    }
+
+    fn execute(&mut self, request: &ActionRequest) -> Result<ActionReceipt, ExecutorError> {
+        if request.region_id() != self.target.region_id() {
+            return Err(ExecutorError::Cua(CuaError::UnknownRegion(
+                request.region_id().to_string(),
+            )));
+        }
+        if request.action() != self.target.action() {
+            return Err(ExecutorError::Cua(CuaError::UnsupportedAction(
+                request.action().as_str().to_owned(),
+            )));
+        }
+        if let ActConfidence::Scored(confidence) = request.confidence() {
+            gate_scored_confidence(confidence)?;
+        }
+        let receipt = self
+            .transport
+            .submit(&self.target)
+            .map_err(ExecutorError::Cua)?;
+        if receipt.region_id() != self.target.region_id()
+            || receipt.action() != self.target.action()
+        {
+            return Err(ExecutorError::Cua(CuaError::ParamsMismatch {
+                message: "cua receipt does not match the semantic request".into(),
+            }));
+        }
+        Ok(ActionReceipt {
+            kind: ExecutorKind::Cua,
+            region_id: request.region_id().clone(),
+            action: request.action(),
+            mechanism: ExecutedVia::CuaSemantic,
+        })
+    }
+}
+
 /// Refuse a scored act that cannot clear the threshold. Does not click.
 pub fn gate_scored_confidence(confidence: f64) -> Result<(), ExecutorError> {
     if !confidence.is_finite() {
@@ -405,13 +485,15 @@ impl ExecutorError {
             | Self::NoneAvailable
             | Self::Unavailable(_)
             | Self::Browser(_)
-            | Self::BrowserUse(_) => None,
+            | Self::BrowserUse(_)
+            | Self::Cua(_) => None,
         }
     }
 }
 
 /// First kind in [`DEFAULT_POLICY_ORDER`] that is also in `available`.
-/// [`ExecutorKind::BrowserUse`] is not in that order, so it is never selected here.
+/// [`ExecutorKind::BrowserUse`] and [`ExecutorKind::Cua`] are not in that
+/// order, so neither is selected here.
 pub fn select_executor(available: &[ExecutorKind]) -> Result<ExecutorKind, ExecutorError> {
     for kind in DEFAULT_POLICY_ORDER {
         if available.contains(&kind) {
@@ -433,8 +515,8 @@ pub fn select_requested(
     }
 }
 
-/// `None` uses [`select_executor`] and ignores Browser Use. `Some` uses
-/// [`select_requested`] and does not substitute another backend.
+/// `None` uses [`select_executor`] and ignores Browser Use and CUA. `Some`
+/// uses [`select_requested`] and does not substitute another backend.
 pub fn select_act_executor(
     requested: Option<ExecutorKind>,
     available: &[ExecutorKind],
@@ -445,7 +527,7 @@ pub fn select_act_executor(
             let policy: Vec<ExecutorKind> = available
                 .iter()
                 .copied()
-                .filter(|kind| *kind != ExecutorKind::BrowserUse)
+                .filter(|kind| *kind != ExecutorKind::BrowserUse && *kind != ExecutorKind::Cua)
                 .collect();
             select_executor(&policy)
         }
@@ -457,15 +539,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn policy_prefers_browser_then_macos_then_cua() {
+    fn policy_prefers_browser_then_macos_and_does_not_select_cua() {
         assert_eq!(
             DEFAULT_POLICY_ORDER,
-            [
-                ExecutorKind::Browser,
-                ExecutorKind::Macos,
-                ExecutorKind::Cua
-            ]
+            [ExecutorKind::Browser, ExecutorKind::Macos]
         );
+        assert!(!DEFAULT_POLICY_ORDER.contains(&ExecutorKind::Cua));
+        assert!(!DEFAULT_POLICY_ORDER.contains(&ExecutorKind::BrowserUse));
         assert_eq!(
             select_executor(&[ExecutorKind::Cua, ExecutorKind::Browser]).unwrap(),
             ExecutorKind::Browser
@@ -475,8 +555,28 @@ mod tests {
             ExecutorKind::Macos
         );
         assert_eq!(
-            select_executor(&[ExecutorKind::Cua]).unwrap(),
-            ExecutorKind::Cua
+            select_executor(&[ExecutorKind::Cua]).unwrap_err(),
+            ExecutorError::NoneAvailable
+        );
+        assert_eq!(
+            select_executor(&[ExecutorKind::Cua, ExecutorKind::BrowserUse]).unwrap_err(),
+            ExecutorError::NoneAvailable
+        );
+        assert_eq!(
+            select_act_executor(
+                None,
+                &[
+                    ExecutorKind::Browser,
+                    ExecutorKind::Cua,
+                    ExecutorKind::BrowserUse
+                ]
+            )
+            .unwrap(),
+            ExecutorKind::Browser
+        );
+        assert_eq!(
+            select_act_executor(None, &[ExecutorKind::Cua]).unwrap_err(),
+            ExecutorError::NoneAvailable
         );
         let err = select_executor(&[]).unwrap_err();
         assert_eq!(err, ExecutorError::NoneAvailable);
@@ -500,13 +600,15 @@ mod tests {
         }
         assert!(ExecutorKind::Browser.status().contains("CDP"));
         assert!(ExecutorKind::Macos.status().contains("later phase"));
-        assert!(ExecutorKind::Cua.status().contains("later phase"));
+        assert!(ExecutorKind::Cua.status().contains("does not navigate"));
+        assert!(!ExecutorKind::Cua.status().contains("fusion"));
         assert_eq!(
             hyper_use_browser::BrowserStub.status(),
             hyper_use_browser::STATUS
         );
         assert_eq!(hyper_use_macos::MacosStub.status(), hyper_use_macos::STATUS);
-        assert_eq!(hyper_use_cua::CuaStub.status(), hyper_use_cua::STATUS);
+        assert_eq!(hyper_use_cua::CuaStub.status(), hyper_use_cua::PIXEL_STATUS);
+        assert!(hyper_use_cua::CuaStub.status().contains("later phase"));
     }
 
     #[test]
@@ -765,6 +867,207 @@ mod tests {
                 "../../../fixtures/sign-in.browser-use.json"
             ))
             .unwrap();
+            let err = executor
+                .execute(
+                    &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click)
+                        .scored(confidence),
+                )
+                .unwrap_err();
+            assert_eq!(
+                err,
+                ExecutorError::ConfidenceBelowThreshold {
+                    confidence_millis: millis,
+                    minimum_millis: 550,
+                }
+            );
+            assert!(executor.transport().submitted().is_empty());
+        }
+    }
+
+    #[test]
+    fn cua_is_opt_in_and_not_a_fallback() {
+        assert_eq!(
+            select_requested(ExecutorKind::Cua, &[ExecutorKind::Cua]).unwrap(),
+            ExecutorKind::Cua
+        );
+        let err = select_requested(ExecutorKind::Cua, &[ExecutorKind::Browser]).unwrap_err();
+        assert_eq!(err, ExecutorError::Unavailable(ExecutorKind::Cua));
+        assert_eq!(
+            err.to_string(),
+            "cua executor was requested but is not available"
+        );
+        assert_eq!(ExecutorKind::parse("cua"), Some(ExecutorKind::Cua));
+        assert!(ExecutorKind::Cua.status().contains("does not navigate"));
+    }
+
+    #[test]
+    fn cua_stub_does_not_panic() {
+        let request = ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click);
+        let mut stub = StubExecutor::new(ExecutorKind::Cua);
+        let err = stub.execute(&request).unwrap_err();
+        assert_eq!(err, ExecutorError::NotImplemented(ExecutorKind::Cua));
+        assert_eq!(err.to_string(), "cua executor is not implemented");
+        let scored = request.scored(0.49);
+        let err = stub.execute(&scored).unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+    }
+
+    #[test]
+    fn cua_low_confidence_does_not_submit_and_high_confidence_records_a_receipt() {
+        let mut low =
+            CuaExecutor::from_replay(include_str!("../../../fixtures/sign-in.cua.json")).unwrap();
+        let err = low
+            .execute(
+                &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click).scored(0.49),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+        assert!(low.transport().submitted().is_empty());
+
+        let mut unknown =
+            CuaExecutor::from_replay(include_str!("../../../fixtures/sign-in.cua.json")).unwrap();
+        let err = unknown
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n200").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::Cua(CuaError::UnknownRegion("n200".into()))
+        );
+        assert!(unknown.transport().submitted().is_empty());
+
+        let mut wrong = CuaExecutor::from_replay(
+            r#"{"kind":"cua-replay","request":{"region_id":"n100","role":"button","label":"Sign in","action":"type"},"result":{"accepted":true}}"#,
+        )
+        .unwrap();
+        let err = wrong
+            .execute(
+                &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click).scored(0.49),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::Cua(CuaError::UnsupportedAction("click".into()))
+        );
+        assert!(wrong.transport().submitted().is_empty());
+
+        let mut high =
+            CuaExecutor::from_replay(include_str!("../../../fixtures/sign-in.cua.json")).unwrap();
+        let receipt = high
+            .execute(
+                &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click).scored(0.55),
+            )
+            .unwrap();
+        assert_eq!(receipt.kind(), ExecutorKind::Cua);
+        assert_eq!(receipt.mechanism(), ExecutedVia::CuaSemantic);
+        assert_eq!(receipt.mechanism().as_str(), "cua-semantic");
+        assert_eq!(high.transport().submitted().len(), 1);
+        let sent = &high.transport().submitted()[0];
+        assert_eq!(sent.region_id().as_str(), "n100");
+        assert_eq!(sent.role(), hyper_use_core::Role::Button);
+        assert_eq!(sent.label(), "Sign in");
+        assert_eq!(sent.action(), Action::Click);
+        assert!(!sent.to_wire().contains("\"x\""));
+        assert!(!sent.to_wire().contains("goal"));
+    }
+
+    #[test]
+    fn cua_rejection_receipt_mismatch_and_non_finite_are_typed() {
+        let mut rejected =
+            CuaExecutor::from_replay(include_str!("../../../fixtures/sign-in-reject.cua.json"))
+                .unwrap();
+        let err = rejected
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n100").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::Cua(CuaError::Rejected {
+                message: "control refused the semantic act".into(),
+            })
+        );
+        assert_eq!(rejected.transport().submitted().len(), 1);
+        assert_eq!(
+            err.to_string(),
+            "cua rejected the semantic act: control refused the semantic act"
+        );
+
+        let target = CuaSemanticRequest::new(
+            RegionId::try_new("n100").unwrap(),
+            hyper_use_core::Role::Button,
+            "Sign in",
+            Action::Click,
+        )
+        .unwrap();
+        let mut lying = CuaExecutor::new(CuaLieTransport { calls: 0 }, target);
+        let err = lying
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n100").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(lying.transport().calls, 1);
+        assert_eq!(
+            err,
+            ExecutorError::Cua(CuaError::ParamsMismatch {
+                message: "cua receipt does not match the semantic request".into(),
+            })
+        );
+
+        let mut non_finite =
+            CuaExecutor::from_replay(include_str!("../../../fixtures/sign-in.cua.json")).unwrap();
+        let err = non_finite
+            .execute(
+                &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click)
+                    .scored(f64::NAN),
+            )
+            .unwrap_err();
+        assert_eq!(err, ExecutorError::NonFiniteConfidence);
+        assert!(non_finite.transport().submitted().is_empty());
+    }
+
+    struct CuaLieTransport {
+        calls: usize,
+    }
+
+    impl CuaTransport for CuaLieTransport {
+        fn submit(
+            &mut self,
+            request: &CuaSemanticRequest,
+        ) -> Result<hyper_use_cua::TransportReceipt, CuaError> {
+            self.calls += 1;
+            let _ = request;
+            Ok(hyper_use_cua::TransportReceipt::new(
+                RegionId::try_new("other").unwrap(),
+                Action::Click,
+            ))
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(16))]
+        #[test]
+        fn cua_scored_below_the_gate_does_not_submit(millis in 0i32..550) {
+            let confidence = f64::from(millis) / 1000.0;
+            let mut executor =
+                CuaExecutor::from_replay(include_str!("../../../fixtures/sign-in.cua.json"))
+                    .unwrap();
             let err = executor
                 .execute(
                     &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click)

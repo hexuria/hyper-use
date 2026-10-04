@@ -16,7 +16,7 @@ The public API is unstable until 1.0.
 5. Fixture agreement with an optional System One choice. Not a Browser Use score.
 6. Browser Use semantic executor. Opt-in replay of one region id, role, label, and click. Not a benchmark. The default act path remains the CDP press.
 7. Hyper matcher experiment. `HgraMatcher` is selectable. It is not the default, and it has not been shown to beat `WeightedMatcher`.
-8. CUA fusion. Not started.
+8. CUA semantic handoff. Opt-in replay of one region id, role, label, and click. Not a fusion benchmark. The pixel driver stays unimplemented.
 9. macOS. Last. Accessibility and the Mac app stay stubs.
 
 ## Commands
@@ -38,9 +38,10 @@ cargo run -p hyper-use-cli -- verify \
 ```
 
 `press` is the CLI verb for `Action::Click`. A scored confidence below 0.55
-refuses the act and does not click. `--executor browser-use` sends the region
-id, role, and label through a replay fixture. It does not navigate and it is
-not a benchmark. The default executor remains the CDP press. macOS and CUA
-still return not-implemented.
+refuses the act and does not click. `--executor browser-use` and `--executor cua`
+each send the region id, role, and label through a replay fixture. They do not
+navigate, they are not in the default policy order, and the CUA path is not a
+fusion benchmark. The default executor remains the CDP press. macOS still
+returns not-implemented.
 
 See `docs/PRD.md` and `docs/DECISIONS.md`.

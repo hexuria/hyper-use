@@ -53,10 +53,12 @@ that as a `ComputerResult` with `executed = false` and fallback
 Browser Use transport, to paper over that miss.
 
 The default act backend is still the CDP browser press. `--executor browser-use`
-(or MCP `executor: "browser-use"`) is opt-in. It sends the already located
-region id, role, label, and click to a replay transport. It is not in the
-default policy order, so a missing CDP session does not delegate to it. It
-does not take a goal and it does not navigate. macOS and CUA stay unimplemented.
+(or MCP `executor: "browser-use"`) and `--executor cua` (or MCP `executor: "cua"`)
+are opt-in. Each sends the already located region id, role, label, and click
+to its own replay transport. Neither is in the default policy order, so a
+missing CDP session does not delegate to either. Neither takes a goal, and
+neither navigates. The CUA path is a semantic handoff, not a CUA fusion
+benchmark and not a pixel driver. macOS stays unimplemented.
 
 An operator who names the region (`act <id> press` with no confidence) is
 treated as inspected. The gate does not apply. A host that just located
@@ -107,7 +109,7 @@ when the backend id does.
 3. JEV contract types. This tree. Task and result only. No JEV runtime.
 4. MCP, CLI, and skill surfaces. `hyper-use mcp` serves the six tools over stdio JSON-RPC. No navigate tool.
 5. Fixture id and action agreement only. `WeightedMatcher` on four local fixtures, plus an optional System One choice. That example does not call Browser Use and is not a score.
-6. Browser Use semantic executor. Opt-in replay of one region id, role, label, and click. Not a benchmark. The CDP press path is unchanged. macOS and CUA stay unimplemented.
+6. Browser Use semantic executor. Opt-in replay of one region id, role, label, and click. Not a benchmark. The CDP press path is unchanged. macOS stays unimplemented.
 7. Hyper matcher experiment. The ranker is selectable. No bake-off yet.
-8. CUA fusion. Not started. The stub still refuses.
+8. CUA semantic handoff. Opt-in replay of one region id, role, label, and click. Not a CUA fusion benchmark. The pixel driver stays unimplemented, and CUA is not in the default policy order.
 9. macOS. Last. The accessibility crate and the Mac app stay stubs.

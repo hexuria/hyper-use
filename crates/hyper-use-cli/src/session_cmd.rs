@@ -15,7 +15,7 @@ use hyper_use_browser::{
 use hyper_use_core::{parse_fixture, InteractionManifold, RegionId};
 use hyper_use_executor::{
     select_act_executor, ActionExecutor, ActionRequest, BrowserExecutor, BrowserUseError,
-    BrowserUseExecutor, ExecutorError, ExecutorKind, StubExecutor,
+    BrowserUseExecutor, CuaError, CuaExecutor, ExecutorError, ExecutorKind, StubExecutor,
 };
 use hyper_use_observe::diff;
 
@@ -179,7 +179,23 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             })?;
             finish_act(&mut backend, &request)
         }
-        ExecutorKind::Macos | ExecutorKind::Cua => {
+        ExecutorKind::Cua => {
+            if cdp.is_some() {
+                return Err(CliError::CuaIsReplay);
+            }
+            let Some(path) = fixture else {
+                return Err(CliError::MissingSource);
+            };
+            let body = read_path(&path)?;
+            let mut backend = CuaExecutor::from_replay(&body).map_err(|err| match err {
+                CuaError::BadScript { message } => CliError::CuaScript { message },
+                other => CliError::CuaScript {
+                    message: other.to_string(),
+                },
+            })?;
+            finish_act(&mut backend, &request)
+        }
+        ExecutorKind::Macos => {
             let mut backend = StubExecutor::new(selected);
             finish_act(&mut backend, &request)
         }
@@ -482,6 +498,17 @@ fn map_executor(err: ExecutorError) -> Result<String, CliError> {
                 Err(CliError::BrowserUseScript { message })
             }
             other => Err(CliError::BrowserUseScript {
+                message: other.to_string(),
+            }),
+        },
+        ExecutorError::Cua(err) => match err {
+            CuaError::UnknownRegion(id) => Err(CliError::UnknownRegion(id)),
+            CuaError::UnsupportedAction(action) => Err(CliError::UnsupportedAction(action)),
+            CuaError::Rejected { message } => Err(CliError::CuaRejected { message }),
+            CuaError::BadScript { message } | CuaError::ParamsMismatch { message } => {
+                Err(CliError::CuaScript { message })
+            }
+            other => Err(CliError::CuaScript {
                 message: other.to_string(),
             }),
         },

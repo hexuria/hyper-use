@@ -474,6 +474,11 @@ version = "0.1.0"
 [[package]]
 name = "hyper-use-cua"
 version = "0.1.0"
+dependencies = [
+ "hyper-use-core",
+ "proptest",
+ "serde_json",
+]
 
 [[package]]
 name = "hyper-use-executor"

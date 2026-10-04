@@ -12,7 +12,7 @@ The public API is unstable until 1.0.
 1. State foundation. Done.
 2. Browser integration. This tree. Fixture-proven CDP observe, locate, act, diff, and verify. Live Chrome was exercised read-only (`Browser.getVersion` on an already-running debugging port). No click was sent to that browser. hyper-use does not launch or install Chrome.
 3. JEV contract types. This tree. `ComputerTask` and `ComputerResult` only. JEV itself stays outside this repo.
-4. MCP, CLI, and skill. The `hyper-use` CLI and tool names exist. There is no MCP server runtime yet.
+4. MCP, CLI, and skill. `hyper-use mcp` serves observe, locate, inspect, act, diff, and verify on stdin. There is no navigate tool.
 5. Evaluation versus the current JEV to Browser Use path. Not started.
 6. Hyper matcher experiment. `HgraMatcher` is selectable. It is not the default, and it has not been shown to beat `WeightedMatcher`.
 7. CUA fusion. Not started.

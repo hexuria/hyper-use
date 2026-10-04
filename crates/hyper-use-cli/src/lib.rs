@@ -51,6 +51,8 @@ pub enum CliError {
     BadConfidence(String),
     MissingExpect,
     UnknownRegion(String),
+    /// `mcp` is served by the binary, which owns stdin. This library call does not.
+    McpIsStdio,
 }
 
 impl std::fmt::Display for CliError {
@@ -93,6 +95,9 @@ impl std::fmt::Display for CliError {
             Self::BadConfidence(value) => write!(f, "bad confidence `{value}`"),
             Self::MissingExpect => f.write_str("verify requires --expect-text or --expect-absent"),
             Self::UnknownRegion(id) => write!(f, "unknown region `{id}`"),
+            Self::McpIsStdio => {
+                f.write_str("mcp serves JSON-RPC on stdio; run the hyper-use binary")
+            }
         }
     }
 }
@@ -100,7 +105,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use observe|locate|inspect|act|diff|verify\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\n"
+    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -116,6 +121,7 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
         "verify" => crate::session_cmd::verify_command(&args[1..]),
         "diff" => crate::session_cmd::diff_command(&args[1..]),
         "inspect" => crate::session_cmd::inspect_command(&args[1..]),
+        "mcp" => Err(CliError::McpIsStdio),
         other => Err(CliError::UnknownCommand(other.to_owned())),
     }
 }
@@ -403,6 +409,12 @@ mod tests {
         assert_eq!(err, CliError::UnknownRole("spaceship".into()));
         let err = execute(&args(&["fly"])).unwrap_err();
         assert_eq!(err, CliError::UnknownCommand("fly".into()));
+        let err = execute(&args(&["mcp"])).unwrap_err();
+        assert_eq!(err, CliError::McpIsStdio);
+        assert_eq!(
+            err.to_string(),
+            "mcp serves JSON-RPC on stdio; run the hyper-use binary"
+        );
         let err = execute(&args(&["locate", "--fixture"])).unwrap_err();
         assert_eq!(err, CliError::MissingValue("--fixture"));
     }

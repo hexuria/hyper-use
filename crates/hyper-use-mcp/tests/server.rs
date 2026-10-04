@@ -1,0 +1,419 @@
+//! In-process JSON-RPC and exact tool errors. No Chrome.
+
+use std::path::Path;
+
+use hyper_use_mcp::{call_tool, handle_line, ToolError, TOOLS};
+use serde_json::{json, Value};
+
+fn fixture(name: &str) -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name)
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn call(name: &str, arguments: Value) -> Result<Value, ToolError> {
+    call_tool(name, &arguments)
+}
+
+fn rpc(line: &str) -> Value {
+    let response = handle_line(line).expect("response");
+    serde_json::from_str(&response).expect("json")
+}
+
+fn tool_text(response: &Value) -> Value {
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text");
+    serde_json::from_str(text).expect("tool json")
+}
+
+#[test]
+fn tools_list_is_exactly_the_six_verbs() {
+    let response = rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+    assert_eq!(response["id"], 2);
+    let names: Vec<&str> = response["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, TOOLS);
+    assert!(!names.contains(&"navigate"));
+    let locate = response["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "locate")
+        .unwrap();
+    let description = locate["description"].as_str().unwrap();
+    assert!(description.contains("not a benchmark"), "{description}");
+    assert!(description.contains("not a measured win"), "{description}");
+    let init = rpc(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"jev","version":"0"}}}"#,
+    );
+    assert_eq!(init["result"]["serverInfo"]["name"], "hyper-use");
+    assert_eq!(init["result"]["protocolVersion"], "2024-11-05");
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("does not choose the next agent capability"));
+    assert!(instructions.contains("JEV"));
+    assert!(handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+}
+
+#[test]
+fn locate_defaults_to_weighted_and_hgra_is_not_a_benchmark() {
+    let sign_in = fixture("sign-in.cdp.json");
+    let body = call("locate", json!({"fixture": sign_in, "text": "Sign in"})).unwrap();
+    assert_eq!(body["product"], "hyper-use");
+    assert_eq!(body["tool"], "locate");
+    assert_eq!(body["matcher"], "weighted");
+    assert_eq!(body["benchmark"], false);
+    assert_eq!(body["executed"], false);
+    assert_eq!(body["target"]["id"], "n100");
+    assert_eq!(body["target"]["label"], "Sign in");
+    assert!(body["target"]["role"].is_string());
+    assert!(body["confidence"].as_f64().unwrap().is_finite());
+    assert_eq!(body["candidates"][0]["id"], "n100");
+    assert_eq!(body["candidates"][0]["rank"].as_u64(), Some(1));
+    assert!(body["state_delta"]["added"].as_array().unwrap().is_empty());
+
+    let sidebar = fixture("sidebar.manifold");
+    let hgra = call(
+        "locate",
+        json!({
+            "fixture": sidebar,
+            "text": "Settings",
+            "role": "button",
+            "position": "left",
+            "matcher": "hgra"
+        }),
+    )
+    .unwrap();
+    assert_eq!(hgra["matcher"], "hgra");
+    assert_eq!(hgra["benchmark"], false);
+    assert_eq!(hgra["target"]["id"], "nav-settings");
+    assert_eq!(hgra["executed"], false);
+}
+
+#[test]
+fn observe_inspect_diff_and_verify_round_trip() {
+    let observed = call("observe", json!({"fixture": fixture("sign-in.cdp.json")})).unwrap();
+    assert_eq!(observed["tool"], "observe");
+    assert_eq!(observed["executed"], false);
+    assert_eq!(observed["verified"], false);
+    let ids: Vec<&str> = observed["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|region| region["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"n100"), "{ids:?}");
+
+    let inspected = call(
+        "inspect",
+        json!({"fixture": fixture("sign-in.cdp.json"), "region": "n100"}),
+    )
+    .unwrap();
+    assert_eq!(inspected["target"]["id"], "n100");
+    assert_eq!(inspected["target"]["label"], "Sign in");
+    assert!(inspected["target"]["width"].as_f64().unwrap() > 0.0);
+    assert_eq!(inspected["executed"], false);
+
+    let delta = call(
+        "diff",
+        json!({
+            "before": fixture("sign-in.cdp.json"),
+            "after": fixture("welcome.cdp.json")
+        }),
+    )
+    .unwrap();
+    assert_eq!(delta["tool"], "diff");
+    assert_eq!(delta["executed"], false);
+    let removed = &delta["state_delta"]["removed"];
+    let added = &delta["state_delta"]["added"];
+    assert!(removed.as_array().unwrap().iter().any(|id| id == "n100"));
+    assert!(added.as_array().unwrap().iter().any(|id| id == "n300"));
+
+    let verified = call(
+        "verify",
+        json!({"fixture": fixture("welcome.cdp.json"), "expect_text": "Welcome"}),
+    )
+    .unwrap();
+    assert_eq!(verified["verified"], true);
+    assert_eq!(verified["executed"], false);
+}
+
+#[test]
+fn act_press_uses_dom_click_and_low_confidence_does_not() {
+    let pressed = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "action": "press"
+        }),
+    )
+    .unwrap();
+    assert_eq!(pressed["executed"], true);
+    assert_eq!(pressed["verified"], false);
+    assert_eq!(pressed["action"], "click");
+    assert_eq!(pressed["executor"], "browser");
+    assert_eq!(pressed["mechanism"], "dom-semantic");
+    assert_eq!(pressed["target"]["id"], "n100");
+    assert_eq!(pressed["target"]["label"], "Sign in");
+    assert!(pressed["fallback"].is_null());
+
+    // sign-in.cdp.json has no press responses. A click would be a browser error.
+    let refused = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cdp.json"),
+            "region": "n100",
+            "confidence": 0.49
+        }),
+    )
+    .unwrap();
+    assert_eq!(refused["executed"], false);
+    assert_eq!(refused["fallback"], "low-confidence");
+    assert_eq!(refused["executor"], Value::Null);
+    assert!(refused["mechanism"].is_null());
+    assert_eq!(refused["target"]["id"], "n100");
+    assert!(!refused["target"]["role"].as_str().unwrap().is_empty());
+    assert!((refused["confidence"].as_f64().unwrap() - 0.49).abs() < 1e-9);
+    assert_eq!(refused["action"], "click");
+    assert_eq!(refused["state_delta"]["added"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn error_variants_are_exact() {
+    let sign_in = fixture("sign-in.cdp.json");
+    let err = call("observe", json!({})).unwrap_err();
+    assert_eq!(err, ToolError::MissingFixture);
+    assert_eq!(err.to_value(), json!({"variant": "MissingFixture"}));
+    assert_eq!(err.to_string(), "tool requires fixture or cdp");
+
+    let err = call(
+        "locate",
+        json!({"fixture": &sign_in, "cdp": "http://127.0.0.1:9222"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::DuplicateSource);
+
+    let err = call("fly", json!({})).unwrap_err();
+    assert_eq!(err, ToolError::UnknownTool("fly".into()));
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "UnknownTool", "name": "fly"})
+    );
+
+    let err = call("navigate", json!({})).unwrap_err();
+    assert_eq!(err, ToolError::GoalNotAccepted);
+    assert_eq!(
+        err.to_string(),
+        "hyper-use does not accept a goal or navigate"
+    );
+
+    let err = call(
+        "locate",
+        json!({"fixture": &sign_in, "goal": "sign the user in"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::GoalNotAccepted);
+
+    let err = call(
+        "act",
+        json!({"fixture": &sign_in, "region": "n100", "x": 12, "y": 8}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::CoordinatesNotAccepted);
+
+    let err = call("locate", json!({"fixture": &sign_in, "matcher": "average"})).unwrap_err();
+    assert_eq!(err, ToolError::UnknownMatcher("average".into()));
+
+    let err = call("locate", json!({"fixture": &sign_in, "text": "..."})).unwrap_err();
+    assert_eq!(err, ToolError::EmptyText);
+    assert_eq!(
+        err.to_string(),
+        "text must contain at least one alphanumeric token"
+    );
+
+    let err = call("locate", json!({"fixture": &sign_in, "role": "spaceship"})).unwrap_err();
+    assert_eq!(err, ToolError::UnknownRole("spaceship".into()));
+
+    let err = call("locate", json!({"fixture": &sign_in, "position": "orbit"})).unwrap_err();
+    assert_eq!(err, ToolError::UnknownPosition("orbit".into()));
+
+    let err = call(
+        "act",
+        json!({"fixture": &sign_in, "region": "n100", "action": "fly"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::UnknownAction("fly".into()));
+
+    let err = call(
+        "act",
+        json!({"fixture": &sign_in, "region": "n100", "action": "type"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::UnsupportedAction("type".into()));
+    assert_eq!(err.to_string(), "browser session cannot perform `type`");
+
+    let err = call(
+        "locate",
+        json!({"fixture": &sign_in, "matcher": "weighted", "dims": 512}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::DimsRequireHgra);
+
+    let err = call(
+        "locate",
+        json!({"fixture": &sign_in, "matcher": "hgra", "dims": 100}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::BadDims("100".into()));
+
+    let err = call(
+        "act",
+        json!({"fixture": "unused", "region": "n100", "confidence": "NaN"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::NonFiniteConfidence);
+    assert_eq!(err.to_string(), "confidence must be finite");
+
+    let err = call(
+        "act",
+        json!({"fixture": "unused", "region": "n100", "confidence": "nope"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::BadConfidence("nope".into()));
+
+    let err = call("act", json!({"fixture": &sign_in})).unwrap_err();
+    assert_eq!(err, ToolError::MissingRegion);
+
+    let err = call("inspect", json!({"fixture": &sign_in, "region": "missing"})).unwrap_err();
+    assert_eq!(err, ToolError::UnknownRegion("missing".into()));
+
+    let err = call(
+        "act",
+        json!({"fixture": fixture("sidebar.manifold"), "region": "nav-settings"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::ActNeedsCdp);
+
+    let err = call(
+        "verify",
+        json!({"fixture": &sign_in, "expect_text": "Welcome"}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::ExpectedTextMissing {
+            expected: "Welcome".into()
+        }
+    );
+    assert_eq!(err.to_string(), "expected text `Welcome` did not appear");
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "ExpectedTextMissing", "expected": "Welcome"})
+    );
+
+    let err = call(
+        "verify",
+        json!({"fixture": &sign_in, "expect_absent": "n100"}),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::RegionStillPresent { id: "n100".into() });
+    assert_eq!(err.to_string(), "region `n100` is still present");
+
+    let err = call("verify", json!({"fixture": &sign_in})).unwrap_err();
+    assert_eq!(err, ToolError::MissingExpect);
+
+    let err = call(
+        "verify",
+        json!({
+            "fixture": &sign_in,
+            "expect_text": "Welcome",
+            "expect_absent": "n100"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::BothExpectations);
+
+    let err = call("diff", json!({})).unwrap_err();
+    assert_eq!(err, ToolError::MissingBefore);
+    let err = call("diff", json!({"before": &sign_in})).unwrap_err();
+    assert_eq!(err, ToolError::MissingAfter);
+
+    let missing = "/workspace/hyper-use/fixtures/does-not-exist.cdp.json";
+    let err = call("observe", json!({"fixture": missing})).unwrap_err();
+    let ToolError::Io { path, message } = err.clone() else {
+        panic!("expected Io, got {err:?}");
+    };
+    assert_eq!(path, missing);
+    assert!(!message.is_empty());
+    assert_eq!(err, ToolError::Io { path, message });
+
+    let err = call("observe", json!({"fixture": 1})).unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::InvalidArguments("fixture must be a string".into())
+    );
+
+    let err = call("observe", json!([1])).unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::InvalidArguments("arguments must be an object".into())
+    );
+}
+
+#[test]
+fn json_rpc_reports_tool_errors_and_protocol_errors() {
+    let missing = rpc(
+        r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"observe","arguments":{}}}"#,
+    );
+    assert_eq!(missing["id"], 9);
+    assert_eq!(missing["result"]["isError"], true);
+    assert!(missing.get("error").is_none());
+    assert_eq!(tool_text(&missing)["variant"], "MissingFixture");
+
+    let navigate = rpc(
+        r#"{"jsonrpc":"2.0","id":"nav","method":"tools/call","params":{"name":"navigate","arguments":{}}}"#,
+    );
+    assert_eq!(navigate["id"], "nav");
+    assert_eq!(tool_text(&navigate)["variant"], "GoalNotAccepted");
+
+    let bad = rpc("not-json");
+    assert_eq!(bad["error"]["code"], -32700);
+    assert_eq!(bad["error"]["data"]["variant"], "ParseError");
+    assert!(bad["id"].is_null());
+
+    let batch = rpc("[]");
+    assert_eq!(batch["error"]["data"]["variant"], "InvalidRequest");
+
+    let unknown = rpc(r#"{"jsonrpc":"2.0","id":3,"method":"resources/list"}"#);
+    assert_eq!(unknown["error"]["code"], -32601);
+    assert_eq!(unknown["error"]["data"]["variant"], "MethodNotFound");
+    assert_eq!(unknown["error"]["data"]["method"], "resources/list");
+
+    let unnamed = rpc(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{}}"#);
+    assert_eq!(unnamed["error"]["data"]["variant"], "MissingToolName");
+    assert_eq!(unnamed["error"]["code"], -32602);
+}
+
+#[test]
+fn above_threshold_press_still_uses_the_dom_click() {
+    let pressed = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 0.55
+        }),
+    )
+    .unwrap();
+    assert_eq!(pressed["executed"], true);
+    assert_eq!(pressed["mechanism"], "dom-semantic");
+    assert!((pressed["confidence"].as_f64().unwrap() - 0.55).abs() < 1e-9);
+}

@@ -177,6 +177,7 @@ dependencies = [
  "hyper-use-core",
  "hyper-use-executor",
  "hyper-use-hyper",
+ "hyper-use-mcp",
  "hyper-use-observe",
  "hyper-use-resonance",
 ]
@@ -222,7 +223,15 @@ version = "0.1.0"
 name = "hyper-use-mcp"
 version = "0.1.0"
 dependencies = [
+ "hyper-use-browser",
+ "hyper-use-core",
+ "hyper-use-executor",
+ "hyper-use-hyper",
+ "hyper-use-observe",
  "hyper-use-protocol",
+ "hyper-use-resonance",
+ "proptest",
+ "serde_json",
 ]
 
 [[package]]

@@ -82,7 +82,7 @@ when the backend id does.
 2. Browser integration. This tree. CDP client, DOM and accessibility fusion,
    press, refresh, verify. Fixture-proven.
 3. JEV contract types. This tree. Task and result only. No JEV runtime.
-4. MCP, CLI, and skill surfaces. CLI and tool names exist. No MCP transport yet.
+4. MCP, CLI, and skill surfaces. `hyper-use mcp` serves the six tools over stdio JSON-RPC. No navigate tool.
 5. Evaluation against the current JEV to Browser Use path. Not started.
 6. Hyper matcher experiment. The ranker is selectable. No bake-off yet.
 7. CUA fusion. Not started. The stub still refuses.

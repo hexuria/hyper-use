@@ -1,22 +1,36 @@
 ---
 name: hyper-use
-description: Resolve an interface target with hyper-use before acting on it.
+description: Resolve one computer target with hyper-use before acting on it.
 ---
 
 # hyper-use
 
-Never guess coordinates when hyper-use can resolve the target.
+hyper-use is the computer capability under an existing agent loop. It does not
+choose the next capability. JEV does. hyper-use does not navigate and it does
+not accept a multi-step goal.
 
-## Loop
+Never guess coordinates. Act on a region id from locate or inspect. A tool
+argument named `x`, `y`, or `coordinates` is rejected.
 
-1. OBSERVE the current interface into an interaction manifold.
-2. LOCATE the target with text, role, and position. Do not invent a point.
-3. INSPECT when more than one candidate is still plausible.
-4. ACT on the resolved region id. If the matcher confidence is below 0.55, do not click.
-5. DIFF the manifold.
-6. VERIFY that the expected text appeared or the region disappeared.
+## Tools
 
-If locate is ambiguous, stay on INSPECT. Do not click the runner-up.
+The MCP server is `hyper-use mcp` (newline-delimited JSON-RPC on stdio). The
+tool names are exactly:
+
+1. `observe` reads a fixture (or an optional live CDP endpoint) into regions.
+2. `locate` ranks one query. The default matcher is `weighted`. `matcher: "hgra"` selects the hyperdimensional ranker. That selection is not a benchmark and not a measured win. The result sets `benchmark` to false.
+3. `inspect` returns one region, including its rectangle. The rectangle is descriptive. Do not click it.
+4. `act` presses one region id. DOM click comes before coordinates. Omit `confidence` only after inspect. If confidence is below 0.55, the result has `executed: false` and `fallback: "low-confidence"`. That is not a click. Hand control back. Do not retry with a guessed point.
+5. `diff` returns `state_delta` (`added`, `removed`, `changed`) between two observations.
+6. `verify` checks one postcondition: `expect_text` appeared, or `expect_absent` is gone.
+
+There is no `navigate` tool. Pass a CDP fixture path in `fixture`. Live `cdp` is optional. Tests do not need Chrome.
+
+## Confidence escape hatch
+
+High confidence, or a region you already inspected: `act` may press.
+
+Low confidence: do not click. The tool result is the hand-back. JEV decides whether to inspect, ask, or use another capability. hyper-use will not make that choice.
 
 ## Commands
 
@@ -25,14 +39,7 @@ hyper-use locate --fixture fixtures/sidebar.manifold --text Settings --role butt
 hyper-use locate "Sign in" --fixture fixtures/sign-in.cdp.json
 hyper-use act n100 press --fixture fixtures/sign-in-press.cdp.json
 hyper-use verify --fixture fixtures/welcome.cdp.json --expect-text Welcome
+hyper-use mcp
 ```
 
-The default matcher is weighted. `--matcher hgra` selects the hyperdimensional
-ranker. Do not treat that as a win; there is no benchmark. The command is
-`hyper-use`. Do not rename it. Do not navigate. macOS and CUA are not available.
-
-## Ranking
-
-Trust the ranked region id. A disabled, hidden, occluded, offscreen, stale,
-ambiguous, detached, or zero-size region is penalized and must not be chosen
-over a clean match that satisfies the same query.
+The command is `hyper-use`. Do not rename it. macOS and CUA are not available.

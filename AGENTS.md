@@ -47,3 +47,28 @@ Reason: Phase 2 adds weighted ranking, CDP parse/fusion/press/verify, and the JE
 Affected invariants: default locate is weighted; HGRA remains selectable; fusion merges a 1px DOM/AX pair and refuses different labels; press prefers a DOM click; verify fails with ExpectedTextMissing; confidence below 550 millis does not click; a region id survives move, enabled change, and press.
 Tests or proofs updated: resonance matcher tests, browser fusion and session tests, executor confidence test, CLI command tests, observe identity test, protocol contract test. No second formal model.
 ```
+
+## MCP
+
+`hyper-use mcp` is a newline-delimited JSON-RPC server. Tools are observe, locate, inspect, act, diff, verify. No navigate. The ranker crates do not depend on `hyper-use-mcp`.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: MCP dispatch is one blocking stdin reader. A notification has no reply. That is not a concurrent protocol, so no system model was added.
+Affected invariants: tool names are the six verbs; a goal or coordinate argument cannot succeed; locate defaults to weighted and sets benchmark false; a scored act below 550 millis returns executed false and does not press; verify failures are exact ToolError variants.
+Tests or proofs updated: hyper-use-mcp server tests, a 16-case proptest that random lines do not panic, and a stdio subprocess test of the hyper-use binary. No second formal model.
+```
+

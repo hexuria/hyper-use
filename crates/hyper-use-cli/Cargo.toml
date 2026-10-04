@@ -14,6 +14,7 @@ hyper-use-resonance = { path = "../hyper-use-resonance" }
 hyper-use-browser = { path = "../hyper-use-browser" }
 hyper-use-executor = { path = "../hyper-use-executor" }
 hyper-use-observe = { path = "../hyper-use-observe" }
+hyper-use-mcp = { path = "../hyper-use-mcp" }
 
 [lib]
 name = "hyper_use_cli"

@@ -1,23 +1,35 @@
-//! Tool names a future MCP server would expose.
+//! stdio MCP server for hyper-use.
 //!
-//! Phase 1 does not bind a transport, allocate a port, or speak JSON-RPC.
-//! Names match the protocol loop and are prefixed with `hyper-use` so they
-//! cannot be confused with another product.
+//! Tool names are the six verbs: observe, locate, inspect, act, diff, verify.
+//! There is no navigate tool and no argument that carries a multi-step goal.
+//! Transport is newline-delimited JSON-RPC 2.0 on stdin and stdout. A
+//! notification (no `id`) gets no response. Batches are rejected.
+//!
+//! The ranker crates do not depend on this crate. `serde_json` is used here
+//! to parse JSON-RPC. It is not a public type in the ranker API.
 
 #![forbid(unsafe_code)]
 
-/// `hyper-use.observe`
-pub const TOOL_OBSERVE: &str = "hyper-use.observe";
-/// `hyper-use.locate`
-pub const TOOL_LOCATE: &str = "hyper-use.locate";
-/// `hyper-use.inspect`
-pub const TOOL_INSPECT: &str = "hyper-use.inspect";
-/// `hyper-use.act`
-pub const TOOL_ACT: &str = "hyper-use.act";
-/// `hyper-use.diff`
-pub const TOOL_DIFF: &str = "hyper-use.diff";
-/// `hyper-use.verify`
-pub const TOOL_VERIFY: &str = "hyper-use.verify";
+mod error;
+mod rpc;
+mod tools;
+
+pub use error::ToolError;
+pub use rpc::{handle_line, serve_stdio};
+pub use tools::call_tool;
+
+/// `observe`
+pub const TOOL_OBSERVE: &str = "observe";
+/// `locate`
+pub const TOOL_LOCATE: &str = "locate";
+/// `inspect`
+pub const TOOL_INSPECT: &str = "inspect";
+/// `act`
+pub const TOOL_ACT: &str = "act";
+/// `diff`
+pub const TOOL_DIFF: &str = "diff";
+/// `verify`
+pub const TOOL_VERIFY: &str = "verify";
 
 pub const TOOLS: [&str; 6] = [
     TOOL_OBSERVE,
@@ -28,8 +40,7 @@ pub const TOOLS: [&str; 6] = [
     TOOL_VERIFY,
 ];
 
-/// Tool name for a protocol phase. Returns `None` only if a future phase is
-/// added to the protocol without a matching tool. The five current phases match.
+/// Tool name for a protocol phase.
 pub fn tool_for_phase(phase: hyper_use_protocol::LoopPhase) -> &'static str {
     use hyper_use_protocol::LoopPhase;
     match phase {
@@ -48,17 +59,22 @@ mod tests {
     use hyper_use_protocol::{LoopPhase, LOOP_ORDER};
 
     #[test]
-    fn tool_names_are_unique_and_follow_the_loop() {
+    fn tool_names_are_the_six_verbs() {
         let mut names = TOOLS.to_vec();
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), TOOLS.len());
+        assert_eq!(
+            TOOLS,
+            ["observe", "locate", "inspect", "act", "diff", "verify"]
+        );
         for name in TOOLS {
-            assert!(name.starts_with("hyper-use."));
-            assert!(!name.contains("hgra"));
+            assert!(!name.contains('.'), "{name}");
+            assert!(!name.contains("hgra"), "{name}");
+            assert_ne!(name, "navigate");
         }
         for phase in LOOP_ORDER {
-            assert!(tool_for_phase(phase).ends_with(phase.as_str()));
+            assert_eq!(tool_for_phase(phase), phase.as_str());
         }
         assert_eq!(tool_for_phase(LoopPhase::Locate), TOOL_LOCATE);
     }

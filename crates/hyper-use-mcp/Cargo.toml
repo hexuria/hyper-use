@@ -5,7 +5,17 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
-description = "MCP tool names for hyper-use (no server runtime in phase 1)"
+description = "stdio JSON-RPC MCP server for the hyper-use computer capability"
 
 [dependencies]
 hyper-use-protocol = { path = "../hyper-use-protocol" }
+hyper-use-core = { path = "../hyper-use-core" }
+hyper-use-hyper = { path = "../hyper-use-hyper" }
+hyper-use-resonance = { path = "../hyper-use-resonance" }
+hyper-use-browser = { path = "../hyper-use-browser" }
+hyper-use-executor = { path = "../hyper-use-executor" }
+hyper-use-observe = { path = "../hyper-use-observe" }
+serde_json = "1"
+
+[dev-dependencies]
+proptest = "1.7"

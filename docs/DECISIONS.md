@@ -109,9 +109,9 @@ model of the same score without a conformance fixture.
 
 ## What this code cannot do
 
-- No macOS accessibility, no computer-use clicks, no MCP transport.
-  macOS and CUA return `ExecutorError::NotImplemented`. A browser stub with
-  no session does too. `BrowserExecutor` does not.
+- No macOS accessibility. macOS and CUA return `ExecutorError::NotImplemented`.
+  A browser stub with no session does too. `BrowserExecutor` does not.
+  MCP stdio exists. It is not a second browser and it does not navigate.
 - No navigation and no JEV runtime. `ComputerTask` is one locate or one act.
 - The weighted matcher and HGRA are not calibrated to each other. A confidence
   of 0.55 is the act gate for a scored total. It is not a probability.
@@ -207,3 +207,71 @@ of fusion or of either ranker.
 
 Live Chrome: a read-only `Browser.getVersion` may be run against an
 already-open debugging port. Clicks in tests use the replay transport.
+
+## MCP stdio
+
+The server is `hyper-use mcp`. Tool names are exactly `observe`, `locate`,
+`inspect`, `act`, `diff`, and `verify`. The product name is the server name,
+not a prefix on each tool. A prefixed name would be a second vocabulary.
+`navigate` is not a tool. Arguments named `goal`, `steps`, or `navigate` return
+`GoalNotAccepted`. Arguments named `x`, `y`, or `coordinates` return
+`CoordinatesNotAccepted`. Those states are not representable as a successful
+click.
+
+Transport is newline-delimited JSON-RPC 2.0 on stdin and stdout. A notification
+(no `id`) gets no response. Batches are `InvalidRequest`. There is no
+`Content-Length` framing, no resources, no prompts, and no sampling. The
+official `rmcp` stack was discarded: it pulls an async runtime and a protocol
+surface this host does not call. A blocking read loop is the whole transport.
+Downside: clients that only speak the older header framing cannot connect.
+Accepted, because the MCP stdio spec delimits messages with newlines.
+
+`serde_json` 1 is a dependency of `hyper-use-mcp` only, plus the browser crate
+that already had it. It parses JSON-RPC. `serde_json::Value` is not a type in
+the ranker crates. `hyper-use-core`, `hyper-use-hyper`, `hyper-use-geometry`,
+and `hyper-use-resonance` do not depend on this crate. No other dependency was
+added. The lockfile already contained `serde_json`.
+
+`locate` defaults to `WeightedMatcher`. `matcher: "hgra"` selects
+`HgraMatcher`. Every locate result sets `benchmark` to false. That flag is not
+a measurement. Do not read it as a win.
+
+`act` calls `BrowserExecutor`. DOM semantic click stays ahead of coordinates.
+A scored confidence below 550 millis returns a tool result with
+`executed: false`, `fallback: "low-confidence"`, and no mechanism. It does not
+return a JSON-RPC error and it does not press. The proof is the
+`sign-in.cdp.json` fixture, which has no press responses: a click would be
+`Browser`, and the test expects `executed: false`. An inspected act (no
+confidence) still presses. `act` against a manifold fixture is
+`ActNeedsCdp`, because that file has no DOM node. The result does not include
+a fresh state delta. Call `diff` or `verify` for that. Live `cdp` is accepted
+and is not required by tests.
+
+Tool failures are `isError: true` with a JSON object whose `variant` matches
+`ToolError`. Protocol failures (`ParseError`, `InvalidRequest`,
+`MethodNotFound`, `MissingToolName`) are JSON-RPC errors with the same
+`variant` field. Tests compare the enum with `assert_eq!`, not `is_err()`.
+
+Error litmus, 2026-10-05: `resolve_origin`'s missing-source arm was temporarily
+`Err(ToolError::MissingExpect)`. `cargo test -p hyper-use-mcp --test server --
+error_variants_are_exact -- --exact` failed:
+
+```
+assertion `left == right` failed
+  left: MissingExpect
+ right: MissingFixture
+```
+
+The arm was restored to `ToolError::MissingFixture`.
+
+Verifiers: unit and in-process JSON-RPC tests own the dispatch and the exact
+variants. A 16-case proptest owns "random stdin lines do not panic". That is
+not a fuzz campaign and not a proof. The stdio subprocess test owns "the
+binary is not a name-only stub". No Miri, Loom, Kani, TLA+, or Lean. One
+blocking reader is not a concurrent protocol. No second model of the ranker
+or of fusion was added.
+
+`Ranker` is the escape if `locate_with` returns `Err`. The default weighted
+matcher and `HgraMatcher` with `ResonanceModel::V1` do not return it on a
+manifold this crate just parsed. There is no fixture for it. A click is not
+substituted.

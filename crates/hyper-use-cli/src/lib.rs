@@ -51,6 +51,18 @@ pub enum CliError {
     BadConfidence(String),
     MissingExpect,
     UnknownRegion(String),
+    UnknownExecutor(String),
+    UnsupportedAction(String),
+    NotImplemented {
+        executor: String,
+    },
+    BrowserUseIsReplay,
+    BrowserUseRejected {
+        message: String,
+    },
+    BrowserUseScript {
+        message: String,
+    },
     /// `mcp` is served by the binary, which owns stdin. This library call does not.
     McpIsStdio,
 }
@@ -95,6 +107,22 @@ impl std::fmt::Display for CliError {
             Self::BadConfidence(value) => write!(f, "bad confidence `{value}`"),
             Self::MissingExpect => f.write_str("verify requires --expect-text or --expect-absent"),
             Self::UnknownRegion(id) => write!(f, "unknown region `{id}`"),
+            Self::UnknownExecutor(name) => write!(f, "unknown executor `{name}`"),
+            Self::UnsupportedAction(action) => {
+                write!(f, "browser-use executor cannot perform `{action}`")
+            }
+            Self::NotImplemented { executor } => {
+                write!(f, "{executor} executor is not implemented")
+            }
+            Self::BrowserUseIsReplay => {
+                f.write_str("browser-use act uses a replay fixture, not a live CDP endpoint")
+            }
+            Self::BrowserUseRejected { message } => {
+                write!(f, "browser-use rejected the semantic act: {message}")
+            }
+            Self::BrowserUseScript { message } => {
+                write!(f, "invalid browser-use script: {message}")
+            }
             Self::McpIsStdio => {
                 f.write_str("mcp serves JSON-RPC on stdio; run the hyper-use binary")
             }
@@ -105,7 +133,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\n"
+    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>] [--executor browser|browser-use|macos|cua]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\nDefault executor is the CDP browser press. --executor browser-use sends region id, role, and label through a replay fixture. It does not navigate and it is not a benchmark. macos and cua are not implemented.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -495,6 +523,82 @@ mod tests {
             err.to_string(),
             "confidence 490 is below the act minimum 550"
         );
+    }
+
+    #[test]
+    fn browser_use_act_sends_semantics_and_low_confidence_does_not_execute() {
+        let path = cdp_fixture("sign-in.browser-use.json");
+        let stdout = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--executor",
+            "browser-use",
+            "--confidence",
+            "0.55",
+        ]))
+        .unwrap();
+        assert_eq!(stdout, "n100\tpress\tbrowser-use-semantic\texecuted\n");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--executor",
+            "browser-use",
+            "--confidence",
+            "0.49",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+        let rejected = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp_fixture("sign-in-reject.browser-use.json"),
+            "--executor",
+            "browser-use",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            rejected,
+            CliError::BrowserUseRejected {
+                message: "control refused the semantic act".into(),
+            }
+        );
+        assert_eq!(
+            rejected.to_string(),
+            "browser-use rejected the semantic act: control refused the semantic act"
+        );
+        let macos = execute(&args(&["act", "n100", "press", "--executor", "macos"])).unwrap_err();
+        assert_eq!(
+            macos,
+            CliError::NotImplemented {
+                executor: "macos".into(),
+            }
+        );
+        assert_eq!(macos.to_string(), "macos executor is not implemented");
+        let unknown = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--executor",
+            "navigate",
+            "--fixture",
+            &path,
+        ]))
+        .unwrap_err();
+        assert_eq!(unknown, CliError::UnknownExecutor("navigate".into()));
     }
 
     #[test]

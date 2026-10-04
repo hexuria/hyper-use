@@ -15,8 +15,9 @@ use hyper_use_core::{
     parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
 };
 use hyper_use_executor::{
-    gate_scored_confidence, ActionExecutor, ActionReceipt, ActionRequest, BrowserExecutor,
-    ExecutorError,
+    gate_scored_confidence, select_act_executor, ActionExecutor, ActionReceipt, ActionRequest,
+    BrowserExecutor, BrowserUseError, BrowserUseExecutor, ExecutorError, ExecutorKind,
+    StubExecutor,
 };
 use hyper_use_hyper::Dims;
 use hyper_use_observe::diff;
@@ -185,6 +186,28 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
 }
 
 fn act(arguments: &Value) -> Result<Value, ToolError> {
+    let requested = parse_requested_executor(arguments)?;
+    let available = match requested {
+        Some(kind) => vec![kind],
+        None => vec![ExecutorKind::Browser],
+    };
+    let selected = select_act_executor(requested, &available).map_err(|err| match err {
+        ExecutorError::Unavailable(kind) => ToolError::NotImplemented {
+            executor: kind.as_str().to_owned(),
+        },
+        other => ToolError::Browser(other.to_string()),
+    })?;
+    match selected {
+        ExecutorKind::BrowserUse => act_browser_use(arguments),
+        ExecutorKind::Macos | ExecutorKind::Cua => act_stub(selected, arguments),
+        ExecutorKind::Browser => act_browser(arguments),
+        other => Err(ToolError::NotImplemented {
+            executor: other.as_str().to_owned(),
+        }),
+    }
+}
+
+fn act_browser(arguments: &Value) -> Result<Value, ToolError> {
     let origin = resolve_origin(arguments)?;
     let region = require_region(arguments)?;
     let _action = parse_press_action(arguments)?;
@@ -299,10 +322,94 @@ fn verified_ok() -> Value {
     )
 }
 
+fn act_browser_use(arguments: &Value) -> Result<Value, ToolError> {
+    if opt_str(arguments, "cdp")?.is_some() {
+        return Err(ToolError::BrowserUseIsReplay);
+    }
+    let region = require_region(arguments)?;
+    let _action = parse_press_action(arguments)?;
+    let confidence = parse_confidence(arguments)?;
+    let path = opt_str(arguments, "fixture")?.ok_or(ToolError::MissingFixture)?;
+    let body = read_path(path)?;
+    let mut executor = BrowserUseExecutor::from_replay(&body).map_err(map_browser_use_script)?;
+    if executor.target().region_id() != &region {
+        return Err(ToolError::UnknownRegion(region.to_string()));
+    }
+    let mut request = ActionRequest::new(region.clone(), Action::Click);
+    if let Some(score) = confidence {
+        request = request.scored(score);
+    }
+    let target = json!({
+        "id": executor.target().region_id().as_str(),
+        "role": executor.target().role().as_str(),
+        "label": executor.target().label(),
+    });
+    match executor.execute(&request) {
+        Ok(receipt) => {
+            let mut body = outcome(
+                "act",
+                target,
+                Some(Action::Click.as_str()),
+                true,
+                false,
+                empty_delta(),
+                confidence,
+                None,
+                Some(receipt.kind().as_str()),
+            );
+            insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
+            Ok(body)
+        }
+        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
+            Some(score) => Ok(refused_target(target, score)),
+            None => Err(ToolError::Browser(
+                "unscored act was refused for confidence".into(),
+            )),
+        },
+        Err(err) => Err(map_executor(err)),
+    }
+}
+
+fn act_stub(kind: ExecutorKind, arguments: &Value) -> Result<Value, ToolError> {
+    let region = require_region(arguments)?;
+    let _action = parse_press_action(arguments)?;
+    let confidence = parse_confidence(arguments)?;
+    let mut request = ActionRequest::new(region.clone(), Action::Click);
+    if let Some(score) = confidence {
+        request = request.scored(score);
+    }
+    let mut stub = StubExecutor::new(kind);
+    match stub.execute(&request) {
+        Ok(_) => Err(ToolError::Browser(
+            "unimplemented executor returned a receipt".into(),
+        )),
+        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
+            Some(score) => Ok(refused_target(json!({"id": region.as_str()}), score)),
+            None => Err(ToolError::Browser(
+                "unscored act was refused for confidence".into(),
+            )),
+        },
+        Err(err) => Err(map_executor(err)),
+    }
+}
+
+fn map_browser_use_script(err: BrowserUseError) -> ToolError {
+    match err {
+        BrowserUseError::BadScript { message } => ToolError::BrowserUseScript { message },
+        other => ToolError::BrowserUseScript {
+            message: other.to_string(),
+        },
+    }
+}
+
 fn refused_act(manifold: &InteractionManifold, region: &RegionId, score: f64) -> Value {
+    refused_target(target_of(manifold, region), score)
+}
+
+fn refused_target(target: Value, score: f64) -> Value {
     let mut body = outcome(
         "act",
-        target_of(manifold, region),
+        target,
         Some(Action::Click.as_str()),
         false,
         false,
@@ -341,15 +448,39 @@ fn press(
     }
 }
 
+fn parse_requested_executor(arguments: &Value) -> Result<Option<ExecutorKind>, ToolError> {
+    match opt_str(arguments, "executor")? {
+        None => Ok(None),
+        Some(name) => ExecutorKind::parse(name)
+            .map(Some)
+            .ok_or_else(|| ToolError::UnknownExecutor(name.to_owned())),
+    }
+}
+
 fn map_executor(err: ExecutorError) -> ToolError {
     match err {
         ExecutorError::NonFiniteConfidence => ToolError::NonFiniteConfidence,
+        ExecutorError::NotImplemented(kind) => ToolError::NotImplemented {
+            executor: kind.as_str().to_owned(),
+        },
         ExecutorError::Browser(hyper_use_browser::BrowserError::UnknownRegion(id)) => {
             ToolError::UnknownRegion(id)
         }
         ExecutorError::Browser(hyper_use_browser::BrowserError::UnsupportedAction(action)) => {
             ToolError::UnsupportedAction(action)
         }
+        ExecutorError::BrowserUse(err) => match err {
+            BrowserUseError::UnknownRegion(id) => ToolError::UnknownRegion(id),
+            BrowserUseError::UnsupportedAction(action) => ToolError::UnsupportedAction(action),
+            BrowserUseError::Rejected { message } => ToolError::BrowserUseRejected { message },
+            BrowserUseError::BadScript { message }
+            | BrowserUseError::ParamsMismatch { message } => {
+                ToolError::BrowserUseScript { message }
+            }
+            other => ToolError::BrowserUseScript {
+                message: other.to_string(),
+            },
+        },
         ExecutorError::ConfidenceBelowThreshold { .. } => ToolError::Browser(err.to_string()),
         other => ToolError::Browser(other.to_string()),
     }

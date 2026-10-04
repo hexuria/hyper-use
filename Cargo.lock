@@ -444,6 +444,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-use-browser-use"
+version = "0.1.0"
+dependencies = [
+ "hyper-use-core",
+ "proptest",
+ "serde_json",
+]
+
+[[package]]
 name = "hyper-use-cli"
 version = "0.1.0"
 dependencies = [
@@ -471,10 +480,12 @@ name = "hyper-use-executor"
 version = "0.1.0"
 dependencies = [
  "hyper-use-browser",
+ "hyper-use-browser-use",
  "hyper-use-core",
  "hyper-use-cua",
  "hyper-use-macos",
  "hyper-use-protocol",
+ "proptest",
 ]
 
 [[package]]

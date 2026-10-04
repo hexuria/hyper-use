@@ -49,7 +49,14 @@ region disappeared.
 If the matcher confidence used for the act is below 0.55 (550 millis), act
 returns `ConfidenceBelowThreshold` and does not click. The host can journal
 that as a `ComputerResult` with `executed = false` and fallback
-`low-confidence`. hyper-use does not call CUA to paper over that miss.
+`low-confidence`. hyper-use does not call CUA, and it does not call the
+Browser Use transport, to paper over that miss.
+
+The default act backend is still the CDP browser press. `--executor browser-use`
+(or MCP `executor: "browser-use"`) is opt-in. It sends the already located
+region id, role, label, and click to a replay transport. It is not in the
+default policy order, so a missing CDP session does not delegate to it. It
+does not take a goal and it does not navigate. macOS and CUA stay unimplemented.
 
 An operator who names the region (`act <id> press` with no confidence) is
 treated as inspected. The gate does not apply. A host that just located
@@ -82,7 +89,7 @@ it is not a `ComputerResult` (that type always sets `executed` and `verified`).
 `typesafe-sdk` 0.2 is an optional `jev` feature of the CLI, off in the default
 build. With `HYPER_USE_JEV=1` it asks one choice per case. `agree` is whether
 that choice equals the region id, or `press` / `do-not-press` against
-`executed`. It is not a win. Browser Use is not started.
+`executed`. It is not a win. That example does not call the Browser Use executor.
 
 ## Identity
 
@@ -99,7 +106,8 @@ when the backend id does.
    press, refresh, verify. Fixture-proven.
 3. JEV contract types. This tree. Task and result only. No JEV runtime.
 4. MCP, CLI, and skill surfaces. `hyper-use mcp` serves the six tools over stdio JSON-RPC. No navigate tool.
-5. Fixture id and action agreement only. `WeightedMatcher` on four local fixtures, plus an optional System One choice. Browser Use is not started.
-6. Hyper matcher experiment. The ranker is selectable. No bake-off yet.
-7. CUA fusion. Not started. The stub still refuses.
-8. macOS. Last. The accessibility crate and the Mac app stay stubs.
+5. Fixture id and action agreement only. `WeightedMatcher` on four local fixtures, plus an optional System One choice. That example does not call Browser Use and is not a score.
+6. Browser Use semantic executor. Opt-in replay of one region id, role, label, and click. Not a benchmark. The CDP press path is unchanged. macOS and CUA stay unimplemented.
+7. Hyper matcher experiment. The ranker is selectable. No bake-off yet.
+8. CUA fusion. Not started. The stub still refuses.
+9. macOS. Last. The accessibility crate and the Mac app stay stubs.

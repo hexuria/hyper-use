@@ -111,6 +111,7 @@ model of the same score without a conformance fixture.
 
 - No macOS accessibility. macOS and CUA return `ExecutorError::NotImplemented`.
   A browser stub with no session does too. `BrowserExecutor` does not.
+  `BrowserUseExecutor` is a replay of one semantic act, not a live agent.
   MCP stdio exists. It is not a second browser and it does not navigate.
 - No navigation and no JEV runtime. `ComputerTask` is one locate or one act.
 - The weighted matcher and HGRA are not calibrated to each other. A confidence
@@ -306,12 +307,55 @@ and not a benchmark.
 
 Downside accepted: four fixtures and one press. A live choice can disagree and
 the run still succeeds, because this slice measures agreement, not a product
-winner. Browser Use is not started. No tokens, screenshots, retries, latency,
-or winner are recorded.
+winner. That comparison does not call the Browser Use executor and is not a
+Browser Use score. No tokens, screenshots, retries, latency, or winner are
+recorded.
 
 Verifier: the fixture test owns region ids, `executed` only on the press case,
 absence of `jev` and `agree`, and confidence equal to a second `rank` of the
 same manifold. The low-confidence arm owns "the transport log stays empty".
 No Miri, Loom, Kani, or benchmark harness. The optional feature is typechecked
 with `cargo check -p hyper-use-cli --features jev` and is not part of default CI.
+
+
+## Browser Use semantic executor
+
+Browser Use is an opt-in act backend, not a fallback and not an agent.
+`ExecutorKind::BrowserUse` is absent from `DEFAULT_POLICY_ORDER`.
+`select_executor` therefore keeps the CDP browser press when both are listed,
+and `select_act_executor(None, _)` ignores Browser Use. The host names
+`browser-use` with `select_requested`. A missing CDP session does not delegate.
+
+The request is a `SemanticRequest`: region id, role, label, and action.
+`to_wire` writes only those four keys. A fixture that carries `goal`, `url`,
+`x`, `y`, `coordinates`, `navigate`, `task`, `screenshot`, `tokens`, `latency`,
+or `retries` is `BrowserUseError::BadScript`. There is no coordinate click on
+this path. The CDP press order (DOM semantic, then `DOM.focus`, then a
+coordinate click) is unchanged.
+
+`ReplayTransport` is the only transport. It records every `submit` and then
+either returns a `TransportReceipt` or `BrowserUseError::Rejected`. It does
+not start a process. A receipt whose id or action differs from the request is
+`ParamsMismatch` after the call. Stubs still return `NotImplemented` and do
+not panic. macOS and CUA stay unimplemented.
+
+The confidence gate runs after the region id and the action match, and before
+`submit`. A scored total below 550 millis returns
+`ConfidenceBelowThreshold` and leaves the transport log empty. An unknown
+region returns `UnknownRegion` and also does not submit.
+
+Downside accepted: the replay script is the resolved target. This slice does
+not observe through Browser Use, and it does not speak to a live Browser Use
+process. A host that has not already located the region has nothing to hand
+over. That is intentional. This is not a success rate, a token count, a
+screenshot comparison, a retry policy, a latency, or a win over CDP.
+
+Verifier: unit tests own the wire keys, the exact `Rejected` and `BadScript`
+and `ParamsMismatch` variants, and "the log stays empty below 550 millis".
+A 16-case proptest owns the key set for generated labels, and a 16-case
+proptest owns the gate for integer millis in `0..550`. CLI and MCP tests own
+selection: high confidence records `browser-use-semantic`, low confidence on
+a rejecting script is still `executed: false`, and `macos` is
+`NotImplemented`. No Miri, Loom, Kani, or benchmark harness. No second model
+of the ranker. No live Browser Use process.
 

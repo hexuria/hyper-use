@@ -13,10 +13,11 @@ The public API is unstable until 1.0.
 2. Browser integration. This tree. Fixture-proven CDP observe, locate, act, diff, and verify. Live Chrome was exercised read-only (`Browser.getVersion` on an already-running debugging port). No click was sent to that browser. hyper-use does not launch or install Chrome.
 3. JEV contract types. This tree. `ComputerTask` and `ComputerResult` only. JEV itself stays outside this repo.
 4. MCP, CLI, and skill. `hyper-use mcp` serves observe, locate, inspect, act, diff, and verify on stdin. There is no navigate tool.
-5. Evaluation versus the current JEV to Browser Use path. Not started.
-6. Hyper matcher experiment. `HgraMatcher` is selectable. It is not the default, and it has not been shown to beat `WeightedMatcher`.
-7. CUA fusion. Not started.
-8. macOS. Last. Accessibility and the Mac app stay stubs.
+5. Fixture agreement with an optional System One choice. Not a Browser Use score.
+6. Browser Use semantic executor. Opt-in replay of one region id, role, label, and click. Not a benchmark. The default act path remains the CDP press.
+7. Hyper matcher experiment. `HgraMatcher` is selectable. It is not the default, and it has not been shown to beat `WeightedMatcher`.
+8. CUA fusion. Not started.
+9. macOS. Last. Accessibility and the Mac app stay stubs.
 
 ## Commands
 
@@ -37,6 +38,9 @@ cargo run -p hyper-use-cli -- verify \
 ```
 
 `press` is the CLI verb for `Action::Click`. A scored confidence below 0.55
-refuses the act and does not click. macOS and CUA still return not-implemented.
+refuses the act and does not click. `--executor browser-use` sends the region
+id, role, and label through a replay fixture. It does not navigate and it is
+not a benchmark. The default executor remains the CDP press. macOS and CUA
+still return not-implemented.
 
 See `docs/PRD.md` and `docs/DECISIONS.md`.

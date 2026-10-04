@@ -40,6 +40,17 @@ pub enum ToolError {
     MissingExpect,
     BothExpectations,
     ActNeedsCdp,
+    UnknownExecutor(String),
+    NotImplemented {
+        executor: String,
+    },
+    BrowserUseIsReplay,
+    BrowserUseRejected {
+        message: String,
+    },
+    BrowserUseScript {
+        message: String,
+    },
     InvalidArguments(String),
     Io {
         path: String,
@@ -81,6 +92,11 @@ impl ToolError {
             Self::MissingExpect => "MissingExpect",
             Self::BothExpectations => "BothExpectations",
             Self::ActNeedsCdp => "ActNeedsCdp",
+            Self::UnknownExecutor(_) => "UnknownExecutor",
+            Self::NotImplemented { .. } => "NotImplemented",
+            Self::BrowserUseIsReplay => "BrowserUseIsReplay",
+            Self::BrowserUseRejected { .. } => "BrowserUseRejected",
+            Self::BrowserUseScript { .. } => "BrowserUseScript",
             Self::InvalidArguments(_) => "InvalidArguments",
             Self::Io { .. } => "Io",
             Self::Fixture(_) => "Fixture",
@@ -108,6 +124,16 @@ impl ToolError {
             Self::RegionStillPresent { id } => json!({"variant": "RegionStillPresent", "id": id}),
             Self::BadDims(dims) => json!({"variant": "BadDims", "dims": dims}),
             Self::BadConfidence(value) => json!({"variant": "BadConfidence", "value": value}),
+            Self::UnknownExecutor(name) => json!({"variant": "UnknownExecutor", "name": name}),
+            Self::NotImplemented { executor } => {
+                json!({"variant": "NotImplemented", "executor": executor})
+            }
+            Self::BrowserUseRejected { message } => {
+                json!({"variant": "BrowserUseRejected", "message": message})
+            }
+            Self::BrowserUseScript { message } => {
+                json!({"variant": "BrowserUseScript", "message": message})
+            }
             Self::InvalidArguments(message) => {
                 json!({"variant": "InvalidArguments", "message": message})
             }
@@ -163,6 +189,19 @@ impl fmt::Display for ToolError {
             }
             Self::ActNeedsCdp => {
                 f.write_str("act needs a CDP fixture or cdp; a manifold fixture has no DOM node")
+            }
+            Self::UnknownExecutor(name) => write!(f, "unknown executor `{name}`"),
+            Self::NotImplemented { executor } => {
+                write!(f, "{executor} executor is not implemented")
+            }
+            Self::BrowserUseIsReplay => {
+                f.write_str("browser-use act uses a replay fixture, not a live CDP endpoint")
+            }
+            Self::BrowserUseRejected { message } => {
+                write!(f, "browser-use rejected the semantic act: {message}")
+            }
+            Self::BrowserUseScript { message } => {
+                write!(f, "invalid browser-use script: {message}")
             }
             Self::InvalidArguments(message) => write!(f, "invalid arguments: {message}"),
             Self::Io { path, message } => write!(f, "cannot read {path}: {message}"),

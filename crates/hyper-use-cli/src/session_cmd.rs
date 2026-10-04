@@ -13,7 +13,10 @@ use hyper_use_browser::{
     BrowserSession, Expectation, ReplayTransport, WebSocketTransport, DEFAULT_CDP_HTTP,
 };
 use hyper_use_core::{parse_fixture, InteractionManifold, RegionId};
-use hyper_use_executor::{ActionExecutor, ActionRequest, BrowserExecutor, ExecutorError};
+use hyper_use_executor::{
+    select_act_executor, ActionExecutor, ActionRequest, BrowserExecutor, BrowserUseError,
+    BrowserUseExecutor, ExecutorError, ExecutorKind, StubExecutor,
+};
 use hyper_use_observe::diff;
 
 use crate::{set_once, CliError};
@@ -78,6 +81,7 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
     let mut confidence: Option<String> = None;
     let mut fixture: Option<String> = None;
     let mut cdp: Option<String> = None;
+    let mut executor: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = &args[index];
@@ -87,6 +91,8 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             set_once("cdp", &mut cdp, value.to_owned())?;
         } else if let Some(value) = arg.strip_prefix("--confidence=") {
             set_once("confidence", &mut confidence, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--executor=") {
+            set_once("executor", &mut executor, value.to_owned())?;
         } else if arg == "--cdp" {
             if cdp.is_some() {
                 return Err(CliError::DuplicateFlag("--cdp"));
@@ -98,26 +104,25 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             } else {
                 cdp = Some(DEFAULT_CDP_HTTP.to_owned());
             }
-        } else if arg == "--fixture" || arg == "--confidence" {
+        } else if arg == "--fixture" || arg == "--confidence" || arg == "--executor" {
             index += 1;
+            let flag = match arg.as_str() {
+                "--fixture" => "--fixture",
+                "--confidence" => "--confidence",
+                "--executor" => "--executor",
+                _ => "--flag",
+            };
             let Some(value) = args.get(index) else {
-                return Err(CliError::MissingValue(if arg == "--fixture" {
-                    "--fixture"
-                } else {
-                    "--confidence"
-                }));
+                return Err(CliError::MissingValue(flag));
             };
             if value.starts_with("--") {
-                return Err(CliError::MissingValue(if arg == "--fixture" {
-                    "--fixture"
-                } else {
-                    "--confidence"
-                }));
+                return Err(CliError::MissingValue(flag));
             }
-            if arg == "--fixture" {
-                set_once("fixture", &mut fixture, value.clone())?;
-            } else {
-                set_once("confidence", &mut confidence, value.clone())?;
+            match arg.as_str() {
+                "--fixture" => set_once("fixture", &mut fixture, value.clone())?,
+                "--confidence" => set_once("confidence", &mut confidence, value.clone())?,
+                "--executor" => set_once("executor", &mut executor, value.clone())?,
+                _ => unreachable!("flag matched"),
             }
         } else if arg.starts_with("--") {
             return Err(CliError::UnknownFlag(arg.clone()));
@@ -141,27 +146,70 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
         let value = f64::from_str(&raw).map_err(|_| CliError::BadConfidence(raw.clone()))?;
         request = request.scored(value);
     }
-    if let Some(url) = cdp.as_deref() {
-        let mut executor = BrowserExecutor::new(BrowserSession::new(connect_live(url)?));
-        return finish_act(&mut executor, &request);
-    }
-    let Some(path) = fixture else {
-        return Err(CliError::MissingSource);
+    let requested = match executor.as_deref() {
+        None => None,
+        Some(name) => Some(
+            ExecutorKind::parse(name).ok_or_else(|| CliError::UnknownExecutor(name.to_owned()))?,
+        ),
     };
-    let body = read_path(&path)?;
-    if !body.trim_start().starts_with('{') {
-        return Err(CliError::Browser(
-            "act against a browser session needs a CDP fixture or --cdp".into(),
-        ));
+    let available = match requested {
+        Some(kind) => vec![kind],
+        None => vec![ExecutorKind::Browser],
+    };
+    let selected = select_act_executor(requested, &available).map_err(|err| match err {
+        ExecutorError::Unavailable(kind) => CliError::NotImplemented {
+            executor: kind.as_str().to_owned(),
+        },
+        other => CliError::Browser(other.to_string()),
+    })?;
+    match selected {
+        ExecutorKind::BrowserUse => {
+            if cdp.is_some() {
+                return Err(CliError::BrowserUseIsReplay);
+            }
+            let Some(path) = fixture else {
+                return Err(CliError::MissingSource);
+            };
+            let body = read_path(&path)?;
+            let mut backend = BrowserUseExecutor::from_replay(&body).map_err(|err| match err {
+                BrowserUseError::BadScript { message } => CliError::BrowserUseScript { message },
+                other => CliError::BrowserUseScript {
+                    message: other.to_string(),
+                },
+            })?;
+            finish_act(&mut backend, &request)
+        }
+        ExecutorKind::Macos | ExecutorKind::Cua => {
+            let mut backend = StubExecutor::new(selected);
+            finish_act(&mut backend, &request)
+        }
+        ExecutorKind::Browser => {
+            if let Some(url) = cdp.as_deref() {
+                let mut backend = BrowserExecutor::new(BrowserSession::new(connect_live(url)?));
+                return finish_act(&mut backend, &request);
+            }
+            let Some(path) = fixture else {
+                return Err(CliError::MissingSource);
+            };
+            let body = read_path(&path)?;
+            if !body.trim_start().starts_with('{') {
+                return Err(CliError::Browser(
+                    "act against a browser session needs a CDP fixture or --cdp".into(),
+                ));
+            }
+            let transport =
+                ReplayTransport::parse(&body).map_err(|err| CliError::Browser(err.to_string()))?;
+            let mut backend = BrowserExecutor::new(BrowserSession::new(transport));
+            finish_act(&mut backend, &request)
+        }
+        other => Err(CliError::NotImplemented {
+            executor: other.as_str().to_owned(),
+        }),
     }
-    let transport =
-        ReplayTransport::parse(&body).map_err(|err| CliError::Browser(err.to_string()))?;
-    let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-    finish_act(&mut executor, &request)
 }
 
-fn finish_act<T: hyper_use_browser::CdpTransport>(
-    executor: &mut BrowserExecutor<T>,
+fn finish_act(
+    executor: &mut impl ActionExecutor,
     request: &ActionRequest,
 ) -> Result<String, CliError> {
     match executor.execute(request) {
@@ -422,6 +470,21 @@ fn map_executor(err: ExecutorError) -> Result<String, CliError> {
             minimum_millis,
         }),
         ExecutorError::NonFiniteConfidence => Err(CliError::NonFiniteConfidence),
+        ExecutorError::NotImplemented(kind) => Err(CliError::NotImplemented {
+            executor: kind.as_str().to_owned(),
+        }),
+        ExecutorError::BrowserUse(err) => match err {
+            BrowserUseError::UnknownRegion(id) => Err(CliError::UnknownRegion(id)),
+            BrowserUseError::UnsupportedAction(action) => Err(CliError::UnsupportedAction(action)),
+            BrowserUseError::Rejected { message } => Err(CliError::BrowserUseRejected { message }),
+            BrowserUseError::BadScript { message }
+            | BrowserUseError::ParamsMismatch { message } => {
+                Err(CliError::BrowserUseScript { message })
+            }
+            other => Err(CliError::BrowserUseScript {
+                message: other.to_string(),
+            }),
+        },
         other => Err(CliError::Browser(other.to_string())),
     }
 }

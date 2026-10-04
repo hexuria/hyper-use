@@ -72,3 +72,27 @@ Affected invariants: tool names are the six verbs; a goal or coordinate argument
 Tests or proofs updated: hyper-use-mcp server tests, a 16-case proptest that random lines do not panic, and a stdio subprocess test of the hyper-use binary. No second formal model.
 ```
 
+
+## Browser Use executor
+
+`browser-use` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. The CDP press path is unchanged. macOS and CUA stay unimplemented. A scored confidence below 550 millis does not call the replay transport.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: the Browser Use path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
+Affected invariants: default act stays the CDP browser press; Browser Use is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos and cua still return NotImplemented.
+Tests or proofs updated: browser-use replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
+```

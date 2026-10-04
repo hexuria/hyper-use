@@ -5,17 +5,25 @@
 //! crate does not probe the operating system.
 //!
 //! [`BrowserExecutor`] performs a browser press when it holds a CDP session.
+//! [`BrowserUseExecutor`] hands an already located region to a Browser Use
+//! replay transport as a region id, role, label, and action. It is not in
+//! [`DEFAULT_POLICY_ORDER`]: a missing CDP session does not delegate to it.
 //! macOS and CUA still return [`ExecutorError::NotImplemented`]. A scored
 //! confidence below [`MIN_ACT_CONFIDENCE_MILLIS`] returns
-//! [`ExecutorError::ConfidenceBelowThreshold`] and does not click.
-//! [`ActConfidence::Inspected`] is the operator naming a region; the gate
-//! does not apply. There is no CUA call anywhere in this crate.
+//! [`ExecutorError::ConfidenceBelowThreshold`] and does not click, and it does
+//! not call the Browser Use transport. [`ActConfidence::Inspected`] is the
+//! operator naming a region; the gate does not apply. There is no CUA call
+//! anywhere in this crate.
 
 #![forbid(unsafe_code)]
 
 use std::fmt;
 
 use hyper_use_browser::{ActMechanism, BrowserError, BrowserSession, CdpTransport};
+pub use hyper_use_browser_use::BrowserUseError;
+use hyper_use_browser_use::{
+    BrowserUseTransport, ReplayTransport, SemanticRequest, STATUS as BROWSER_USE_STATUS,
+};
 use hyper_use_core::{Action, RegionId};
 use hyper_use_protocol::{ComputerResult, FallbackReason, MatcherConfidence};
 
@@ -32,6 +40,8 @@ pub enum ExecutorKind {
     Browser,
     Macos,
     Cua,
+    /// Opt-in. Not a member of [`DEFAULT_POLICY_ORDER`].
+    BrowserUse,
 }
 
 impl ExecutorKind {
@@ -40,6 +50,7 @@ impl ExecutorKind {
             Self::Browser => "browser",
             Self::Macos => "macos",
             Self::Cua => "cua",
+            Self::BrowserUse => "browser-use",
         }
     }
 
@@ -48,6 +59,7 @@ impl ExecutorKind {
             Self::Browser => hyper_use_browser::STATUS,
             Self::Macos => hyper_use_macos::STATUS,
             Self::Cua => hyper_use_cua::STATUS,
+            Self::BrowserUse => BROWSER_USE_STATUS,
         }
     }
 }
@@ -55,6 +67,18 @@ impl ExecutorKind {
 impl fmt::Display for ExecutorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl ExecutorKind {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "browser" => Some(Self::Browser),
+            "macos" => Some(Self::Macos),
+            "cua" => Some(Self::Cua),
+            "browser-use" => Some(Self::BrowserUse),
+            _ => None,
+        }
     }
 }
 
@@ -107,12 +131,36 @@ impl ActionRequest {
     }
 }
 
+/// How an act was carried out. Browser Use is semantic, not a CDP mechanism.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExecutedVia {
+    Browser(ActMechanism),
+    /// Region id, role, label, and action. No coordinates and no goal.
+    BrowserUseSemantic,
+}
+
+impl ExecutedVia {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Browser(mechanism) => mechanism.as_str(),
+            Self::BrowserUseSemantic => "browser-use-semantic",
+        }
+    }
+}
+
+impl fmt::Display for ExecutedVia {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionReceipt {
     kind: ExecutorKind,
     region_id: RegionId,
     action: Action,
-    mechanism: ActMechanism,
+    mechanism: ExecutedVia,
 }
 
 impl ActionReceipt {
@@ -125,7 +173,7 @@ impl ActionReceipt {
     pub fn action(&self) -> Action {
         self.action
     }
-    pub const fn mechanism(&self) -> ActMechanism {
+    pub const fn mechanism(&self) -> ExecutedVia {
         self.mechanism
     }
 }
@@ -135,9 +183,12 @@ impl ActionReceipt {
 pub enum ExecutorError {
     /// The backend has no session. macOS and CUA are always this.
     /// A browser stub is this; [`BrowserExecutor`] is not.
+    /// A Browser Use stub is this; [`BrowserUseExecutor`] is not.
     NotImplemented(ExecutorKind),
     /// No entry in the policy order was present in the available set.
     NoneAvailable,
+    /// The act path named a backend that was not available.
+    Unavailable(ExecutorKind),
     /// Matcher total is below [`MIN_ACT_CONFIDENCE_MILLIS`]. No click was sent.
     ConfidenceBelowThreshold {
         confidence_millis: i32,
@@ -145,6 +196,7 @@ pub enum ExecutorError {
     },
     NonFiniteConfidence,
     Browser(BrowserError),
+    BrowserUse(BrowserUseError),
 }
 
 impl fmt::Display for ExecutorError {
@@ -154,6 +206,9 @@ impl fmt::Display for ExecutorError {
                 write!(f, "{kind} executor is not implemented")
             }
             Self::NoneAvailable => f.write_str("no executor is available"),
+            Self::Unavailable(kind) => {
+                write!(f, "{kind} executor was requested but is not available")
+            }
             Self::ConfidenceBelowThreshold {
                 confidence_millis,
                 minimum_millis,
@@ -163,6 +218,7 @@ impl fmt::Display for ExecutorError {
             ),
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
             Self::Browser(err) => write!(f, "{err}"),
+            Self::BrowserUse(err) => write!(f, "{err}"),
         }
     }
 }
@@ -192,7 +248,10 @@ impl ActionExecutor for StubExecutor {
         self.kind
     }
 
-    fn execute(&mut self, _request: &ActionRequest) -> Result<ActionReceipt, ExecutorError> {
+    fn execute(&mut self, request: &ActionRequest) -> Result<ActionReceipt, ExecutorError> {
+        if let ActConfidence::Scored(confidence) = request.confidence() {
+            gate_scored_confidence(confidence)?;
+        }
         Err(ExecutorError::NotImplemented(self.kind))
     }
 }
@@ -232,7 +291,79 @@ impl<T: CdpTransport> ActionExecutor for BrowserExecutor<T> {
             kind: ExecutorKind::Browser,
             region_id: request.region_id().clone(),
             action: request.action(),
-            mechanism,
+            mechanism: ExecutedVia::Browser(mechanism),
+        })
+    }
+}
+
+/// Browser Use backend. The target is the region hyper-use already resolved.
+/// Submitting it is not navigation and not a goal.
+pub struct BrowserUseExecutor<T: BrowserUseTransport> {
+    transport: T,
+    target: SemanticRequest,
+}
+
+impl<T: BrowserUseTransport> BrowserUseExecutor<T> {
+    pub fn new(transport: T, target: SemanticRequest) -> Self {
+        Self { transport, target }
+    }
+
+    pub fn target(&self) -> &SemanticRequest {
+        &self.target
+    }
+
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+}
+
+impl BrowserUseExecutor<ReplayTransport> {
+    pub fn from_replay(script: &str) -> Result<Self, BrowserUseError> {
+        let transport = ReplayTransport::parse(script)?;
+        let target = transport.expected().clone();
+        Ok(Self { transport, target })
+    }
+}
+
+impl<T: BrowserUseTransport> ActionExecutor for BrowserUseExecutor<T> {
+    fn kind(&self) -> ExecutorKind {
+        ExecutorKind::BrowserUse
+    }
+
+    fn execute(&mut self, request: &ActionRequest) -> Result<ActionReceipt, ExecutorError> {
+        if request.region_id() != self.target.region_id() {
+            return Err(ExecutorError::BrowserUse(BrowserUseError::UnknownRegion(
+                request.region_id().to_string(),
+            )));
+        }
+        if request.action() != self.target.action() {
+            return Err(ExecutorError::BrowserUse(
+                BrowserUseError::UnsupportedAction(request.action().as_str().to_owned()),
+            ));
+        }
+        if let ActConfidence::Scored(confidence) = request.confidence() {
+            gate_scored_confidence(confidence)?;
+        }
+        let receipt = self
+            .transport
+            .submit(&self.target)
+            .map_err(ExecutorError::BrowserUse)?;
+        if receipt.region_id() != self.target.region_id()
+            || receipt.action() != self.target.action()
+        {
+            return Err(ExecutorError::BrowserUse(BrowserUseError::ParamsMismatch {
+                message: "browser-use receipt does not match the semantic request".into(),
+            }));
+        }
+        Ok(ActionReceipt {
+            kind: ExecutorKind::BrowserUse,
+            region_id: request.region_id().clone(),
+            action: request.action(),
+            mechanism: ExecutedVia::BrowserUseSemantic,
         })
     }
 }
@@ -270,12 +401,17 @@ impl ExecutorError {
                 MatcherConfidence::try_new(0.0).expect("zero is finite"),
                 FallbackReason::NotImplemented,
             )),
-            Self::NonFiniteConfidence | Self::NoneAvailable | Self::Browser(_) => None,
+            Self::NonFiniteConfidence
+            | Self::NoneAvailable
+            | Self::Unavailable(_)
+            | Self::Browser(_)
+            | Self::BrowserUse(_) => None,
         }
     }
 }
 
 /// First kind in [`DEFAULT_POLICY_ORDER`] that is also in `available`.
+/// [`ExecutorKind::BrowserUse`] is not in that order, so it is never selected here.
 pub fn select_executor(available: &[ExecutorKind]) -> Result<ExecutorKind, ExecutorError> {
     for kind in DEFAULT_POLICY_ORDER {
         if available.contains(&kind) {
@@ -283,6 +419,37 @@ pub fn select_executor(available: &[ExecutorKind]) -> Result<ExecutorKind, Execu
         }
     }
     Err(ExecutorError::NoneAvailable)
+}
+
+/// The named backend, if the caller listed it. This does not fall through.
+pub fn select_requested(
+    requested: ExecutorKind,
+    available: &[ExecutorKind],
+) -> Result<ExecutorKind, ExecutorError> {
+    if available.contains(&requested) {
+        Ok(requested)
+    } else {
+        Err(ExecutorError::Unavailable(requested))
+    }
+}
+
+/// `None` uses [`select_executor`] and ignores Browser Use. `Some` uses
+/// [`select_requested`] and does not substitute another backend.
+pub fn select_act_executor(
+    requested: Option<ExecutorKind>,
+    available: &[ExecutorKind],
+) -> Result<ExecutorKind, ExecutorError> {
+    match requested {
+        Some(kind) => select_requested(kind, available),
+        None => {
+            let policy: Vec<ExecutorKind> = available
+                .iter()
+                .copied()
+                .filter(|kind| *kind != ExecutorKind::BrowserUse)
+                .collect();
+            select_executor(&policy)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -398,7 +565,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             receipt.mechanism(),
-            hyper_use_browser::ActMechanism::DomSemantic
+            ExecutedVia::Browser(hyper_use_browser::ActMechanism::DomSemantic)
         );
         assert_eq!(receipt.kind(), ExecutorKind::Browser);
         assert!(high
@@ -413,5 +580,205 @@ mod tests {
             .logged_methods()
             .iter()
             .all(|method| method != "Input.dispatchMouseEvent"));
+    }
+
+    #[test]
+    fn browser_use_is_opt_in_and_not_a_fallback() {
+        assert_eq!(
+            select_executor(&[ExecutorKind::BrowserUse, ExecutorKind::Browser]).unwrap(),
+            ExecutorKind::Browser
+        );
+        assert_eq!(
+            select_executor(&[ExecutorKind::BrowserUse]).unwrap_err(),
+            ExecutorError::NoneAvailable
+        );
+        assert_eq!(
+            select_act_executor(None, &[ExecutorKind::Browser, ExecutorKind::BrowserUse]).unwrap(),
+            ExecutorKind::Browser
+        );
+        assert_eq!(
+            select_act_executor(Some(ExecutorKind::BrowserUse), &[ExecutorKind::BrowserUse])
+                .unwrap(),
+            ExecutorKind::BrowserUse
+        );
+        let err = select_requested(ExecutorKind::BrowserUse, &[ExecutorKind::Browser]).unwrap_err();
+        assert_eq!(err, ExecutorError::Unavailable(ExecutorKind::BrowserUse));
+        assert_eq!(
+            err.to_string(),
+            "browser-use executor was requested but is not available"
+        );
+        assert_eq!(
+            ExecutorKind::parse("browser-use"),
+            Some(ExecutorKind::BrowserUse)
+        );
+        assert_eq!(ExecutorKind::parse("browser"), Some(ExecutorKind::Browser));
+        assert!(ExecutorKind::parse("navigate").is_none());
+        assert!(ExecutorKind::BrowserUse
+            .status()
+            .contains("does not navigate"));
+    }
+
+    #[test]
+    fn browser_use_stub_does_not_panic() {
+        let request = ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click);
+        let mut stub = StubExecutor::new(ExecutorKind::BrowserUse);
+        let err = stub.execute(&request).unwrap_err();
+        assert_eq!(err, ExecutorError::NotImplemented(ExecutorKind::BrowserUse));
+        assert_eq!(err.to_string(), "browser-use executor is not implemented");
+        let scored = request.scored(0.49);
+        let err = stub.execute(&scored).unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+    }
+
+    #[test]
+    fn browser_use_low_confidence_does_not_submit_and_high_confidence_records_a_receipt() {
+        let mut low = BrowserUseExecutor::from_replay(include_str!(
+            "../../../fixtures/sign-in.browser-use.json"
+        ))
+        .unwrap();
+        let err = low
+            .execute(
+                &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click).scored(0.49),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: 490,
+                minimum_millis: 550,
+            }
+        );
+        assert!(low.transport().submitted().is_empty());
+
+        let mut unknown = BrowserUseExecutor::from_replay(include_str!(
+            "../../../fixtures/sign-in.browser-use.json"
+        ))
+        .unwrap();
+        let err = unknown
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n200").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::BrowserUse(BrowserUseError::UnknownRegion("n200".into()))
+        );
+        assert!(unknown.transport().submitted().is_empty());
+
+        let mut high = BrowserUseExecutor::from_replay(include_str!(
+            "../../../fixtures/sign-in.browser-use.json"
+        ))
+        .unwrap();
+        let receipt = high
+            .execute(
+                &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click).scored(0.55),
+            )
+            .unwrap();
+        assert_eq!(receipt.kind(), ExecutorKind::BrowserUse);
+        assert_eq!(receipt.mechanism(), ExecutedVia::BrowserUseSemantic);
+        assert_eq!(receipt.mechanism().as_str(), "browser-use-semantic");
+        assert_eq!(high.transport().submitted().len(), 1);
+        let sent = &high.transport().submitted()[0];
+        assert_eq!(sent.region_id().as_str(), "n100");
+        assert_eq!(sent.role(), hyper_use_core::Role::Button);
+        assert_eq!(sent.label(), "Sign in");
+        assert_eq!(sent.action(), Action::Click);
+        assert!(!sent.to_wire().contains("\"x\""));
+        assert!(!sent.to_wire().contains("goal"));
+    }
+
+    #[test]
+    fn browser_use_rejection_and_receipt_mismatch_are_typed() {
+        let mut rejected = BrowserUseExecutor::from_replay(include_str!(
+            "../../../fixtures/sign-in-reject.browser-use.json"
+        ))
+        .unwrap();
+        let err = rejected
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n100").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::BrowserUse(BrowserUseError::Rejected {
+                message: "control refused the semantic act".into(),
+            })
+        );
+        assert_eq!(rejected.transport().submitted().len(), 1);
+        assert!(err.to_string().contains("control refused the semantic act"));
+
+        let target = SemanticRequest::new(
+            RegionId::try_new("n100").unwrap(),
+            hyper_use_core::Role::Button,
+            "Sign in",
+            Action::Click,
+        )
+        .unwrap();
+        let mut lying = BrowserUseExecutor::new(LieTransport { calls: 0 }, target);
+        let err = lying
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n100").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(lying.transport().calls, 1);
+        assert_eq!(
+            err,
+            ExecutorError::BrowserUse(BrowserUseError::ParamsMismatch {
+                message: "browser-use receipt does not match the semantic request".into(),
+            })
+        );
+    }
+
+    struct LieTransport {
+        calls: usize,
+    }
+
+    impl BrowserUseTransport for LieTransport {
+        fn submit(
+            &mut self,
+            request: &SemanticRequest,
+        ) -> Result<hyper_use_browser_use::TransportReceipt, BrowserUseError> {
+            self.calls += 1;
+            let _ = request;
+            Ok(hyper_use_browser_use::TransportReceipt::new(
+                RegionId::try_new("other").unwrap(),
+                Action::Click,
+            ))
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(16))]
+        #[test]
+        fn scored_below_the_gate_does_not_submit(millis in 0i32..550) {
+            let confidence = f64::from(millis) / 1000.0;
+            let mut executor = BrowserUseExecutor::from_replay(include_str!(
+                "../../../fixtures/sign-in.browser-use.json"
+            ))
+            .unwrap();
+            let err = executor
+                .execute(
+                    &ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click)
+                        .scored(confidence),
+                )
+                .unwrap_err();
+            assert_eq!(
+                err,
+                ExecutorError::ConfidenceBelowThreshold {
+                    confidence_millis: millis,
+                    minimum_millis: 550,
+                }
+            );
+            assert!(executor.transport().submitted().is_empty());
+        }
     }
 }

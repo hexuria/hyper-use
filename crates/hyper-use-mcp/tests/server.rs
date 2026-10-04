@@ -187,6 +187,102 @@ fn act_press_uses_dom_click_and_low_confidence_does_not() {
 }
 
 #[test]
+fn browser_use_act_is_semantic_and_low_confidence_does_not_execute() {
+    let pressed = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.browser-use.json"),
+            "region": "n100",
+            "action": "press",
+            "executor": "browser-use",
+            "confidence": 0.55
+        }),
+    )
+    .unwrap();
+    assert_eq!(pressed["executed"], true);
+    assert_eq!(pressed["executor"], "browser-use");
+    assert_eq!(pressed["mechanism"], "browser-use-semantic");
+    assert_eq!(pressed["target"]["id"], "n100");
+    assert_eq!(pressed["target"]["role"], "button");
+    assert_eq!(pressed["target"]["label"], "Sign in");
+    assert_eq!(pressed["action"], "click");
+    assert!(pressed.get("x").is_none());
+    assert!(pressed.get("goal").is_none());
+    assert!(pressed["target"].get("x").is_none());
+
+    let refused = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-reject.browser-use.json"),
+            "region": "n100",
+            "executor": "browser-use",
+            "confidence": 0.49
+        }),
+    )
+    .unwrap();
+    assert_eq!(refused["executed"], false);
+    assert_eq!(refused["fallback"], "low-confidence");
+    assert_eq!(refused["executor"], Value::Null);
+    assert!(refused["mechanism"].is_null());
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-reject.browser-use.json"),
+            "region": "n100",
+            "executor": "browser-use"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::BrowserUseRejected {
+            message: "control refused the semantic act".into(),
+        }
+    );
+    assert_eq!(
+        err.to_value(),
+        json!({
+            "variant": "BrowserUseRejected",
+            "message": "control refused the semantic act"
+        })
+    );
+
+    let err = call("act", json!({"region": "n100", "executor": "macos"})).unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::NotImplemented {
+            executor: "macos".into(),
+        }
+    );
+    assert_eq!(err.to_string(), "macos executor is not implemented");
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.browser-use.json"),
+            "region": "n100",
+            "executor": "browser-use",
+            "cdp": "http://127.0.0.1:9222"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::BrowserUseIsReplay);
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.browser-use.json"),
+            "region": "n100",
+            "executor": "browser-use",
+            "goal": "sign the user in"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::GoalNotAccepted);
+}
+
+#[test]
 fn error_variants_are_exact() {
     let sign_in = fixture("sign-in.cdp.json");
     let err = call("observe", json!({})).unwrap_err();

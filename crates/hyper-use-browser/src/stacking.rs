@@ -259,9 +259,11 @@ mod tests {
             RegionId::try_new("save").unwrap(),
             (StackingStyle::default(), 0),
         );
-        let mut toast = StackingStyle::default();
-        toast.position = PositionKind::Fixed;
-        toast.z_index = Some(9999);
+        let toast = StackingStyle {
+            position: PositionKind::Fixed,
+            z_index: Some(9999),
+            ..Default::default()
+        };
         styles.insert(RegionId::try_new("toast").unwrap(), (toast, 1));
         assert_eq!(apply_stacking_occlusion(&mut m, &styles), 1);
         assert!(m.get_str("save").unwrap().flags().occluded());
@@ -279,10 +281,12 @@ mod tests {
             RegionId::try_new("save").unwrap(),
             (StackingStyle::default(), 0),
         );
-        let mut veil = StackingStyle::default();
-        veil.position = PositionKind::Fixed;
-        veil.z_index = Some(9999);
-        veil.pointer_events = false;
+        let veil = StackingStyle {
+            position: PositionKind::Fixed,
+            z_index: Some(9999),
+            pointer_events: false,
+            ..Default::default()
+        };
         styles.insert(RegionId::try_new("veil").unwrap(), (veil, 1));
         assert_eq!(apply_stacking_occlusion(&mut m, &styles), 0);
         assert!(!m.get_str("save").unwrap().flags().occluded());
@@ -295,9 +299,11 @@ mod tests {
             button("ok", (120.0, 150.0, 80.0, 30.0), Some("card")),
         ]);
         let mut styles = BTreeMap::new();
-        let mut card = StackingStyle::default();
-        card.z_index = Some(1);
-        card.position = PositionKind::Relative;
+        let card = StackingStyle {
+            z_index: Some(1),
+            position: PositionKind::Relative,
+            ..Default::default()
+        };
         styles.insert(RegionId::try_new("card").unwrap(), (card, 0));
         styles.insert(
             RegionId::try_new("ok").unwrap(),

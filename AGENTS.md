@@ -44,7 +44,7 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: Phase 2 adds weighted ranking, CDP parse/fusion/press/verify, and the JEV task types. Replay is a fixture, not crash recovery. The websocket client is one blocking call stream, so no system model was added.
-Affected invariants: default locate is weighted; HGRA remains selectable; fusion joins a DOM/AX pair with the same backend id, merges a 1px pair, and refuses different labels on different nodes; press prefers a DOM click; verify fails with ExpectedTextMissing; confidence below 550 millis does not click; a region id survives move, enabled change, and press.
+Affected invariants: default locate is weighted; HGRA remains selectable; fusion joins a DOM/AX pair with the same backend id, merges a 1px pair, and refuses different labels on different nodes; press prefers a DOM click; verify fails with ExpectedTextMissing; a raw confidence below 0.55 does not click; a region id survives move, enabled change, and press.
 Tests or proofs updated: resonance matcher tests, browser fusion and session tests, executor confidence test, CLI command tests, observe identity test, protocol contract test. No second formal model.
 ```
 
@@ -70,14 +70,14 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: MCP dispatch is one blocking stdin reader. A notification has no reply. That is not a concurrent protocol, so no system model was added.
-Affected invariants: tool names are the six verbs; a goal or coordinate argument cannot succeed; locate defaults to weighted and sets benchmark false; a scored act below 550 millis returns executed false and does not press; verify failures are exact ToolError variants.
+Affected invariants: tool names are the six verbs; a goal or coordinate argument cannot succeed; locate defaults to weighted and sets benchmark false; a scored act whose raw confidence is below 0.55 returns executed false and does not press; verify failures are exact ToolError variants.
 Tests or proofs updated: hyper-use-mcp server tests, a 16-case proptest that random lines do not panic, and a stdio subprocess test of the hyper-use binary. No second formal model.
 ```
 
 
 ## Browser Use executor
 
-`browser-use` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. The CDP press path is unchanged. macOS stays unimplemented. A scored confidence below 550 millis does not call the replay transport.
+`browser-use` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. The CDP press path is unchanged. macOS stays unimplemented. A scored raw confidence below 0.55 does not call the replay transport.
 
 ```
 Verification impact
@@ -95,14 +95,14 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: the Browser Use path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
-Affected invariants: default act stays the CDP browser press; Browser Use is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented. The CUA stub executor still returns NotImplemented; the opt-in replay is a later section.
+Affected invariants: default act stays the CDP browser press; Browser Use is selected only when named; the wire object has four semantic keys and no goal or coordinate; a raw confidence below 0.55 does not submit; a scripted rejection is a typed error; macos still returns NotImplemented. The CUA stub executor still returns NotImplemented; the opt-in replay is a later section.
 Tests or proofs updated: browser-use replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
 ```
 
 
 ## CUA semantic handoff
 
-`cua` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. This is not a CUA fusion benchmark. The CDP press path and the Browser Use path are unchanged. macOS stays unimplemented. A scored confidence below 550 millis does not call the CUA transport. `CuaStub` still says pixel actuation is a later phase.
+`cua` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. This is not a CUA fusion benchmark. The CDP press path and the Browser Use path are unchanged. macOS stays unimplemented. A scored raw confidence below 0.55 does not call the CUA transport. `CuaStub` still says pixel actuation is a later phase.
 
 ```
 Verification impact
@@ -120,14 +120,14 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: the CUA path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
-Affected invariants: default act stays the CDP browser press; CUA is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented; a missing CDP session does not select CUA.
+Affected invariants: default act stays the CDP browser press; CUA is selected only when named; the wire object has four semantic keys and no goal or coordinate; a raw confidence below 0.55 does not submit; a scripted rejection is a typed error; macos still returns NotImplemented; a missing CDP session does not select CUA.
 Tests or proofs updated: cua replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
 ```
 
 
 ## Locate precision, act margin, and press tiers
 
-The weighted text term is `recall * (0.5 + 0.5 * precision)`, so an exact label outranks a superset label. HGRA's semantic term is unchanged. A ranked act whose top and runner-up differ by less than 50 millis does not press and returns fallback `ambiguous`; an inspected act is not gated. Observe omits a node whose `DOM.getBoxModel` is a CDP error. Press is a DOM click by node id, then by backend node id, then a coordinate click. A focus is not a click, so there is no `DOM.focus` tier.
+The weighted text term is `recall * (0.5 + 0.5 * precision)`, so an exact label outranks a superset label. HGRA's semantic term is unchanged. A ranked act whose raw top and runner-up differ by less than 0.05 does not press and returns fallback `ambiguous`; an inspected act is not gated. Observe omits a node whose `DOM.getBoxModel` is a CDP error. Press is a DOM click by node id, then by backend node id, then a coordinate click. A focus is not a click, so there is no `DOM.focus` tier.
 
 ```
 Verification impact
@@ -145,7 +145,7 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: the weighted text term and the act margin are pure functions of their inputs. Observe and press are one blocking CDP call stream. Skipping a node with no box and dropping a press tier do not add interleaving, so no system model was added.
-Affected invariants: an exact label outranks a superset label under weighted; HGRA semantic is unchanged; a ranked act with a margin below 50 millis does not press and returns fallback ambiguous; a runner_up without confidence is an error; an inspected act is not gated; a getBoxModel protocol error omits that node and a missing script step is still fatal; press never reports DOM.focus as a click; a thrown click function is a tier failure.
+Affected invariants: an exact label outranks a superset label under weighted; HGRA semantic is unchanged; a ranked act with a raw margin below 0.05 does not press and returns fallback ambiguous; a runner_up without confidence is an error; an inspected act is not gated; a getBoxModel protocol error omits that node and a missing script step is still fatal; press never reports DOM.focus as a click; a thrown click function is a tier failure.
 Tests or proofs updated: matcher unit test, a 16-case weighted proptest, a CLI locate test, executor margin tests and two 16-case margin proptests, MCP and CLI act tests, browser observe tests on hidden-node.cdp.json, press tier tests. No second model of WeightedMatcher::rank.
 ```
 
@@ -236,7 +236,7 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: page state is parsed from one extra CDP result and the diff accessors read the existing id diff. No system model was added. No Loom, Kani, Miri, TLA+, or Lean.
-Affected invariants: a region that only moves is moved and not relabeled; a URL change is reported when no region id changes; focus comes from the AX focused property; an empty diff with an unchanged page is VerifyError::NoEffect; a protocol error on Page.getNavigationHistory omits url and title; a missing history step is fatal; captured_at_ms stays 0 when the history payload has no time; the field is url_changed, not navigated.
+Affected invariants: a region that only moves is moved and not relabeled; a URL change is reported when no region id changes; focus comes from the AX focused property; an empty diff with an unchanged page is VerifyError::NoEffect; a protocol error on Page.getNavigationHistory leaves url and title unknown (None), and an unknown side never reports a change or NoEffect; a missing history step is fatal; captured_at_ms stays 0 when the history payload has no time; the field is url_changed, not navigated.
 Tests or proofs updated: moved_only_rect_is_moved_not_relabeled, url_change_is_reported_without_a_region_change, focus_moves_to_the_text_field, executed_act_with_no_delta_is_no_effect, navigation_history_protocol_error_omits_url_and_title, missing_navigation_history_step_is_fatal. No second formal model.
 ```
 
@@ -260,4 +260,52 @@ Verification impact
 Reason: detect reads the in-memory snapshot ring. The corpus ranks local fixtures. No system model was added. No Loom, Kani, Miri, TLA+, or Lean.
 Affected invariants: a signature equal to the act's before snapshot is NoOp; a signature equal to an older same-origin snapshot in the previous four, other than before, is LoopDetected; signals do not retry and do not replace VerifyError::NoEffect; eval_corpus reports weighted and hgra top-1 hits, margin, and gate refusal and names no winner; the default matcher stays WeightedMatcher.
 Tests or proofs updated: no_op_when_after_equals_before, loop_when_after_equals_an_older_snapshot, eval_corpus_reports_both_matchers_without_a_winner. No second formal model.
+```
+
+## Raw gate and caller confidence range
+
+The act gate compares raw `f64` values: a confidence below `MIN_ACT_CONFIDENCE` (0.55) never clicks, and a margin below `MIN_ACT_MARGIN` (0.05) refuses as ambiguous. Millis are display only. A caller `confidence` or `runner_up.confidence` outside `[0, 1]` is `ToolError::ConfidenceOutOfRange`.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: the gate is a pure function of two floats. No interleaving, so the system model is unaffected.
+Affected invariants: 0.5496 does not click (millis rounding used to let it through); a margin of 0.0491 refuses; 0.6 over 0.55 passes (a 1e-9 margin epsilon absorbs f64 subtraction); a non-finite margin refuses; caller confidence outside [0, 1] is an exact error.
+Tests or proofs updated: executor gate unit tests and a 64-case gate proptest, MCP caller_confidence_outside_zero_to_one_is_exact and raw_confidence_just_below_the_gate_does_not_press, a 32-case tools/call proptest. No second model of the gate.
+```
+
+## Stale observation and unknown page state
+
+A press marks the session observation stale; act reuses only `fresh_manifold()`. `PageState` url and title are `Option`: a history protocol error or empty history is unknown, not the empty string. Two AX-only nodes with one backend id are `ax{id}` and `ax{id}-{k}`.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: the stale flag is one bool on a single-threaded session, set by press and cleared by observe. No interleaving or retry, so the system model is unaffected.
+Affected invariants: after a press the stored observation is not reused as an act's before; an unknown page state never reports url_changed or title_changed and never yields NoEffect; act state_delta carries title_changed; two DOM nodes with one backend are still DuplicateRegion.
+Tests or proofs updated: press_marks_the_observation_stale_and_observe_clears_it, stale_before_is_not_reused_after_a_press_without_observe_after, unknown_on_either_side_is_never_a_change_and_never_known, unknown_page_state_is_never_no_effect, two_ax_nodes_with_one_backend_id_stay_separate, loop_window_is_exactly_four_snapshots_before_after, structured_cdp_pages_observe_with_unique_ids (16 cases). No second formal model.
 ```

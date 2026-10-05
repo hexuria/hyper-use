@@ -179,7 +179,7 @@ remain the HGRA entry points so existing penalty tests keep their meaning.
 The CLI default is weighted. `--matcher hgra` selects the other. No benchmark
 says which is better. Do not add a third score that averages them.
 
-Act confidence gate: scored totals below 550 millis (0.55) return
+Act confidence gate: scored totals whose raw `f64` is below 0.55 return
 `ExecutorError::ConfidenceBelowThreshold` and do not touch the transport.
 `ActConfidence::Inspected` is the operator naming a region id. Those two
 states are an enum, not a bool plus an optional score. The refusal is also
@@ -255,7 +255,7 @@ Those keys stay on `act`, and on `verify` (`verified` is the check,
 include both keys. A locate is not encoded as `ComputerResult`.
 
 `act` calls `BrowserExecutor`. DOM semantic click stays ahead of coordinates.
-A scored confidence below 550 millis returns a tool result with
+A scored raw confidence below 0.55 returns a tool result with
 `executed: false`, `fallback: "low-confidence"`, and no mechanism. It does not
 return a JSON-RPC error and it does not press. The proof is the
 `sign-in.cdp.json` fixture, which has no press responses: a click would be
@@ -304,8 +304,8 @@ press fixture through `BrowserExecutor` and `ReplayTransport`.
 `press-only.cdp.json` is omitted because it has no observation. Sign-in is not
 diffed against welcome. `HgraMatcher` is not ranked here.
 
-`executed` is true only after an action receipt. A scored confidence below 550
-millis does not call the transport, and `executed` is false. A manifold file
+`executed` is true only after an action receipt. A scored raw confidence below
+0.55 does not call the transport, and `executed` is false. A manifold file
 cannot act, so the sidebar case has no `executed` field. The JSON is not a
 `ComputerResult`: that type always carries `executed` and `verified`, which
 would make a locate look like a fake refusal.
@@ -358,7 +358,7 @@ not start a process. A receipt whose id or action differs from the request is
 not panic. macOS stays unimplemented (`ExecutorError::NotImplemented`; no AX). `CuaStub` pixel actuation stays unimplemented. The opt-in `cua-replay` semantic handoff has landed: region id, role, label, and action through a replay fixture. It is not a live process and it is not a benchmark.
 
 The confidence gate runs after the region id and the action match, and before
-`submit`. A scored total below 550 millis returns
+`submit`. A scored raw total below 0.55 returns
 `ConfidenceBelowThreshold` and leaves the transport log empty. An unknown
 region returns `UnknownRegion` and also does not submit.
 
@@ -369,7 +369,7 @@ over. That is intentional. This is not a success rate, a token count, a
 screenshot comparison, a retry policy, a latency, or a win over CDP.
 
 Verifier: unit tests own the wire keys, the exact `Rejected` and `BadScript`
-and `ParamsMismatch` variants, and "the log stays empty below 550 millis".
+and `ParamsMismatch` variants, and "the log stays empty below 0.55".
 A 16-case proptest owns the key set for generated labels, and a 16-case
 proptest owns the gate for integer millis in `0..550`. CLI and MCP tests own
 selection: high confidence records `browser-use-semantic`, low confidence on
@@ -400,7 +400,7 @@ every `submit` and then either returns a `TransportReceipt` or
 `CuaError::Rejected`. It does not start a process. A receipt whose id or
 action differs from the request is `ParamsMismatch` after the call. The
 region id and the action are checked before the confidence gate, so an unknown
-region or a different action does not submit. A scored total below 550 millis
+region or a different action does not submit. A scored raw total below 0.55
 returns `ConfidenceBelowThreshold` and leaves the transport log empty.
 `StubExecutor` for `cua` still returns `NotImplemented` and does not panic.
 macOS stays `NotImplemented`. `CuaStub::status` stays the pixel-driver
@@ -420,7 +420,7 @@ Browser Use. `to_wire` returns a `String`. `serde_json::Value` is not part of
 the public signature. No ranker crate depends on it.
 
 Verifier: unit tests own the wire keys, the exact `Rejected`, `BadScript`, and
-`ParamsMismatch` variants, and "the log stays empty below 550 millis". A
+`ParamsMismatch` variants, and "the log stays empty below 0.55". A
 16-case proptest owns the key set for generated labels, and a 16-case proptest
 owns the gate for integer millis in `0..550`. CLI and MCP tests own selection:
 high confidence records `cua-semantic`, low confidence on a rejecting script
@@ -508,11 +508,11 @@ three totals, the 16-case proptest
 
 A high top total is not enough when a second candidate is almost as high. Act
 now takes an optional runner-up total from the same ranking and refuses with
-`ExecutorError::AmbiguousTarget` when the gap is below
-`MIN_ACT_MARGIN_MILLIS` (50). `ActConfidence` gains a `Ranked { top,
+`ExecutorError::AmbiguousTarget` when the raw gap is below
+`MIN_ACT_MARGIN` (0.05). `MIN_ACT_MARGIN_MILLIS` (50) is display only. `ActConfidence` gains a `Ranked { top,
 runner_up }` variant beside `Inspected` and `Scored`; it stays an enum, not a
 score with an optional runner-up. `gate_confidence` is the single gate, and
-all four executors call it. The order is non-finite, then the 550 threshold,
+all four executors call it. The order is non-finite, then the 0.55 threshold,
 then the margin, so a low top is reported as low confidence even when it is
 also ambiguous. A runner-up above the top also refuses. The journal fallback is
 `FallbackReason::Ambiguous` ("ambiguous").
@@ -525,8 +525,8 @@ A runner-up naming the pressed region is `RunnerUpIsTarget`. The CLI flag is
 the product gate.
 
 Downside accepted: a caller that omits `runner_up` bypasses the margin. The
-MCP session in the next phase can derive it. 50 millis is not calibrated across
-matchers; the HGRA order on `send-buttons.manifold` is about 20 millis apart
+MCP session in the next phase can derive it. 0.05 is not calibrated across
+matchers; the HGRA order on `send-buttons.manifold` is about 0.02 apart
 and is refused. This is not `RegionFlags::ambiguous`, which is a ranking
 penalty that the browser observer does not set.
 
@@ -652,12 +652,13 @@ history entry supplies `PageState` url and title. The payload has no time, so
 the stable id of the accessibility node whose `focused` property is true, after
 the identity map renames it. It is not read from the history call.
 
-A CDP protocol error on the history call omits the url and title and observe
-continues. That is the same split as `DOM.getBoxModel`: `CdpError::Protocol`
-omits, and `NoScriptedResponse`, `ParamsMismatch`, `BadJson`, and `Transport`
-stay fatal. Omitting is not a silent success. The page record keeps an empty
-url and title, and it does not invent a timestamp. A missing script entry is
-still `CdpError::NoScriptedResponse`.
+A CDP protocol error on the history call leaves the url and title unknown and
+observe continues. That is the same split as `DOM.getBoxModel`:
+`CdpError::Protocol` omits, and `NoScriptedResponse`, `ParamsMismatch`,
+`BadJson`, and `Transport` stay fatal. Unknown is `None`, not the empty string
+(superseded 2026-10-05, see "Unknown page state is not empty"). It does not
+invent a timestamp. A missing script entry is still
+`CdpError::NoScriptedResponse`.
 
 `ManifoldDiff::moved` and `relabeled` read the existing id diff. Moved means
 the id survived and the rectangle is the only changed field. The fingerprint may also differ, because it hashes the rectangle; that is not a second change. Relabeled means
@@ -673,14 +674,14 @@ unchanged, before the specific expectation. The host string is
 or `expect_absent` still reports `verify-failed` when that postcondition
 fails, including when the page did not change.
 
-Downside accepted: a protocol error and a history entry with an empty URL look
-the same on `PageState`. Callers cannot tell them apart. `captured_at_ms` is
-still not a clock.
+Downside accepted: `captured_at_ms` is still not a clock. (The earlier
+downside, that a protocol error and an empty URL looked the same, is removed:
+see "Unknown page state is not empty".)
 
 Verifiers: `moved_only_rect_is_moved_not_relabeled`,
 `url_change_is_reported_without_a_region_change`,
 `focus_moves_to_the_text_field`, `executed_act_with_no_delta_is_no_effect`,
-`navigation_history_protocol_error_omits_url_and_title`, and
+`navigation_history_protocol_error_omits_url_and_title` (now asserts `None`), and
 `missing_navigation_history_step_is_fatal`. No second formal model.
 
 ## Temporal signals are data, and the corpus names no winner
@@ -711,3 +712,137 @@ disagree. A loop older than the four preceding entries is not reported.
 Verifiers: `no_op_when_after_equals_before`,
 `loop_when_after_equals_an_older_snapshot`, and
 `eval_corpus_reports_both_matchers_without_a_winner`. No second formal model.
+
+## Raw gate: compare f64, not rounded millis
+
+Status: 2026-10-05 (Asia/Manila). Replaces the millis comparison in "Phase 2
+browser and matchers" and "Act ambiguity margin".
+
+The gate compared `display_millis(confidence)` against 550, so 0.5496 rounded
+to 550 and clicked, and a margin of 0.0491 rounded to 49 or 50 depending on the
+inputs. `gate_confidence` now compares the raw `f64`: below
+`MIN_ACT_CONFIDENCE` (0.55) is `ConfidenceBelowThreshold`, and a margin below
+`MIN_ACT_MARGIN` (0.05) is `AmbiguousTarget`. The margin check subtracts
+`MARGIN_EPSILON` (1e-9), because `0.6 - 0.55` is `0.04999999999999993` in
+`f64`; without it a clean 0.05 gap would refuse. The threshold check has no
+epsilon. A non-finite margin (for example `MAX - (-MAX)`) refuses as
+ambiguous. The millis constants and `margin_millis` remain for display and
+journal text. A refused display is capped (549 and 49) so a refusal never
+prints the threshold it failed.
+
+Caller confidence is a probability. MCP `confidence` and
+`runner_up.confidence` outside `[0, 1]` are
+`ToolError::ConfidenceOutOfRange` (`{"variant","value"}`).
+`MatcherConfidence::try_unit` enforces the range; `try_new` still accepts
+negatives because ranker totals can be negative.
+
+Downside accepted: a caller that forwards a negative locate total (a penalized
+candidate) as `runner_up.confidence` now gets `ConfidenceOutOfRange` instead
+of a passing margin. Clamp or omit it. 0.55 and 0.05 are still not
+calibrated across matchers.
+
+Verifiers: executor gate unit tests (0.5496 refused, 0.0491 refused, 0.6/0.55
+passes, extreme inputs), a 64-case gate proptest, MCP
+`caller_confidence_outside_zero_to_one_is_exact` and
+`raw_confidence_just_below_the_gate_does_not_press`, and the 32-case
+`structured_tool_calls_are_typed` proptest.
+
+## Stale observation after a press
+
+Status: 2026-10-05.
+
+`run_act` reused the session's stored manifold as `before` whenever one
+existed. After an act with `observe_after: false`, the next act reused the
+pre-press snapshot, so its diff compared against a page that no longer
+existed. `BrowserSession` now sets `stale` once a press reaches the CDP click
+calls (even if a tier fails), and `observe` clears it. Act reuses only
+`fresh_manifold()`, so a stale session observes again first. `manifold()` still
+returns the last view for inspect.
+
+Downside accepted: a press whose click calls all failed before reaching the
+page still marks the session stale. That costs one extra observe; it never
+reuses a wrong before.
+
+Verifiers: `press_marks_the_observation_stale_and_observe_clears_it` and
+`stale_before_is_not_reused_after_a_press_without_observe_after`.
+
+## Unknown page state is not empty
+
+Status: 2026-10-05. Supersedes the empty-string url/title in "Page state,
+richer diff, and no-effect verify".
+
+`PageState::url` and `title` return `Option<&str>`. A history protocol error,
+a missing `entries` array, or a `currentIndex` with no entry is
+`PageState::unknown(focused)`. `PageState::blank()` is unknown. An empty URL in
+a real history entry is a known `""`. `page_delta` reports `url_changed` or
+`title_changed` only when both sides are known and differ.
+`PageDelta::is_known` is true only when both sides know both fields.
+`verify_delta` returns `NoEffect` only for an empty region diff, an unchanged
+page, and a known page delta. MCP `state_delta` gains `title_changed`.
+
+Downside accepted: with an unknown page state an empty diff reports the
+specific expectation failure (for example `UrlUnchanged`), not `NoEffect`.
+Unknown is not evidence of no effect.
+
+Verifiers: `unknown_on_either_side_is_never_a_change_and_never_known`,
+`unknown_page_state_is_never_no_effect`,
+`executed_act_with_no_delta_is_no_effect` (now on a known page), and the
+history-kind arm of `structured_cdp_pages_observe_with_unique_ids`.
+
+## Duplicate AX-only backend ids
+
+Status: 2026-10-05.
+
+Two accessibility nodes with the same backend id and no DOM partner both
+became `ax{id}`, and observe failed with `DuplicateRegion`. Fusion now keeps
+the first as `ax{id}` and mints `ax{id}-2`, `ax{id}-3`. Two DOM nodes with
+one backend id still fail with `DuplicateRegion`: that would be a broken
+Chrome response, not a second accessibility view.
+
+Downside accepted: the suffix follows AX tree order, so it is stable only
+while that order is. The identity map still pairs regions across observations.
+
+Verifier: `two_ax_nodes_with_one_backend_id_stay_separate`,
+`two_dom_nodes_with_one_backend_id_are_the_exact_duplicate_error`.
+
+## signature_jaccard removed
+
+Status: 2026-10-05. `signature_jaccard` had no production caller and 11 of
+the 19 surviving mutants in the audit. `detect` compares signatures by
+equality. It was deleted rather than tested. Verifier: none needed; the
+compiler owns the absence.
+
+## Known limits, not fixed
+
+Status: 2026-10-05. Recorded so they are not mistaken for verified behavior.
+
+- `IdentityMap.minted` grows for the life of a session. Sessions are capped at
+  four and dropped on failure, so this is bounded per session, not globally.
+- No loopback check on the CDP endpoint. A caller can point the server at a
+  remote `ws://` host. `wss://` is rejected.
+- No connect or read timeout on the CDP WebSocket. A hung Chrome hangs the
+  call.
+- `match_regions` builds an O(n*m) score table. The 2000-region smoke test
+  passes; it is not a memory bound.
+- Identity step 1 keeps a fused stable id across observations without
+  checking role or label. A different control that reuses the same backend id
+  inherits the stable id. A role check needs a cross-navigation policy and was
+  deferred.
+- `ToolError::Ranker` and `CompareError::TransportCalledBelowThreshold` have no
+  exact test: the first is unreachable with the shipped matchers, the second
+  because the gate runs before press.
+
+Verifier: none. These are limits, not claims.
+
+## RUSTSEC advisories in CI
+
+Status: 2026-10-05. The MCP server opens a CDP WebSocket, so the graph is
+network-facing. CI runs `cargo deny check advisories` with a `deny.toml` that
+checks advisories only, with all features (including `jev`) and no ignores.
+Licenses, bans, and sources are not checked: `publish = false` and there is no
+policy yet. CI also runs `cargo check -p hyper-use-cli --features jev`.
+
+Downside accepted: a new advisory can fail CI with no code change. That is the
+point.
+
+Verifier: the `deny` CI job. Local run on 2026-10-05: `advisories ok`.

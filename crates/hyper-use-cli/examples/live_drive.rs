@@ -999,6 +999,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                     guard_body["clicked"] = json!(false);
                 }
                 last_guard = Some(guard_body.clone());
+                last_guard_args = Some(arguments.clone());
                 // Replace the logged guard body so the transcript shows click outcome
                 // (inspect/observe pushes may follow the guard call).
                 if let Some(entry) = log

@@ -490,7 +490,10 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let mut log = Log {
         lines: Vec::new(),
         started,
-        sink: args.trace.as_ref().map(|path| std::fs::File::create(path).expect("create --trace file")),
+        sink: args
+            .trace
+            .as_ref()
+            .map(|path| std::fs::File::create(path).expect("create --trace file")),
     };
     let start = if task.start.starts_with("http://") {
         task.start.to_owned()
@@ -896,10 +899,16 @@ fn main() {
         let raw = std::fs::read_to_string(path).expect("read --task-json");
         let spec: Value = serde_json::from_str(&raw).expect("--task-json is JSON");
         let field = |name: &str| -> String {
-            spec[name].as_str().unwrap_or_else(|| panic!("--task-json needs a string `{name}`")).to_owned()
+            spec[name]
+                .as_str()
+                .unwrap_or_else(|| panic!("--task-json needs a string `{name}`"))
+                .to_owned()
         };
         let (id, start_url, text) = (field("id"), field("start_url"), field("text"));
-        assert!(start_url.starts_with("http://127.0.0.1:"), "start_url must be on 127.0.0.1");
+        assert!(
+            start_url.starts_with("http://127.0.0.1:"),
+            "start_url must be on 127.0.0.1"
+        );
         // Static lifetime for one process-long task.
         let task = Task {
             id: Box::leak(id.into_boxed_str()),

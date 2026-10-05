@@ -19,12 +19,18 @@
 //! Observe omits a node whose `DOM.getBoxModel` is a CDP `error` (Chrome says
 //! "Could not compute box model." for `display:none`). Any other failure of
 //! that call is fatal.
+//!
+//! After fusion, observe hit-tests each clickable region's center with
+//! `DOM.getNodeForLocation`. When the node under the center is not the region
+//! or a descendant of it (cookie banner, custom backdrop, toast), the region
+//! is marked `occluded`. Dialog front-layer logic in `hyper-use-guard` still
+//! applies on top of that.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use hyper_use_core::{Action, InteractionManifold, Rect, RegionId};
+use hyper_use_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId};
 
 use crate::error::{ActMechanism, BrowserError, CdpError};
 use crate::extract::{self, content_rect, AxElement};
@@ -98,12 +104,12 @@ impl<T: CdpTransport> BrowserSession<T> {
             "DOM.getDocument",
             &json!({"depth": -1, "pierce": false}).to_string(),
         )?;
-        let elements = extract::dom_elements(&document)?;
+        let dom = extract::dom_document(&document)?;
         let ax_tree = self.call("Accessibility.getFullAXTree", &json!({}).to_string())?;
         let ax_nodes = extract::ax_elements(&ax_tree)?;
 
         let mut dom_raw = Vec::new();
-        for element in &elements {
+        for element in &dom.elements {
             let params = json!({"nodeId": element.node_id}).to_string();
             if let Some(rect) = self.box_rect(&params)? {
                 dom_raw.push(RawNode::from_dom(element, rect));
@@ -120,16 +126,76 @@ impl<T: CdpTransport> BrowserSession<T> {
             }
         }
         let (fused, fused_bindings) = fusion::fuse(viewport, &dom_raw, &ax_raw)?;
-        let (manifold, bindings) =
+        let (mut manifold, bindings) =
             self.identity
                 .assign(self.manifold.as_ref(), fused, fused_bindings)?;
         let focused = focused_region(&ax_nodes, &bindings);
         let page = self.read_page(focused)?;
+        // Hit-tests run after history so scripted CDP fixtures can append
+        // `DOM.getNodeForLocation` after `Page.getNavigationHistory`.
+        self.apply_hit_test_occlusion(&mut manifold, &bindings, &dom.parent_of)?;
         self.bindings = bindings;
         self.page = Some(page);
         self.manifold = Some(manifold);
         self.stale = false;
         Ok(self.manifold.as_ref().expect("observation just stored"))
+    }
+
+    /// Mark clickable regions whose center is covered by another node.
+    ///
+    /// `DOM.getNodeForLocation` at the region's center must land on the region
+    /// itself or a descendant. Anything else (cookie banner, custom backdrop,
+    /// toast) means a pointer click would not reach this control.
+    fn apply_hit_test_occlusion(
+        &mut self,
+        manifold: &mut InteractionManifold,
+        bindings: &BTreeMap<RegionId, NodeBinding>,
+        parent_of: &BTreeMap<i64, i64>,
+    ) -> Result<(), BrowserError> {
+        let targets: Vec<(RegionId, i64, f64, f64)> = manifold
+            .regions()
+            .filter(|region| region.actions().contains(&Action::Click))
+            .filter_map(|region| {
+                let binding = bindings.get(region.id())?;
+                let backend = binding.backend_node_id?;
+                Some((
+                    region.id().clone(),
+                    backend,
+                    binding.center_x,
+                    binding.center_y,
+                ))
+            })
+            .collect();
+        let mut buried = Vec::new();
+        for (id, backend, x, y) in targets {
+            let params = json!({"x": x, "y": y}).to_string();
+            let body = match self.call("DOM.getNodeForLocation", &params) {
+                Ok(body) => body,
+                Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
+                Err(other) => return Err(other),
+            };
+            let Some(hit) = extract::location_backend(&body)? else {
+                continue;
+            };
+            if !owns_hit(hit, backend, parent_of) {
+                buried.push(id);
+            }
+        }
+        for id in buried {
+            let region = manifold
+                .get(&id)
+                .expect("id taken from this manifold")
+                .clone();
+            if region.flags().occluded() {
+                continue;
+            }
+            let mut parts = region.to_parts();
+            parts.flags.set_occluded(true);
+            let updated =
+                InteractionRegion::try_new(parts).expect("rebuilding a valid region cannot fail");
+            manifold.replace(updated);
+        }
+        Ok(())
     }
 
     /// Low-level CDP click used only by browser fixture tests.
@@ -233,6 +299,19 @@ impl<T: CdpTransport> BrowserSession<T> {
         self.transport
             .call(method, params_json)
             .map_err(BrowserError::from)
+    }
+}
+
+fn owns_hit(hit: i64, target: i64, parent_of: &BTreeMap<i64, i64>) -> bool {
+    let mut current = hit;
+    loop {
+        if current == target {
+            return true;
+        }
+        match parent_of.get(&current) {
+            Some(&parent) => current = parent,
+            None => return false,
+        }
     }
 }
 

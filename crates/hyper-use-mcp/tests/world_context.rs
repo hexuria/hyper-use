@@ -296,3 +296,67 @@ fn near_focus_without_a_focused_region_is_the_default_ranking() {
     assert_eq!(decision["reason"], "ambiguous", "{decision}");
     assert_eq!(decision["scope"]["near"], Value::Null);
 }
+
+/// A custom backdrop `div` (not `role=dialog`) covers the page Save button.
+/// Dialog front-layer logic would allow the click; hit-test must refuse.
+#[test]
+fn hit_test_refuses_a_click_under_a_custom_backdrop() {
+    let backdrop = DomSpec::container(
+        50,
+        500,
+        "generic",
+        "Cookie consent",
+        (0.0, 0.0, 1440.0, 900.0),
+    );
+    let save = DomSpec::button(10, 100, "Save", (1200.0, 780.0, 100.0, 36.0));
+    let accept = DomSpec::button(51, 510, "Accept all", (1200.0, 40.0, 120.0, 36.0));
+    // No AX node for the backdrop: Chrome's AX tree skips generic containers
+    // (`ax_role` returns None), and ScriptBuilder must not emit a matching
+    // getBoxModel for a node observe will never request.
+    let mut page = PageSpec::new(
+        vec![save, backdrop.with_children(vec![accept])],
+        vec![
+            AxSpec::new(100, "button", "Save", (1200.0, 780.0, 100.0, 36.0)),
+            AxSpec::new(510, "button", "Accept all", (1200.0, 40.0, 120.0, 36.0)),
+        ],
+        "http://127.0.0.1/docs",
+        "Docs",
+    );
+    page.width = 1440.0;
+    page.height = 900.0;
+    // Without cover(), hit-test would say Save owns its center and the guard
+    // would allow. The backdrop's backend under Save's center is the proof.
+    page = page.cover(100, 500);
+    // observe + two guards each re-observe.
+    let script = ScriptBuilder::new()
+        .observe(&page)
+        .observe(&page)
+        .observe(&page);
+    let (mut server, log) = server(script);
+    let observed = call(&mut server, "observe", json!({"cdp": TAB}));
+    assert_eq!(
+        region(&observed, "n100")["state"]["visibility"],
+        "occluded",
+        "{observed}"
+    );
+    assert_eq!(
+        region(&observed, "n510")["state"]["visibility"],
+        "visible",
+        "{observed}"
+    );
+    // Label-only would allow Save; hit-test occlusion refuses.
+    let buried = call(
+        &mut server,
+        "guard",
+        json!({"cdp": TAB, "target": "Save", "role": "button"}),
+    );
+    assert_eq!(buried["decision"], "refuse", "{buried}");
+    assert_eq!(buried["reason"], "occluded", "{buried}");
+    let accept_click = call(
+        &mut server,
+        "guard",
+        json!({"cdp": TAB, "target": "Accept all", "role": "button"}),
+    );
+    assert_eq!(accept_click["decision"], "allow", "{accept_click}");
+    assert_eq!(presses(&log), 0);
+}

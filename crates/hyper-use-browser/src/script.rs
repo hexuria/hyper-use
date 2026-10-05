@@ -9,6 +9,8 @@
 //! DOM nodes use tags that observe always keeps (`BUTTON`, `A`, `INPUT`,
 //! `NAV`, `H1`), so the getBoxModel order is the document order.
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
 
 /// One DOM element. `rect` of `None` is a getBoxModel protocol error, which
@@ -188,6 +190,11 @@ pub struct PageSpec {
     pub dom: Vec<DomSpec>,
     pub ax: Vec<AxSpec>,
     pub history: HistorySpec,
+    /// `DOM.getNodeForLocation` override keyed by the clickable region's
+    /// backend id. Absent keys return the region's own backend (clear hit).
+    /// Use this to script a cookie banner or custom backdrop covering a
+    /// control: map the buried control's backend to the overlay's backend.
+    pub hit_overrides: BTreeMap<i64, i64>,
 }
 
 impl PageSpec {
@@ -235,7 +242,14 @@ impl PageSpec {
                 url: url.to_owned(),
                 title: title.to_owned(),
             },
+            hit_overrides: BTreeMap::new(),
         }
+    }
+
+    /// Cover `target_backend`'s center with `hit_backend` (hit-test overlay).
+    pub fn cover(mut self, target_backend: i64, hit_backend: i64) -> Self {
+        self.hit_overrides.insert(target_backend, hit_backend);
+        self
     }
 }
 
@@ -279,7 +293,8 @@ impl ScriptBuilder {
             self.calls.push(box_call(node.rect));
         }
         for node in &page.ax {
-            if node.backend.is_some() {
+            // Match `extract::ax_role`: skipped roles never request a box.
+            if node.backend.is_some() && ax_role_kept(node.role) {
                 self.calls.push(box_call(node.rect));
             }
         }
@@ -291,6 +306,15 @@ impl ScriptBuilder {
             HistorySpec::ProtocolError => error("Page.getNavigationHistory", "history failed"),
             HistorySpec::NoEntries => result("Page.getNavigationHistory", json!({})),
         });
+        // Hit-test each clickable fused region in RegionId order (same order
+        // BrowserSession::apply_hit_test_occlusion walks the manifold).
+        for (_id, backend, _x, _y) in clickable_targets(page) {
+            let hit = page.hit_overrides.get(&backend).copied().unwrap_or(backend);
+            self.calls.push(result(
+                "DOM.getNodeForLocation",
+                json!({"backendNodeId": hit}),
+            ));
+        }
         self
     }
 
@@ -409,4 +433,176 @@ fn ax_json((index, node): (usize, &AxSpec)) -> Value {
         value["properties"] = json!(properties);
     }
     value
+}
+
+/// Clickable fused regions in `n{backend}` / `ax{backend}` id order.
+///
+/// Mirrors the session's hit-test targets closely enough for scripted pages:
+/// DOM-kept clickable controls, then AX-only clickable leftovers.
+fn clickable_targets(page: &PageSpec) -> Vec<(String, i64, f64, f64)> {
+    let mut flat = Vec::new();
+    for node in &page.dom {
+        flatten(node, &mut flat);
+    }
+    let mut dom_backends = std::collections::BTreeSet::new();
+    let mut targets: Vec<(String, i64, f64, f64)> = Vec::new();
+    for node in flat {
+        let Some(rect) = node.rect else {
+            continue;
+        };
+        if !dom_role_is_clickable(node) {
+            continue;
+        }
+        dom_backends.insert(node.backend);
+        let (x, y, w, h) = rect;
+        targets.push((
+            format!("n{}", node.backend),
+            node.backend,
+            x + w / 2.0,
+            y + h / 2.0,
+        ));
+    }
+    for node in &page.ax {
+        let Some(backend) = node.backend else {
+            continue;
+        };
+        if dom_backends.contains(&backend) {
+            continue;
+        }
+        if !ax_role_is_clickable(node.role) {
+            continue;
+        }
+        let Some(rect) = node.rect else {
+            continue;
+        };
+        let (x, y, w, h) = rect;
+        targets.push((format!("ax{backend}"), backend, x + w / 2.0, y + h / 2.0));
+    }
+    targets.sort_by(|left, right| left.0.cmp(&right.0));
+    targets
+}
+
+fn dom_role_is_clickable(node: &DomSpec) -> bool {
+    let role_attr = node
+        .attributes
+        .iter()
+        .find(|(name, _)| name == "role")
+        .map(|(_, value)| value.as_str());
+    let role = match role_attr {
+        Some("button") | Some("link") | Some("menuitem") | Some("tab") | Some("slider") => {
+            return true;
+        }
+        Some("textbox") | Some("searchbox") | Some("checkbox") => return true,
+        Some("dialog") | Some("alertdialog") | Some("row") | Some("navigation") => return false,
+        _ => node.tag.to_ascii_uppercase(),
+    };
+    matches!(
+        role.as_str(),
+        "BUTTON" | "A" | "INPUT" | "TEXTAREA" | "SELECT"
+    )
+}
+
+fn ax_role_kept(role: &str) -> bool {
+    !matches!(
+        role.to_ascii_lowercase().as_str(),
+        "statictext"
+            | "inlinetextbox"
+            | "none"
+            | "generic"
+            | "rootwebarea"
+            | "genericcontainer"
+            | "inline"
+            | ""
+    )
+}
+
+fn ax_role_is_clickable(role: &str) -> bool {
+    matches!(
+        role.to_ascii_lowercase().as_str(),
+        "button"
+            | "link"
+            | "textbox"
+            | "searchbox"
+            | "textfield"
+            | "checkbox"
+            | "menuitem"
+            | "tab"
+            | "slider"
+    )
+}
+
+#[cfg(test)]
+mod hit_script_tests {
+    use super::*;
+    #[test]
+    fn one_button_page_scripts_one_hit_test() {
+        let page = PageSpec::of(
+            &[Control::button(
+                10,
+                100,
+                "Sign in",
+                (100.0, 200.0, 80.0, 32.0),
+            )],
+            "http://x",
+            "X",
+        );
+        let json = ScriptBuilder::new().observe(&page).to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let hits: Vec<_> = value["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["method"] == "DOM.getNodeForLocation")
+            .collect();
+        eprintln!("calls={}", value["calls"].as_array().unwrap().len());
+        eprintln!("hits={hits:?}");
+        assert_eq!(hits.len(), 1, "{json}");
+        assert_eq!(hits[0]["result"]["backendNodeId"], 100);
+    }
+}
+
+#[cfg(test)]
+mod overlay_script_tests {
+    use super::*;
+    #[test]
+    fn cookie_backdrop_script_shape() {
+        let backdrop = DomSpec::container(
+            50,
+            500,
+            "generic",
+            "Cookie consent",
+            (0.0, 0.0, 1440.0, 900.0),
+        );
+        let save = DomSpec::button(10, 100, "Save", (1200.0, 780.0, 100.0, 36.0));
+        let accept = DomSpec::button(51, 510, "Accept all", (1200.0, 40.0, 120.0, 36.0));
+        let mut page = PageSpec::new(
+            vec![save, backdrop.with_children(vec![accept])],
+            vec![
+                AxSpec::new(100, "button", "Save", (1200.0, 780.0, 100.0, 36.0)),
+                AxSpec::new(500, "generic", "Cookie consent", (0.0, 0.0, 1440.0, 900.0)),
+                AxSpec::new(510, "button", "Accept all", (1200.0, 40.0, 120.0, 36.0)),
+            ],
+            "http://127.0.0.1/docs",
+            "Docs",
+        );
+        page = page.cover(100, 500);
+        let json = ScriptBuilder::new().observe(&page).to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let methods: Vec<_> = value["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["method"].as_str().unwrap())
+            .collect();
+        assert!(methods.contains(&"DOM.getNodeForLocation"));
+        assert_eq!(clickable_targets(&page).len(), 2);
+        let hits: Vec<_> = value["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["method"] == "DOM.getNodeForLocation")
+            .map(|c| c["result"]["backendNodeId"].as_i64().unwrap())
+            .collect();
+        assert_eq!(hits, vec![500, 510]); // Save covered by backdrop 500
+    }
 }

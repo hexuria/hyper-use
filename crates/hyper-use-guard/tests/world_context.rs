@@ -199,3 +199,34 @@ fn a_host_that_decided_before_the_dialog_opened_is_escalated_world_changed() {
     let request = GuardRequest::click(button("Cancel")).seen_layer(FrontLayer::of(&now));
     assert_eq!(allowed(&guard(&now, &request).unwrap()), "confirm-cancel");
 }
+
+#[test]
+fn hit_test_shaped_occlusion_refuses_even_without_a_dialog() {
+    // Same shape observe would produce after DOM.getNodeForLocation says a
+    // non-dialog overlay owns the center: flags=occluded, no Role::Dialog.
+    let m = hyper_use_core::parse_fixture(
+        "viewport w=1440 h=900\n\
+         region id=save role=button label=\"Save\" x=1200 y=780 w=100 h=36 actions=click sources=dom,accessibility flags=occluded\n\
+         region id=accept role=button label=\"Accept all\" x=1200 y=40 w=120 h=36 actions=click sources=dom,accessibility\n",
+    )
+    .unwrap();
+    assert!(FrontLayer::of(&m).is_empty());
+    let req = GuardRequest::click(LocateQuery::new().text("Save").unwrap().role(Role::Button));
+    match guard(&m, &req).unwrap() {
+        GuardDecision::Refuse {
+            reason: GuardReason::Occluded,
+            ..
+        } => {}
+        other => panic!("expected refuse occluded, got {other:?}"),
+    }
+    let accept = GuardRequest::click(
+        LocateQuery::new()
+            .text("Accept all")
+            .unwrap()
+            .role(Role::Button),
+    );
+    assert!(matches!(
+        guard(&m, &accept).unwrap(),
+        GuardDecision::Allow { .. }
+    ));
+}

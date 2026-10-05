@@ -641,6 +641,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ambiguous_display_margin_that_rounds_to_fifty_is_capped_at_forty_nine() {
+        // 0.6 - 0.5502 = 0.0498, which rounds to 50 millis but is refused.
+        assert_eq!(margin_millis(0.6, 0.5502), 50);
+        assert_eq!(
+            gate_ranked_confidence(0.6, 0.5502),
+            Err(ExecutorError::AmbiguousTarget {
+                top_millis: 600,
+                runner_up_millis: 550,
+                margin_millis: 49,
+                minimum_margin_millis: MIN_ACT_MARGIN_MILLIS,
+            })
+        );
+    }
+
+    #[test]
     fn policy_prefers_browser_then_macos_and_does_not_select_cua() {
         assert_eq!(
             DEFAULT_POLICY_ORDER,

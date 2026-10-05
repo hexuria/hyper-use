@@ -223,6 +223,15 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn ring_is_empty_until_the_first_push() {
+        let mut ring: SnapshotRing<u8> = SnapshotRing::with_capacity(2);
+        assert!(ring.is_empty());
+        ring.push(1);
+        assert!(!ring.is_empty());
+        assert_eq!(ring.len(), 1);
+    }
+
+    #[test]
     fn ring_evicts_oldest_and_ids_never_repeat() {
         let mut ring = SnapshotRing::with_capacity(2);
         let a = ring.push("a");

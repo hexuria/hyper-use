@@ -95,9 +95,11 @@ label-only gate gets wrong (the tests assert the old failure first).
 - More HGRA math (bundle weights, region junk, temporal weight). The algebra
   was not the gap; the inputs were. The paused WIP is in `git stash` on the
   firewall branch, not on this branch.
-- Encoding context only in the HGRA hypervector. HGRA is still experimental
-  and not the default; context lives in the shared semantic minimum so both
-  matchers obey it.
+- Encoding context *only* in the HGRA hypervector. Context still lives in the
+  shared semantic minimum so both matchers obey it. HGRA additionally binds the
+  resolved `within` / `near` container into the query hypervector as the same
+  permuted `parent` channel the region signature already stores, so cosine
+  prefers in-scope twins before the minimum zeros the rest.
 - Treating `near` as a soft distance score. A soft score lets an out-of-scope
   twin win on other terms; the scope rule is deterministic and falls back
   explicitly.
@@ -122,7 +124,10 @@ label-only gate gets wrong (the tests assert the old failure first).
   it; box containment treats it as content (`acme_mail` compose sheet).
 - World change compares only the front layer, not every region; a re-render
   that swaps rows under the same dialogs is not escalated.
-- HGRA is still experimental; no live run with `matcher: "hgra"` yet.
+- HGRA is still experimental; no live run with `matcher: "hgra"` yet. Fixture
+  remasure: `cargo test -p hyper-use-resonance --features hgra --test hgra_remeasure`
+  and the twin-row vector tests (`hgra_query_vector_encodes_within_as_parent_channel`,
+  `hgra_near_encodes_resolved_scope_into_the_query_vector`).
 - Live Chrome smoke for this gate: `examples/world-context/smoke.sh` (modal
   confirm, twin Suspend + focus, cookie backdrop hit-test). Hit-test coords
   must be integer CSS pixels (`DOM.getNodeForLocation` rejects floats).

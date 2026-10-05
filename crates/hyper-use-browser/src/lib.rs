@@ -55,6 +55,52 @@ mod proptest_parse {
             let _ = ReplayTransport::parse(&raw);
         }
     }
+
+    // Structurally valid CDP pages. Labels are short ASCII so region ids stay
+    // unique. Cases stay at 16 so CI stays fast.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+        #[test]
+        fn structured_cdp_pages_observe_with_unique_ids(
+            count in 1usize..=4,
+            labels in prop::collection::vec("[A-Za-z][a-z]{1,5}", 1..=4),
+            history_kind in 0u8..3,
+        ) {
+            use super::script::{AxSpec, DomSpec, HistorySpec, PageSpec, ScriptBuilder};
+            let count = count.min(labels.len());
+            let mut dom = Vec::with_capacity(count);
+            let mut ax = Vec::with_capacity(count);
+            for (index, label) in labels.iter().take(count).enumerate() {
+                let node = 10 + index as i64 * 10;
+                let backend = 100 + index as i64 * 100;
+                let rect = (40.0 + 100.0 * index as f64, 300.0, 80.0, 32.0);
+                dom.push(DomSpec::button(node, backend, label, rect));
+                ax.push(AxSpec::new(backend, "button", label, rect));
+            }
+            let mut page = PageSpec::new(dom, ax, "https://example.test/", "Example");
+            page.history = match history_kind {
+                0 => HistorySpec::Entry {
+                    url: "https://example.test/".into(),
+                    title: "Example".into(),
+                },
+                1 => HistorySpec::ProtocolError,
+                _ => HistorySpec::NoEntries,
+            };
+            let script = ScriptBuilder::new().observe(&page).to_json();
+            let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+            let count_seen = session.observe().expect("structured CDP must observe").len();
+            let manifold = session.manifold().unwrap();
+            let mut seen = std::collections::BTreeSet::new();
+            for region in manifold.regions() {
+                prop_assert!(seen.insert(region.id().clone()), "duplicate {}", region.id());
+            }
+            prop_assert_eq!(count_seen, count);
+            match history_kind {
+                0 => prop_assert!(session.page().unwrap().is_known()),
+                _ => prop_assert!(!session.page().unwrap().is_known()),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

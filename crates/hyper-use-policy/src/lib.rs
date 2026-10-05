@@ -12,6 +12,8 @@
 mod escalate;
 mod evidence;
 mod goal;
+#[cfg(feature = "model-text")]
+mod model_text;
 mod pua_policy;
 #[cfg(feature = "remote")]
 mod remote;
@@ -20,6 +22,12 @@ mod types;
 
 pub use escalate::EscalatingPolicy;
 pub use goal::{split_sequential_clauses, AgentGoal};
+#[cfg(feature = "model-text")]
+pub use model_text::{
+    parse_command_reply, vet, CommandTextModel, Grounding, ModelRefusal, ModelTextResolver,
+    ScriptedTextModel, TextModel, TextModelError, TextModelReply, TextModelRequest, TextSource,
+    DEFAULT_MAX_CHARS,
+};
 pub use pua_policy::PuaPolicy;
 #[cfg(feature = "remote")]
 pub use remote::{

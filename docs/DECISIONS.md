@@ -1,5 +1,20 @@
 # Decisions
 
+## Model-text TextResolver behind `model-text` (2026-10-06)
+
+Status: accepted on `feat/model-text-resolver`. Asia/Manila.
+ADR: [`docs/adr/0006-model-text-resolver.md`](adr/0006-model-text-resolver.md).
+
+**Decision.** `ModelTextResolver` asks an injectable `TextModel` for the
+TYPE_TEXT / SELECT payload only, after PUA chose the action. Replies must
+echo the context fingerprint, pass shape checks, and be grounded in the goal
+clause; otherwise deterministic fallback, otherwise abstain (nothing typed).
+Tickets / gate / executor unchanged. Live LLMs plug in through
+`CommandTextModel` (`run --text-model-cmd`); CI uses scripted models.
+
+**Discarded.** Model-chosen targets; built-in HTTP provider client and key
+handling; ungrounded generation by default.
+
 ## PUA pin + Agent loop (Phases 2–7) (2026-10-05)
 
 Status: accepted on `feat/agent-pua-runtime`. Asia/Manila.

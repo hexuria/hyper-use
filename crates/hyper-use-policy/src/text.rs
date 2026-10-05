@@ -42,6 +42,9 @@ pub enum TextError {
     Ambiguous,
     Missing,
     Invalid(String),
+    /// The resolver declined to produce a value (e.g. a model reply was
+    /// refused and no fallback answered). The agent abstains; nothing is typed.
+    Abstain(String),
 }
 
 impl fmt::Display for TextError {
@@ -50,6 +53,7 @@ impl fmt::Display for TextError {
             Self::Ambiguous => f.write_str("text resolution ambiguous"),
             Self::Missing => f.write_str("no text value found in goal/context"),
             Self::Invalid(msg) => write!(f, "invalid text: {msg}"),
+            Self::Abstain(msg) => write!(f, "text resolver abstained: {msg}"),
         }
     }
 }

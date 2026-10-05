@@ -25,8 +25,10 @@ use hyper_use_core::{Action, ActionKind, ActionSpace, InteractionManifold, Regio
 use hyper_use_guard::{gate, with_front_layer, TicketLedger};
 use hyper_use_policy::{
     split_sequential_clauses, AgentGoal, BrowserPolicy, DeterministicTextResolver, HistoryEntry,
-    PolicyDecision, PolicyOutcome, TextContext, TextResolver,
+    PolicyDecision, PolicyOutcome, TextContext, TextError, TextResolver,
 };
+#[cfg(feature = "model-text")]
+use hyper_use_policy::{ModelTextResolver, TextModel};
 
 use crate::error::AgentError;
 use crate::executor::{execute_ticketed, ExecError};
@@ -123,6 +125,20 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             max_consecutive_no_effect: self.max_consecutive_no_effect,
             max_consecutive_stale: self.max_consecutive_stale,
         }
+    }
+
+    /// Use a model for TYPE_TEXT / SELECT payloads (feature `model-text`).
+    ///
+    /// The model only fills the payload of an action PUA already chose; the
+    /// reply is context-bound, shape-checked, and grounded in the goal clause
+    /// before it is used, then gated / ticketed like any payload. On model
+    /// failure or a refused reply it falls back to
+    /// [`DeterministicTextResolver`], and abstains when that also fails. For
+    /// other fallback / grounding settings build a [`ModelTextResolver`] and
+    /// pass it to [`Self::text_resolver`].
+    #[cfg(feature = "model-text")]
+    pub fn model_text<M: TextModel>(self, model: M) -> AgentBuilder<B, P, ModelTextResolver<M>> {
+        self.text_resolver(ModelTextResolver::new(model))
     }
 
     pub fn max_steps(mut self, n: u32) -> Self {
@@ -226,6 +242,11 @@ where
         true
     }
 
+    /// The payload resolver (e.g. to inspect a model resolver's last source).
+    pub fn text_resolver(&self) -> &T {
+        &self.text
+    }
+
     pub fn browser_mut(&mut self) -> &mut B {
         &mut self.browser
     }
@@ -318,10 +339,12 @@ where
                 },
                 context_fingerprint: offered.target_fingerprint(),
             };
-            let resolution = self
-                .text
-                .resolve(&ctx)
-                .map_err(|e| AgentError::Text(e.to_string()))?;
+            let resolution = self.text.resolve(&ctx).map_err(|e| match e {
+                // A resolver that declines (model refused, no fallback value)
+                // abstains like PUA: nothing typed, never a guessed value.
+                TextError::Abstain(reason) => AgentError::Abstain(format!("text: {reason}")),
+                other => AgentError::Text(other.to_string()),
+            })?;
             if resolution.context_fingerprint != ctx.fingerprint() {
                 return Err(AgentError::Text(
                     "resolution belongs to a different context".into(),

@@ -40,6 +40,8 @@ default = []
 jev = ["dep:typesafe-sdk", "dep:serde_json"]
 # Experimental HGRA matcher (wires into hyper-use-mcp / mcp locate+guard).
 hgra = ["hyper-use-mcp/hgra"]
+# Model-backed TYPE_TEXT / SELECT payloads via `run --text-model-cmd <program>`.
+model-text = ["hyper-use-agent/model-text", "hyper-use-policy/model-text"]
 
 [dependencies.typesafe-sdk]
 version = "0.2.0"

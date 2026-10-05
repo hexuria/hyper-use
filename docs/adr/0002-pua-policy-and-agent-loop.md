@@ -29,6 +29,8 @@ loop.
 5. **HGRA** remains frozen under `experiments/`. MCP is not required for Agent.
 6. **TYPE_TEXT**: deterministic resolver only by default; model resolver stays
    feature-gated and unimplemented until needed (`model-text`).
+   *Update:* implemented behind `model-text` in
+   [ADR 0006](0006-model-text-resolver.md); deterministic stays the default.
 
 ## Consequences
 

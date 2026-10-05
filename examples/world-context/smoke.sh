@@ -60,10 +60,20 @@ fi
 
 export HYPER_USE_LIVE_CDP="$CDP"
 export HYPER_USE_LIVE_SITE="$SITE"
+MATCHER="${HYPER_USE_MATCHER:-weighted}"
+export HYPER_USE_MATCHER="$MATCHER"
 
-echo "CDP=$CDP SITE=$SITE"
+FEATURE_ARGS=()
+if [[ "$MATCHER" == "hgra" ]]; then
+  FEATURE_ARGS+=(--features hgra)
+elif [[ "$MATCHER" != "weighted" ]]; then
+  echo "unknown HYPER_USE_MATCHER=$MATCHER (want weighted|hgra)" >&2
+  exit 1
+fi
+
+echo "CDP=$CDP SITE=$SITE MATCHER=$MATCHER"
 set +e
-cargo test -p hyper-use-mcp --test world_context_live -- --ignored --nocapture --test-threads=1
+cargo test -p hyper-use-mcp "${FEATURE_ARGS[@]}" --test world_context_live -- --ignored --nocapture --test-threads=1
 STATUS=$?
 set -e
 

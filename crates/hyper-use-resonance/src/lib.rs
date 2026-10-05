@@ -169,6 +169,15 @@ pub fn locate_with(
     encoder: &Encoder,
     model: ResonanceModel,
 ) -> Result<Vec<RankedCandidate>, ResonanceError> {
+    let _span = tracing::debug_span!(
+        "locate",
+        matcher = "hgra",
+        query_text = ?query.text_ref(),
+        query_role = ?query.role_ref().map(|role| role.as_str()),
+        near = ?query.near_ref().map(|id| id.as_str()),
+        within = ?query.within_ref().map(|id| id.as_str()),
+    )
+    .entered();
     let mut memory = Memory::new(encoder);
     let scope = ContextScope::resolve(query, manifold);
     let query_hv = query_vector(query, &scope, manifold, &mut memory)?;
@@ -178,6 +187,22 @@ pub fn locate_with(
         let hypervector = query_similarity(query_hv.as_ref(), &signature)?;
         let score = score_parts(manifold, region, query, &scope, hypervector, model);
         debug_assert!(score.total.is_finite());
+        tracing::debug!(
+            target: "hyper_use_resonance::rank",
+            id = %region.id(),
+            label = %region.label(),
+            role = %region.role().as_str(),
+            semantic = score.semantic,
+            hypervector = score.hypervector,
+            source_agreement = score.source_agreement,
+            geometric = score.geometric,
+            actionability = score.actionability,
+            temporal_stability = score.temporal_stability,
+            contextual_consistency = score.contextual_consistency,
+            penalty = score.penalty,
+            total = score.total,
+            "candidate"
+        );
         ranked.push(RankedCandidate {
             rank: 0,
             id: region.id().clone(),
@@ -194,6 +219,24 @@ pub fn locate_with(
     for (index, candidate) in ranked.iter_mut().enumerate() {
         candidate.rank = index + 1;
     }
+    let top = ranked.first();
+    let runner = ranked.get(1);
+    let margin = match (top, runner) {
+        (Some(top), Some(runner)) => Some(top.score.total - runner.score.total),
+        _ => None,
+    };
+    tracing::debug!(
+        target: "hyper_use_resonance::rank",
+        matcher = "hgra",
+        top_id = top.map(|c| c.id.as_str()),
+        top_total = top.map(|c| c.score.total),
+        top_semantic = top.map(|c| c.score.semantic),
+        top_hypervector = top.map(|c| c.score.hypervector),
+        runner_id = runner.map(|c| c.id.as_str()),
+        runner_total = runner.map(|c| c.score.total),
+        margin,
+        "rank_top"
+    );
     Ok(ranked)
 }
 

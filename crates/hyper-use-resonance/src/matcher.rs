@@ -149,18 +149,40 @@ impl RegionMatcher for WeightedMatcher {
         query: &LocateQuery,
         manifold: &InteractionManifold,
     ) -> Result<Vec<Match>, ResonanceError> {
+        let _span = tracing::debug_span!(
+            "locate",
+            matcher = "weighted",
+            query_text = ?query.text_ref(),
+            query_role = ?query.role_ref().map(|role| role.as_str()),
+            near = ?query.near_ref().map(|id| id.as_str()),
+            within = ?query.within_ref().map(|id| id.as_str()),
+        )
+        .entered();
         let scope = ContextScope::resolve(query, manifold);
         let mut ranked = Vec::with_capacity(manifold.len());
         for region in manifold.regions() {
-            let confidence = weighted_total(self.model, manifold, region, query, &scope);
-            debug_assert!(confidence.is_finite());
+            let parts = weighted_parts(self.model, manifold, region, query, &scope);
+            debug_assert!(parts.total.is_finite());
+            tracing::debug!(
+                target: "hyper_use_resonance::rank",
+                id = %region.id(),
+                label = %region.label(),
+                role = %region.role().as_str(),
+                semantic = parts.semantic,
+                geometric = parts.geometric,
+                actionability = parts.actionability,
+                penalty = parts.penalty,
+                total = parts.total,
+                "candidate"
+            );
             ranked.push(Match {
                 rank: 0,
                 id: region.id().clone(),
-                confidence,
+                confidence: parts.total,
             });
         }
         sort_matches(&mut ranked);
+        log_top("weighted", &ranked);
         Ok(ranked)
     }
 }
@@ -216,13 +238,21 @@ pub fn default_matcher() -> WeightedMatcher {
     WeightedMatcher::default()
 }
 
-fn weighted_total(
+struct WeightedParts {
+    semantic: f64,
+    geometric: f64,
+    actionability: f64,
+    penalty: f64,
+    total: f64,
+}
+
+fn weighted_parts(
     model: WeightedModel,
     manifold: &InteractionManifold,
     region: &InteractionRegion,
     query: &LocateQuery,
     scope: &ContextScope,
-) -> f64 {
+) -> WeightedParts {
     // Context (within / near) is a constraint like text and role: minimum.
     let semantic = weighted_semantic(query, region).min(scope.score(manifold, region));
     let geometric = geometric_score(manifold.viewport(), region.rect(), query);
@@ -232,7 +262,31 @@ fn weighted_total(
         + model.geometric() * geometric
         + model.actionability() * actionability
         - penalty;
-    cap_text_miss(query, region.label(), total)
+    WeightedParts {
+        semantic,
+        geometric,
+        actionability,
+        penalty,
+        total: cap_text_miss(query, region.label(), total),
+    }
+}
+fn log_top(matcher: &str, ranked: &[Match]) {
+    let top = ranked.first();
+    let runner = ranked.get(1);
+    let margin = match (top, runner) {
+        (Some(top), Some(runner)) => Some(top.confidence() - runner.confidence()),
+        _ => None,
+    };
+    tracing::debug!(
+        target: "hyper_use_resonance::rank",
+        matcher,
+        top_id = top.map(|m| m.id().as_str()),
+        top_total = top.map(|m| m.confidence()),
+        runner_id = runner.map(|m| m.id().as_str()),
+        runner_total = runner.map(|m| m.confidence()),
+        margin,
+        "rank_top"
+    );
 }
 
 /// Minimum of the constraints that were actually set. Absent text and role
@@ -402,5 +456,26 @@ mod tests {
             cap_text_miss(&LocateQuery::new().role(Role::Button), "", 0.9),
             0.9
         );
+    }
+
+    #[test]
+    fn rank_trace_emits_candidate_and_top_under_subscriber() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+        let viewport = Rect::try_viewport(0.0, 0.0, 400.0, 300.0).unwrap();
+        let manifold = InteractionManifold::try_new(
+            viewport,
+            vec![
+                button("exact", "Send", RegionFlags::none()),
+                button("long", "Send feedback", RegionFlags::none()),
+            ],
+            0,
+        )
+        .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap();
+        let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "exact");
     }
 }

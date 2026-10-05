@@ -16,7 +16,7 @@ Deterministic ranking and the bipolar algebra are owned by unit tests and `propt
 
 `write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP replay parsing is a different grammar. `structural_similarity` is a different metric, not a second ranker. Fusion is the only DOM/accessibility merge.
 
-Region identity across a move, an enabled change, and a press is owned by the observe id-diff test. It is not a second identity service.
+Diff semantics on a given id (a move, an enabled change, a press) are owned by the observe id-diff test. Region identity across observations is owned by the browser session's `IdentityMap`, the only identity service; it pairs with `match_regions` and does not add a second similarity metric.
 
 Miri, Loom, Kani, TLA+, and Lean are not justified: there is no `unsafe`, no atomics, no threads, and no recovery protocol. `#![forbid(unsafe_code)]` is on every crate. The CDP client is blocking and single-threaded. A websocket read is not a concurrent protocol.
 
@@ -170,4 +170,27 @@ Verification impact
 Reason: the server is still one blocking stdin reader. Keeping a session between calls adds ownership but no interleaving; a failed call drops the session and there is no retry, so it is not a recovery protocol and the system model is unaffected. The ring is in memory, so persistence is unaffected.
 Affected invariants: snapshot ids strictly increase and are never reused; an evicted id is an exact error; diff by snapshot ids equals diff by the same fixtures; act with an expectation returns a real state_delta and verified; a failed postcondition is executed true and verified false; act with locate fields refuses when region is not first; the free call_tool keeps no state.
 Tests or proofs updated: history unit test and a 16-case proptest, MCP closed-loop act tests, diff-by-snapshot tests, and a stdio subprocess test. No second formal model.
+```
+
+
+## Session identity map
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: identity assignment is a pure function of the previous observation, the fresh observation, and the session map. Observe is one blocking call stream, so no system model was added.
+Affected invariants: a first observation keeps fused ids; a re-rendered control with the same role, label, and nearby position keeps its id and the press uses the new node; a distant same-label control gets a new id; a stable id is never reused for another control; re-observing an identical page keeps every id.
+Tests or proofs updated: identity unit tests and a 16-case proptest, browser session re-render and distance tests. No second identity service and no second similarity metric.
 ```

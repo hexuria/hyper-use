@@ -106,9 +106,11 @@ that choice equals the region id, or `press` / `do-not-press` against
 
 A region id is not a coordinate and not an enabled bit. The same id remains
 after a move and after an enabled change. A press addresses that id; it does
-not mint a new one. On a browser snapshot the id is `n{backendNodeId}` from
-the DOM node, so a later observation of the same Chrome node keeps the id
-when the backend id does.
+not mint a new one. A browser session carries ids forward: the first
+observation names a region `n{backendNodeId}`, and a later observation keeps
+that id for the same Chrome node, or for a re-rendered node with the same
+role, label, and nearby position (a new backend id). The id is opaque after
+that; the session's binding holds the current node for the press.
 
 ## Roadmap
 

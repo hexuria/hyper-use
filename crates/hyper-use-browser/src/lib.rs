@@ -13,6 +13,7 @@
 mod error;
 mod extract;
 mod fusion;
+mod identity;
 mod replay;
 mod session;
 mod transport;
@@ -223,6 +224,75 @@ mod phase2 {
             .filter(|method| *method == "DOM.resolveNode")
             .count();
         assert_eq!(resolves, 2);
+    }
+
+    /// sign-in.cdp.json with the Sign in button re-rendered as node 90 /
+    /// backend 900 at `x`.
+    fn rerendered_sign_in(x: f64) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let calls = value["calls"].as_array_mut().unwrap();
+        let button = &mut calls[1]["result"]["root"]["children"][0];
+        button["nodeId"] = 90.into();
+        button["backendNodeId"] = 900.into();
+        calls[2]["result"]["nodes"][0]["backendDOMNodeId"] = 900.into();
+        let quad = serde_json::json!([x, 300, x + 80.0, 300, x + 80.0, 332, x, 332]);
+        calls[3]["params"] = serde_json::json!({"nodeId": 90});
+        calls[3]["result"]["model"]["content"] = quad.clone();
+        calls[5]["params"] = serde_json::json!({"backendNodeId": 900});
+        calls[5]["result"]["model"]["content"] = quad;
+        value.to_string()
+    }
+
+    #[test]
+    fn rerendered_button_keeps_its_id_with_a_new_backend_node() {
+        let mut transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        transport.append(&rerendered_sign_in(400.0)).unwrap();
+        transport
+            .append(
+                r#"{"calls":[
+                    {"method":"DOM.resolveNode","params":{"nodeId":90},"result":{"object":{"objectId":"obj-90"}}},
+                    {"method":"Runtime.callFunctionOn","params":{"functionDeclaration":"function(){this.click()}","objectId":"obj-90","returnByValue":true},"result":{"result":{"type":"undefined"}}}
+                ]}"#,
+            )
+            .unwrap();
+        let mut session = BrowserSession::new(transport);
+        let before = session.observe().unwrap().clone();
+        let after = session.observe().unwrap().clone();
+        let ids: Vec<_> = after.ids().map(RegionId::as_str).collect();
+        assert_eq!(ids, ["n100", "n200"]);
+        assert!(diff(&before, &after).is_empty());
+        let mechanism = session
+            .press(&RegionId::try_new("n100").unwrap(), Action::Click)
+            .unwrap();
+        assert_eq!(mechanism, ActMechanism::DomSemantic);
+    }
+
+    #[test]
+    fn distant_same_label_does_not_inherit_identity() {
+        let mut transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        transport.append(&rerendered_sign_in(1100.0)).unwrap();
+        let mut session = BrowserSession::new(transport);
+        session.observe().unwrap();
+        let after = session.observe().unwrap();
+        let ids: Vec<_> = after.ids().map(RegionId::as_str).collect();
+        assert_eq!(ids, ["n200", "n900"]);
+    }
+
+    #[test]
+    fn single_observation_ids_are_unchanged() {
+        let transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let ids: Vec<_> = session
+            .observe()
+            .unwrap()
+            .ids()
+            .map(|id| id.to_string())
+            .collect();
+        assert_eq!(ids, ["n100", "n200"]);
     }
 
     #[test]

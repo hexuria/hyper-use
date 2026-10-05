@@ -27,6 +27,7 @@ use hyper_use_core::{Action, InteractionManifold, Rect, RegionId};
 use crate::error::{ActMechanism, BrowserError, CdpError};
 use crate::extract::{self, content_rect};
 use crate::fusion::{self, NodeBinding, RawNode};
+use crate::identity::IdentityMap;
 use crate::transport::CdpTransport;
 use crate::verify::{self, Expectation};
 
@@ -36,6 +37,7 @@ pub struct BrowserSession<T: CdpTransport> {
     transport: T,
     manifold: Option<InteractionManifold>,
     bindings: BTreeMap<RegionId, NodeBinding>,
+    identity: IdentityMap,
 }
 
 impl<T: CdpTransport> BrowserSession<T> {
@@ -44,6 +46,7 @@ impl<T: CdpTransport> BrowserSession<T> {
             transport,
             manifold: None,
             bindings: BTreeMap::new(),
+            identity: IdentityMap::default(),
         }
     }
 
@@ -87,7 +90,10 @@ impl<T: CdpTransport> BrowserSession<T> {
                 ax_raw.push(RawNode::from_ax(element, rect));
             }
         }
-        let (manifold, bindings) = fusion::fuse(viewport, &dom_raw, &ax_raw)?;
+        let (fused, fused_bindings) = fusion::fuse(viewport, &dom_raw, &ax_raw)?;
+        let (manifold, bindings) =
+            self.identity
+                .assign(self.manifold.as_ref(), fused, fused_bindings)?;
         self.bindings = bindings;
         self.manifold = Some(manifold);
         Ok(self.manifold.as_ref().expect("observation just stored"))

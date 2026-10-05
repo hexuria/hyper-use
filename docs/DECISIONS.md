@@ -42,7 +42,9 @@ Near means a gap of at most 0.08 viewport units. Aligned means centers within
 `diff` is id-based (added, removed, changed). `match_regions` pairs identical
 ids first, then greedy similarity at or above 0.85. A rename is therefore both
 an id-level remove+add and a similarity pair. Same label on opposite sides of
-the viewport scores 0.8 and does not merge.
+the viewport scores 0.8 and does not merge. A browser session now runs
+`match_regions` itself when it observes (see "Session identity map"), so a
+re-rendered control keeps its id and `diff` sees it as unchanged.
 
 ## Dependencies
 
@@ -576,3 +578,33 @@ Verifiers: `ring_evicts_oldest_and_ids_never_repeat`, the 16-case proptest
 `diff_by_snapshot_ids_matches_diff_by_paths`, `evicted_snapshot_is_exact`,
 `stateless_call_tool_is_unchanged`, and the stdio subprocess test
 `observe_then_act_then_diff_by_snapshot_in_one_process`.
+
+## Session identity map
+
+A region id used to be the backend node id, so a framework that re-rendered a
+button (same control, new DOM node) produced removed plus added, the same as
+a different button. `BrowserSession` now owns an `IdentityMap` and applies it
+on every observe:
+
+1. A fused id seen in the previous observation keeps its stable id.
+2. The rest are paired with the previous observation by `match_regions` with
+   `structural_similarity` at 0.85. A pair inherits the previous stable id.
+3. Anything left is minted as its fused id, or `{fused}-{k}` when that id
+   already named another control in this session. Stable ids are never reused.
+
+A first observation has exactly the fused ids, so fixtures, the Browser Use and
+CUA scripts, and existing tests are unchanged. After a re-render the id is
+opaque: `n100` can name a node whose backend id is 900. The binding used to
+press always holds the current node id and backend id. Parent references are
+rewritten through the same map. `hyper-use-observe` is now a normal dependency
+of the browser crate; observe depends only on core, so there is no cycle.
+
+Downside accepted: a wrong similarity pair would give a different control the
+old id. The 0.85 threshold already refuses the far-duplicate case, and the act
+margin gate still applies.
+
+Verifiers: `rerendered_button_keeps_its_id_with_a_new_backend_node` (the press
+resolves node 90, not 10), `distant_same_label_does_not_inherit_identity`,
+`single_observation_ids_are_unchanged`,
+`a_rerender_inherits_and_a_reused_backend_id_is_minted_fresh`, and the 16-case
+proptest `reobserving_an_identical_manifold_keeps_every_id`.

@@ -10,7 +10,8 @@
 //! with the highest IoU, then the smaller centroid distance, then the lower
 //! index. Leftovers stay separate. The stored rectangle is the DOM rectangle
 //! when both exist, so a one-pixel accessibility shift does not move the region.
-//! The region id is `n{backendNodeId}` from the DOM node. It is not derived
+//! The fused id is `n{backendNodeId}` from the DOM node. The session's identity
+//! map may carry an earlier stable id over it. It is not derived
 //! from the rectangle, the enabled bit, or the label.
 //!
 //! Accepted downside: two same-label, same-role controls whose centers are

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Help - Acme Mail</title>
+<title>Settings - Acme Mail</title>
 <style>
   :root { --page: #f6f8fc; --text: #1f1f1f; --muted: #5e5e5e; --line: #eceff1; --blue: #0b57d0; --blue-hover: #0a4cba; }
   * { box-sizing: border-box; }
@@ -49,17 +49,50 @@
   <a class="back" href="index.html"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>Back to Inbox</a>
 </header>
 <main class="panel">
-  <div class="article">
-    <h2 style="font-size:28px;font-weight:400;margin:8px 0 4px">Acme Mail Help</h2>
-    <div class="search"><input type="search" aria-label="Search help articles" placeholder="Describe your issue"></div>
-    <h3>Popular articles</h3>
-    <ul>
-      <li><a href="#undo">Undo a sent message</a></li>
-      <li><a href="#cc">Add Cc and Bcc recipients</a></li>
-      <li><a href="#signature">Create a signature</a></li>
-      <li><a href="#vacation">Set up a vacation responder</a></li>
-    </ul>
+  <div class="panel-head">
+    <h2>Settings</h2>
+    <div class="tabs" role="tablist" aria-label="Settings sections">
+      <button class="tab" role="tab" aria-selected="true" type="button">General</button>
+      <button class="tab" role="tab" aria-selected="false" type="button">Labels</button>
+      <button class="tab" role="tab" aria-selected="false" type="button">Inbox</button>
+      <button class="tab" role="tab" aria-selected="false" type="button">Filters and blocked addresses</button>
+    </div>
   </div>
+  <section class="setting" aria-label="Vacation responder">
+    <div><h3>Vacation responder</h3><p>Sends an automated reply to incoming messages. No changes to save.</p></div>
+    <div class="controls">
+      <label><input type="radio" name="vacation" checked> Vacation responder off</label>
+      <label><input type="radio" name="vacation"> Vacation responder on</label>
+      <button id="save-disabled" class="pill" type="button" disabled>Save</button>
+    </div>
+  </section>
+  <section class="setting" aria-label="Signature">
+    <div><h3>Signature</h3><p>Appended at the end of all outgoing messages.</p></div>
+    <div class="controls">
+      <textarea aria-label="Signature text">Uriah Galang
+Acme Mail</textarea>
+      <button id="save" class="pill" type="button">Save</button>
+    </div>
+  </section>
 </main>
+<div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
+<script src="/_shared/bench.js"></script>
+<script>
+  function snack(text) {
+    const bar = document.getElementById('snackbar');
+    bar.setAttribute('aria-label', text);
+    bar.innerHTML = '';
+    const label = document.createElement('span');
+    label.textContent = text;
+    const undo = document.createElement('button');
+    undo.type = 'button';
+    undo.textContent = 'Dismiss';
+    bar.append(label, undo);
+    bar.classList.remove('hidden');
+  }
+  document.getElementById('save').onclick = () => { BENCH.emit('save', { section: 'signature', text: document.querySelector('[aria-label="Signature text"]').value }); snack('Settings saved'); };
+  document.getElementById('save-disabled').onclick = () => { BENCH.emit('save', { section: 'vacation' }); snack('Vacation settings saved'); };
+  BENCH.set({ view: 'settings' });
+</script>
 </body>
 </html>

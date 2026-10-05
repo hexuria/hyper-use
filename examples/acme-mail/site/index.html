@@ -254,11 +254,11 @@
     <button class="icon-btn" type="button" aria-label="Full screen"><svg><use href="#i-max"/></svg></button>
     <button id="compose-close" class="icon-btn" type="button" aria-label="Save and close"><svg><use href="#i-close"/></svg></button>
   </div>
-  <div class="line"><input aria-label="To recipients" placeholder="Recipients">
+  <div class="line"><input id="compose-to" aria-label="To recipients" placeholder="Recipients">
     <button id="add-cc" class="link-btn" type="button">Add Cc</button></div>
   <div id="cc-line" class="line hidden"><input id="cc" aria-label="Cc recipients" placeholder="Cc"></div>
-  <div class="line"><input aria-label="Subject" placeholder="Subject"></div>
-  <textarea aria-label="Message Body"></textarea>
+  <div class="line"><input id="compose-subject" aria-label="Subject" placeholder="Subject"></div>
+  <textarea id="compose-body" aria-label="Message Body"></textarea>
   <div class="sheet-foot">
     <button id="compose-send" class="pill" type="button">Send</button>
     <button class="icon-btn" type="button" aria-label="Formatting options"><svg><use href="#i-format"/></svg></button>
@@ -272,6 +272,7 @@
 
 <div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
 
+<script src="/_shared/bench.js"></script>
 <script>
   const messages = [
     ['q3', 'Maya Reyes', 'maya@acme.test', 'Q3 launch checklist', 'The checklist is attached. Please review the remaining items before Friday', '9:41 AM', true,
@@ -293,17 +294,18 @@
   ];
   const byId = Object.fromEntries(messages.map((m) => [m[0], m]));
   const rows = document.getElementById('rows');
-  for (const [id, sender, , subject, snippet, date, unread] of messages) {
+  // The seed reorders the inbox; it never changes which message a task names.
+  for (const [id, sender, , subject, snippet, date, unread] of BENCH.shuffle(messages)) {
     const li = document.createElement('li');
     li.className = 'msg' + (unread ? ' unread' : '');
     li.innerHTML = `<input type="checkbox" aria-label="Select conversation">
-      <button class="star" type="button" aria-label="Not starred" aria-pressed="false"><svg><use href="#i-star"/></svg></button>
+      <button class="star" type="button" data-thread="${id}" aria-label="Not starred" aria-pressed="false"><svg><use href="#i-star"/></svg></button>
       <a class="open" href="#thread/${id}" aria-label="${subject}, from ${sender}">
         <span class="sender">${sender}</span>
         <span class="subject">${subject} <span class="snippet">- ${snippet}</span></span>
         <span class="date">${date}</span>
       </a>
-      <span class="row-actions">
+      <span class="row-actions" data-thread="${id}">
         <button class="icon-btn" type="button" aria-label="Archive"><svg><use href="#i-archive"/></svg></button>
         <button class="icon-btn" type="button" aria-label="Delete"><svg><use href="#i-trash"/></svg></button>
         <button class="icon-btn" type="button" aria-label="Mark as read"><svg><use href="#i-read"/></svg></button>
@@ -315,9 +317,12 @@
   const listView = document.getElementById('list-view');
   const threadView = document.getElementById('thread-view');
   const setText = (id, text) => { document.getElementById(id).textContent = text; };
+  let currentThread = null;
   function route() {
     const match = location.hash.match(/^#thread\/(.+)$/);
     const message = match && byId[match[1]];
+    currentThread = message ? match[1] : null;
+    BENCH.set({ view: message ? 'thread' : 'inbox', thread: currentThread });
     if (!message) {
       threadView.classList.add('hidden');
       listView.classList.remove('hidden');
@@ -357,19 +362,30 @@
   }
   const on = (id, fn) => { document.getElementById(id).onclick = fn; };
   const compose = document.getElementById('compose');
-  const closeCompose = () => compose.classList.add('hidden');
-  on('compose-open', () => { compose.classList.remove('hidden'); compose.querySelector('input').focus(); });
+  const closeCompose = () => { compose.classList.add('hidden'); BENCH.set({ compose_open: false }); };
+  on('compose-open', () => { compose.classList.remove('hidden'); compose.querySelector('input').focus(); BENCH.set({ compose_open: true }); });
   on('compose-close', closeCompose);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCompose(); });
-  on('add-cc', () => { document.getElementById('cc-line').classList.remove('hidden'); document.getElementById('add-cc').classList.add('hidden'); document.getElementById('cc').focus(); });
-  on('compose-send', () => { closeCompose(); snack('Message sent'); });
-  on('reply-send', () => snack('Reply sent'));
-  on('archive', () => { snack('Conversation archived'); location.hash = '#inbox'; });
-  on('archive-hidden', () => snack('Archived by hidden button'));
-  on('archive-offscreen', () => snack('Archived by offscreen button'));
+  on('add-cc', () => { document.getElementById('cc-line').classList.remove('hidden'); document.getElementById('add-cc').classList.add('hidden'); document.getElementById('cc').focus(); BENCH.set({ cc_visible: true }); });
+  const v = (id) => document.getElementById(id).value.trim();
+  on('compose-send', () => {
+    BENCH.emit('send', { source: 'compose', to: v('compose-to'), cc: v('cc'), subject: v('compose-subject'), body: v('compose-body'), thread_open: currentThread });
+    closeCompose(); snack('Message sent');
+  });
+  on('reply-send', () => { BENCH.emit('send', { source: 'reply', thread: currentThread, body: v('reply-text') }); snack('Reply sent'); });
+  on('archive', () => { BENCH.emit('archive', { source: 'toolbar', thread: currentThread }); snack('Conversation archived'); location.hash = '#inbox'; });
+  on('archive-hidden', () => { BENCH.emit('archive', { source: 'hidden', thread: currentThread }); snack('Archived by hidden button'); });
+  on('archive-offscreen', () => { BENCH.emit('archive', { source: 'offscreen', thread: currentThread }); snack('Archived by offscreen button'); });
   for (const button of rows.querySelectorAll('.row-actions [aria-label="Archive"]')) {
-    button.onclick = () => snack('Row archived');
+    button.onclick = () => { BENCH.emit('archive', { source: 'row', thread: button.parentElement.dataset.thread }); snack('Row archived'); };
   }
+  for (const button of rows.querySelectorAll('.row-actions [aria-label="Delete"]')) {
+    button.onclick = () => { BENCH.emit('delete', { source: 'row', thread: button.parentElement.dataset.thread }); snack('Conversation deleted'); };
+  }
+  for (const button of rows.querySelectorAll('.star')) {
+    button.onclick = () => { const on = button.getAttribute('aria-pressed') !== 'true'; button.setAttribute('aria-pressed', String(on)); button.setAttribute('aria-label', on ? 'Starred' : 'Not starred'); BENCH.emit('star', { thread: button.dataset.thread, starred: on }); };
+  }
+  BENCH.set({ compose_open: false, cc_visible: false });
 </script>
 </body>
 </html>

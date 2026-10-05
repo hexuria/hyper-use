@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Users - Acme Admin</title>
+<link rel="stylesheet" href="/_shared/ui.css">
+<style>
+  .brand .logo { background: linear-gradient(135deg, #5e35b1, #0b57d0); }
+  .toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .table-wrap { border: 1px solid var(--line); border-radius: 12px; overflow: visible; position: relative; }
+  .pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 16px; color: var(--muted); }
+  td.actions { text-align: right; width: 56px; position: relative; }
+  .stat { display: flex; gap: 20px; margin-bottom: 20px; }
+  .stat .card { flex: 1; }
+  .stat .n { font-size: 28px; line-height: 36px; }
+  .row-suspended td { color: var(--faint); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><button class="icon-btn" aria-label="Main menu"><svg class="i"><use href="#i-menu"/></svg></button>
+      <span class="logo">A</span><span>Acme Admin</span></div>
+    <label class="search"><svg class="i"><use href="#i-search"/></svg><input id="search" aria-label="Search users" placeholder="Search users by name or email"></label>
+    <div class="top-actions">
+      <button class="icon-btn" aria-label="Notifications"><svg class="i"><use href="#i-bell"/></svg></button>
+      <button class="icon-btn" aria-label="Settings"><svg class="i"><use href="#i-settings"/></svg></button>
+      <span class="avatar" aria-label="Account: Uriah">U</span>
+    </div>
+  </header>
+  <nav class="nav" aria-label="Admin sections">
+    <a href="#"><svg class="i"><use href="#i-chart"/></svg>Dashboard</a>
+    <a href="#" class="active"><svg class="i"><use href="#i-people"/></svg>Users</a>
+    <a href="#"><svg class="i"><use href="#i-receipt"/></svg>Billing</a>
+    <a href="#"><svg class="i"><use href="#i-lock"/></svg>Security</a>
+    <a href="#"><svg class="i"><use href="#i-doc"/></svg>Audit log</a>
+  </nav>
+  <main class="main"><div class="panel">
+    <div class="panel-head"><h1>Users</h1><span class="sub" id="total"></span><span class="spacer"></span>
+      <button class="btn btn-outline" type="button"><svg class="i"><use href="#i-download"/></svg>Export CSV</button>
+      <button class="btn btn-filled" type="button"><svg class="i"><use href="#i-add"/></svg>Invite user</button></div>
+    <div class="stat">
+      <div class="card"><div class="sub">Active users</div><div class="n" id="n-active"></div></div>
+      <div class="card"><div class="sub">Suspended</div><div class="n" id="n-suspended"></div></div>
+      <div class="card"><div class="sub">Seats available</div><div class="n">12</div></div>
+    </div>
+    <div class="toolbar">
+      <div class="chips" role="group" aria-label="Filter by role" id="filters"></div>
+      <span class="spacer"></span><span class="sub" id="showing"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="data" aria-label="Users">
+        <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Last active</th><th class="actions"><span class="hidden">Actions</span></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="pager"><span id="page-label"></span>
+        <button class="icon-btn" id="prev" aria-label="Previous page"><svg class="i"><use href="#i-left"/></svg></button>
+        <button class="icon-btn" id="next" aria-label="Next page"><svg class="i"><use href="#i-right"/></svg></button></div>
+    </div>
+  </div></main>
+</div>
+<div id="menu" class="menu hidden" role="menu"></div>
+<div id="scrim" class="scrim hidden"><div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-title">
+  <h2 id="dlg-title"></h2><p id="dlg-body"></p>
+  <div class="actions"><button class="btn btn-text" type="button" id="dlg-cancel">Cancel</button><button class="btn btn-filled" type="button" id="dlg-ok"></button></div>
+</div></div>
+<div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
+<script src="/_shared/icons.js"></script>
+<script src="/_shared/bench.js"></script>
+<script>
+  const ROLES = ['Admin', 'Billing', 'Viewer'];
+  const PEOPLE = [
+    ['Priya Raman', 'Billing'], ['Priya Ramos', 'Viewer'], ['Marco Diaz', 'Admin'], ['Hana Sato', 'Billing'],
+    ['Leo Park', 'Viewer'], ['Dana Cruz', 'Billing'], ['Omar Haddad', 'Admin'], ['Grace Lim', 'Billing'],
+    ['Ivan Petrov', 'Viewer'], ['Nora Quinn', 'Billing'], ['Sam Okafor', 'Viewer'], ['Mei Chen', 'Billing'],
+    ['Tomas Silva', 'Admin'], ['Ava Reyes', 'Billing'], ['Ken Ito', 'Viewer'], ['Lara Novak', 'Billing'],
+    ['Ruth Mensah', 'Viewer'], ['Ali Karimi', 'Billing'], ['Zoe Martin', 'Billing'], ['Ben Adler', 'Viewer'],
+  ];
+  const COLORS = ['#0b57d0', '#1e8e3e', '#a142f4', '#e37400', '#d93025', '#007b83', '#5e35b1'];
+  const ACTIVE = ['2 minutes ago', '1 hour ago', 'Yesterday', '3 days ago', 'Last week', 'Oct 1', 'Sep 28'];
+  const users = BENCH.shuffle(PEOPLE).map(([name, role], i) => ({
+    name, role, email: name.toLowerCase().replace(' ', '.') + '@acme.test', status: 'Active',
+    last: ACTIVE[i % ACTIVE.length], color: COLORS[i % COLORS.length],
+  }));
+  const PER_PAGE = 8;
+  let filter = 'all', page = 1, query = '';
+
+  function visible() {
+    return users.filter((u) => (filter === 'all' || u.role.toLowerCase() === filter) &&
+      (!query || (u.name + ' ' + u.email).toLowerCase().includes(query)));
+  }
+  function snack(text) {
+    const bar = document.getElementById('snackbar');
+    bar.innerHTML = `<span>${text}</span><button type="button">Undo</button>`;
+    bar.classList.remove('hidden');
+  }
+  function render() {
+    const list = visible();
+    const pages = Math.max(1, Math.ceil(list.length / PER_PAGE));
+    page = Math.min(page, pages);
+    const slice = list.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+    document.getElementById('filters').innerHTML = ['all', ...ROLES.map((r) => r.toLowerCase())].map((f) => {
+      const label = f === 'all' ? 'All roles' : f[0].toUpperCase() + f.slice(1);
+      return `<button class="chip" type="button" data-filter="${f}" aria-pressed="${f === filter}">${label}</button>`;
+    }).join('');
+    document.getElementById('rows').innerHTML = slice.map((u) => `
+      <tr class="${u.status === 'Suspended' ? 'row-suspended' : ''}">
+        <td><div class="person"><span class="avatar" style="background:${u.color}">${u.name.split(' ').map((p) => p[0]).join('')}</span>
+          <div><div class="name">${u.name}</div><div class="mail">${u.email}</div></div></div></td>
+        <td><span class="badge">${u.role}</span></td>
+        <td><span class="badge ${u.status === 'Active' ? 'ok' : 'danger'}">${u.status}</span></td>
+        <td class="sub">${u.last}</td>
+        <td class="actions"><button class="icon-btn" type="button" data-more="${u.email}" aria-label="More actions for ${u.name}" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button></td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty">No users match.</td></tr>';
+    document.getElementById('total').textContent = `${users.length} members`;
+    document.getElementById('showing').textContent = `${list.length} shown`;
+    document.getElementById('page-label').textContent = list.length ? `${(page - 1) * PER_PAGE + 1}–${Math.min(page * PER_PAGE, list.length)} of ${list.length}` : '0 of 0';
+    document.getElementById('prev').setAttribute('aria-disabled', String(page <= 1));
+    document.getElementById('next').setAttribute('aria-disabled', String(page >= pages));
+    document.getElementById('n-active').textContent = users.filter((u) => u.status === 'Active').length;
+    document.getElementById('n-suspended').textContent = users.filter((u) => u.status === 'Suspended').length;
+    for (const b of document.querySelectorAll('[data-filter]')) b.onclick = () => { filter = b.dataset.filter; page = 1; BENCH.emit('filter', { role: filter }); render(); };
+    for (const b of document.querySelectorAll('[data-more]')) b.onclick = (e) => { e.stopPropagation(); openMenu(b, users.find((u) => u.email === b.dataset.more)); };
+    BENCH.set({ filter, page, pages, query, suspended: users.filter((u) => u.status === 'Suspended').map((u) => u.name), users: users.length });
+  }
+  const menu = document.getElementById('menu');
+  function openMenu(anchor, user) {
+    const r = anchor.getBoundingClientRect();
+    menu.innerHTML = `<button role="menuitem" type="button" data-act="edit"><svg class="i"><use href="#i-edit"/></svg>Edit ${user.name}</button>
+      <button role="menuitem" type="button" data-act="reset"><svg class="i"><use href="#i-lock"/></svg>Reset password</button>
+      <button role="menuitem" type="button" data-act="suspend"><svg class="i"><use href="#i-close"/></svg>${user.status === 'Suspended' ? 'Reactivate' : 'Suspend'} user</button>
+      <button role="menuitem" type="button" class="danger" data-act="delete"><svg class="i"><use href="#i-trash"/></svg>Delete user</button>`;
+    menu.style.top = `${r.bottom + window.scrollY + 4}px`;
+    menu.style.left = `${r.right - 220}px`;
+    menu.setAttribute('aria-label', `Actions for ${user.name}`);
+    menu.classList.remove('hidden');
+    BENCH.set({ menu_for: user.name });
+    for (const b of menu.querySelectorAll('[data-act]')) b.onclick = () => { closeMenu(); act(b.dataset.act, user); };
+  }
+  function closeMenu() { menu.classList.add('hidden'); BENCH.set({ menu_for: null }); }
+  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) closeMenu(); });
+  const scrim = document.getElementById('scrim');
+  function confirm(title, body, ok, onOk) {
+    document.getElementById('dlg-title').textContent = title;
+    document.getElementById('dlg-body').textContent = body;
+    const okBtn = document.getElementById('dlg-ok');
+    okBtn.textContent = ok;
+    okBtn.className = ok.startsWith('Delete') ? 'btn btn-danger' : 'btn btn-filled';
+    scrim.classList.remove('hidden');
+    BENCH.set({ dialog: title });
+    okBtn.onclick = () => { scrim.classList.add('hidden'); BENCH.set({ dialog: null }); onOk(); };
+    document.getElementById('dlg-cancel').onclick = () => { scrim.classList.add('hidden'); BENCH.set({ dialog: null }); BENCH.emit('dialog_cancel', { title }); };
+  }
+  function act(kind, user) {
+    if (kind === 'suspend') {
+      const reactivate = user.status === 'Suspended';
+      confirm(`${reactivate ? 'Reactivate' : 'Suspend'} ${user.name}?`, reactivate ? 'They will be able to sign in again.' : 'They will be signed out and lose access until reactivated.', reactivate ? 'Reactivate' : 'Suspend', () => {
+        user.status = reactivate ? 'Active' : 'Suspended';
+        BENCH.emit(reactivate ? 'reactivate' : 'suspend', { user: user.name, email: user.email });
+        snack(`${user.name} ${reactivate ? 'reactivated' : 'suspended'}`); render();
+      });
+    } else if (kind === 'delete') {
+      confirm(`Delete ${user.name}?`, 'This permanently removes the user and their data.', 'Delete', () => {
+        users.splice(users.indexOf(user), 1);
+        BENCH.emit('delete', { user: user.name, email: user.email });
+        snack(`${user.name} deleted`); render();
+      });
+    } else if (kind === 'reset') {
+      BENCH.emit('reset_password', { user: user.name }); snack(`Password reset email sent to ${user.name}`);
+    } else {
+      BENCH.emit('edit_open', { user: user.name }); snack(`Editing is not available in this demo`);
+    }
+  }
+  document.getElementById('prev').onclick = () => { if (page > 1) { page--; BENCH.emit('page', { page }); render(); } };
+  document.getElementById('next').onclick = () => { const pages = Math.ceil(visible().length / PER_PAGE); if (page < pages) { page++; BENCH.emit('page', { page }); render(); } };
+  document.getElementById('search').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); page = 1; render(); });
+  render();
+</script>
+</body>
+</html>

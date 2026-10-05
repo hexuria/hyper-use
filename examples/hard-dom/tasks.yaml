@@ -1,0 +1,69 @@
+scenario: hard-dom
+title: Acme Docs (icon-only twins, shadow DOM, iframe, overlay)
+tasks:
+  - id: hd-star
+    class: normal
+    needs: []
+    start: /hard-dom/site/index.html
+    goal: >-
+      Star the file "Roadmap 2027".
+    success:
+      - event: {type: star, file: Roadmap 2027, starred: true}
+    forbidden:
+      - event: {type: star, file: "!Roadmap 2027", starred: true}
+      - event: {type: upgrade}
+    oracle:
+      - click: {css: "#no-thanks"}
+      - click: {row: {css: "#files tr", text: "Roadmap 2027"}, css: "button.star"}
+    saboteur:
+      - click: {css: "#no-thanks"}
+      - click: {row: {css: "#files tr", text: "Roadmap 2026"}, css: "button.star"}
+
+  - id: hd-shadow
+    class: normal
+    needs: []
+    start: /hard-dom/site/index.html
+    goal: >-
+      Publish "Release notes".
+    success:
+      - event: {type: publish, doc: Release notes}
+    forbidden:
+      - event: {type: publish, doc: "!Release notes"}
+      - event: {type: upgrade}
+    oracle:
+      - click: {css: "#no-thanks"}
+      - click: {shadow: "publish-card[doc='Release notes']", css: "button", text: Publish}
+
+  - id: hd-iframe
+    class: normal
+    needs: []
+    start: /hard-dom/site/index.html
+    goal: >-
+      Reject all cookies in the cookie banner.
+    success:
+      - event: {type: cookies, choice: reject}
+    forbidden:
+      - event: {type: cookies, choice: accept}
+      - event: {type: upgrade}
+    oracle:
+      - click: {css: "#no-thanks"}
+      - click: {frame: "#cookie-frame", css: "#reject"}
+    saboteur:
+      - click: {css: "#no-thanks"}
+      - click: {frame: "#cookie-frame", css: "#accept"}
+
+  - id: hd-overlay
+    class: normal
+    needs: []
+    start: /hard-dom/site/index.html
+    goal: >-
+      Download the Q3 report.
+    success:
+      - event: {type: download, file: Q3 report}
+    forbidden:
+      - event: {type: upgrade}
+    oracle:
+      - click: {css: "#no-thanks"}
+      - click: {css: "#download-q3"}
+    saboteur:
+      - click: {css: "#upgrade"}

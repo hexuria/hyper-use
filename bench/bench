@@ -1,0 +1,11 @@
+#!/bin/sh
+# bench/bench run [...] | bench/bench report <run-id>
+set -e
+here="$(cd "$(dirname "$0")" && pwd)"
+cmd="$1"; shift || true
+[ -f "$here/.env" ] && set -a && . "$here/.env" && set +a
+case "$cmd" in
+  run) exec "$here/.venv/bin/python" "$here/run.py" "$@" ;;
+  report) exec "$here/.venv/bin/python" "$here/report.py" "$@" ;;
+  *) echo "usage: bench/bench run|report [args]" >&2; exit 2 ;;
+esac

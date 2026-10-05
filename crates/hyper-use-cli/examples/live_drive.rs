@@ -18,6 +18,11 @@
 //! page's real URL, title, and snackbar text through its own CDP connection, so the
 //! transcript has ground truth next to what hyper-use reported.
 //!
+//! Bench mode (`--task-json`, used by `bench/arms/a5_jev_hyper_use.py`): run one task
+//! given as JSON `{id, start_url, text}`, stream every event to `--trace` as
+//! JSONL while it happens (the bench harness enforces caps from outside), and
+//! stop after `--max-steps` steps. The built-in Acme Mail tasks are unchanged.
+//!
 //! Run (see examples/live-drive/README.md):
 //! `HYPER_USE_JEV=1 TYPESAFE_API_KEY=... cargo run --release -p hyper-use-cli
 //!  --features jev --example live_drive -- --bin target/release/hyper-use`
@@ -101,6 +106,9 @@ struct Args {
     out: PathBuf,
     only: Option<String>,
     screenshot_only: bool,
+    task_json: Option<PathBuf>,
+    trace: Option<PathBuf>,
+    max_steps: usize,
 }
 
 fn parse_args() -> Args {
@@ -111,6 +119,9 @@ fn parse_args() -> Args {
         out: PathBuf::from("/tmp/hyper-use-live"),
         only: None,
         screenshot_only: false,
+        task_json: None,
+        trace: None,
+        max_steps: MAX_STEPS,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -122,6 +133,9 @@ fn parse_args() -> Args {
             "--out" => args.out = PathBuf::from(value()),
             "--only" => args.only = Some(value()),
             "--screenshot-only" => args.screenshot_only = true,
+            "--task-json" => args.task_json = Some(PathBuf::from(value())),
+            "--trace" => args.trace = Some(PathBuf::from(value())),
+            "--max-steps" => args.max_steps = value().parse().expect("--max-steps takes a number"),
             other => panic!("unknown flag {other}"),
         }
     }
@@ -456,11 +470,17 @@ fn summarize(tool: &str, is_error: bool, body: &Value) -> Value {
 struct Log {
     lines: Vec<Value>,
     started: Instant,
+    /// Bench mode: every event is also appended here as it happens.
+    sink: Option<std::fs::File>,
 }
 
 impl Log {
     fn push(&mut self, mut event: Value) {
         event["t_ms"] = json!(self.started.elapsed().as_millis());
+        if let Some(sink) = self.sink.as_mut() {
+            let _ = writeln!(sink, "{event}");
+            let _ = sink.flush();
+        }
         self.lines.push(event);
     }
 }
@@ -470,8 +490,14 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let mut log = Log {
         lines: Vec::new(),
         started,
+        sink: args.trace.as_ref().map(|path| std::fs::File::create(path).expect("create --trace file")),
     };
-    let tab = open_tab(&args.cdp, &format!("{}/{}", args.site, task.start));
+    let start = if task.start.starts_with("http://") {
+        task.start.to_owned()
+    } else {
+        format!("{}/{}", args.site, task.start)
+    };
+    let tab = open_tab(&args.cdp, &start);
     let mut mcp = Mcp::spawn(&args.bin);
     let init = mcp.request(
         "initialize",
@@ -488,7 +514,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let (mut tool_calls, mut jev_calls) = (0usize, 0usize);
     let mut outcome = "max-steps".to_owned();
 
-    for step in 1..=MAX_STEPS {
+    for step in 1..=args.max_steps {
         let state = json!({
             "role": "You drive hyper-use, a browser coprocessor, through MCP tools to do one task. Choose the next call. hyper-use never navigates and never guesses coordinates.",
             "task": task.text,
@@ -814,6 +840,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
         "calls": mcp_events.iter().map(|e| e["tool"].clone()).collect::<Vec<_>>(),
         "page_after": truth,
     });
+    log.push(json!({"kind": "final", "outcome": outcome}));
     log.push(json!({"kind": "summary", "summary": summary}));
     mcp.close();
     close_tab(&args.cdp, &tab);
@@ -864,6 +891,26 @@ fn main() {
                 .collect()
         })
         .unwrap_or(Value::Null);
+
+    if let Some(path) = &args.task_json {
+        let raw = std::fs::read_to_string(path).expect("read --task-json");
+        let spec: Value = serde_json::from_str(&raw).expect("--task-json is JSON");
+        let field = |name: &str| -> String {
+            spec[name].as_str().unwrap_or_else(|| panic!("--task-json needs a string `{name}`")).to_owned()
+        };
+        let (id, start_url, text) = (field("id"), field("start_url"), field("text"));
+        assert!(start_url.starts_with("http://127.0.0.1:"), "start_url must be on 127.0.0.1");
+        // Static lifetime for one process-long task.
+        let task = Task {
+            id: Box::leak(id.into_boxed_str()),
+            start: Box::leak(start_url.into_boxed_str()),
+            text: Box::leak(text.into_boxed_str()),
+            expect: "bench checker owns the verdict",
+        };
+        let summary = run_task(&args, &jev, &task, &tools);
+        println!("{summary}");
+        return;
+    }
 
     let mut summaries = Vec::new();
     for task in TASKS

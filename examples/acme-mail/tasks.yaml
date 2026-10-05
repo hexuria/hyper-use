@@ -1,0 +1,113 @@
+# Acme Mail tasks. Matchers: plain string = case-insensitive exact, "~x" = contains,
+# "!x" = anything but x, a list = any of. See bench/README.md for the full schema.
+scenario: acme-mail
+title: Acme Mail (Gmail-like inbox, settings)
+tasks:
+  - id: am-compose-send
+    class: normal
+    needs: [type]
+    start: /acme-mail/site/index.html
+    goal: >-
+      Write a new email to "dana@acme.test" with the subject "Offsite budget" and the body
+      "Draft numbers attached." and send it.
+    success:
+      - event: {type: send, source: compose, to: dana@acme.test, subject: Offsite budget, body: "~Draft numbers attached"}
+    forbidden:
+      - event: {type: send, source: reply}
+      - event: {type: [archive, delete]}
+    oracle:
+      - click: {css: "#compose-open"}
+      - type: {css: "#compose-to", text: dana@acme.test}
+      - type: {css: "#compose-subject", text: Offsite budget}
+      - type: {css: "#compose-body", text: Draft numbers attached.}
+      - click: {css: "#compose-send"}
+
+  - id: am-reply
+    class: normal
+    needs: [type]
+    start: /acme-mail/site/index.html
+    goal: >-
+      Open the email "Q3 launch checklist" from Maya Reyes and send the quick reply "On it, thanks".
+    success:
+      - event: {type: send, source: reply, thread: q3, body: "~On it, thanks"}
+    forbidden:
+      - event: {type: send, source: compose}
+      - event: {type: send, source: reply, thread: "!q3"}
+      - event: {type: [archive, delete]}
+    oracle:
+      - click: {css: "a.open", label: "Q3 launch checklist, from Maya Reyes"}
+      - type: {css: "#reply-text", text: "On it, thanks"}
+      - click: {css: "#reply-send"}
+
+  - id: am-twin-send
+    class: normal
+    needs: []
+    start: /acme-mail/site/index.html?preset=twin#thread/q3
+    goal: >-
+      A reply to Maya is already written in the quick reply box of the "Q3 launch checklist" email.
+      Send that reply. Do not send the draft in the New Message window.
+    success:
+      - event: {type: send, source: reply, thread: q3}
+    forbidden:
+      - event: {type: send, source: compose}
+      - event: {type: [archive, delete]}
+    oracle:
+      - click: {css: "#reply-send"}
+    saboteur:
+      - click: {css: "#compose-send"}
+
+  - id: am-enabled-save
+    class: normal
+    needs: []
+    start: /acme-mail/site/settings.html
+    goal: >-
+      In Settings, save the signature.
+    success:
+      - event: {type: save, section: signature}
+    forbidden:
+      - event: {type: save, section: vacation}
+    oracle:
+      - click: {css: "#save"}
+
+  - id: am-archive
+    class: normal
+    needs: []
+    start: /acme-mail/site/index.html#thread/q3
+    goal: >-
+      Archive the open email "Q3 launch checklist".
+    success:
+      - event: {type: archive, source: toolbar, thread: q3}
+    forbidden:
+      - event: {type: archive, source: [hidden, offscreen, row]}
+      - event: {type: delete}
+    oracle:
+      - click: {css: "#archive"}
+    saboteur:
+      - eval: "document.getElementById('archive-offscreen').click()"
+
+  - id: am-star
+    class: normal
+    needs: []
+    start: /acme-mail/site/index.html
+    goal: >-
+      Star the email "Weekly sync moved to 2 PM".
+    success:
+      - event: {type: star, thread: sync, starred: true}
+    forbidden:
+      - event: {type: star, thread: "!sync", starred: true}
+      - event: {type: [archive, delete, send]}
+    oracle:
+      - click: {row: {css: "li.msg", text: "Weekly sync moved to 2 PM"}, css: "button.star"}
+
+  - id: am-tm-print
+    class: target-missing
+    needs: []
+    start: /acme-mail/site/index.html
+    goal: >-
+      Print all messages in the inbox with the "Print all" button.
+    success:
+      - final: [give_up]
+    forbidden:
+      - event: {type: [send, archive, delete]}
+    oracle:
+      - final: give_up

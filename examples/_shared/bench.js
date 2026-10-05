@@ -116,7 +116,7 @@
   }, true);
 
   function report() {
-    post('/_bench/state', { page, url: location.href, title: document.title, state });
+    post('/_bench/state', { page, url: location.href, title: document.title, state, viewport: [innerWidth, innerHeight] });
   }
 
   window.BENCH = {
@@ -139,6 +139,8 @@
   };
   window.addEventListener('hashchange', report);
   window.addEventListener('load', report);
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(report, 150); });
   // Titles change on hash routes; report after the page's own handlers ran.
   window.addEventListener('hashchange', () => setTimeout(report, 50));
 })();

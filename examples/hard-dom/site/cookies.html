@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cookie preferences</title>
+<link rel="stylesheet" href="/_shared/ui.css">
+<style>
+  html, body { background: #fff; height: auto; }
+  .banner { display: flex; align-items: center; gap: 20px; padding: 16px 24px; }
+  .banner p { margin: 0; flex: 1; color: var(--muted); }
+  .banner strong { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="banner" role="region" aria-label="Cookie consent">
+  <p><strong>We use cookies.</strong> Acme Docs uses cookies to keep you signed in and to measure usage. Choose what we may store.</p>
+  <button class="btn btn-outline" type="button" id="reject">Reject all</button>
+  <button class="btn btn-filled" type="button" id="accept">Accept all</button>
+</div>
+<script src="/_shared/bench.js"></script>
+<script>
+  function choose(choice) {
+    BENCH.emit('cookies', { choice });
+    BENCH.set({ cookies: choice });
+    parent.postMessage({ bench: 'cookies', choice }, location.origin);
+  }
+  document.getElementById('reject').onclick = () => choose('reject');
+  document.getElementById('accept').onclick = () => choose('accept');
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+scenario: admin-table
+title: Acme Admin (users table, row menus, dialogs, paging)
+tasks:
+  - id: admin-suspend
+    class: normal
+    needs: []
+    start: /admin-table/site/index.html
+    goal: >-
+      Suspend the user "Priya Raman".
+    success:
+      - event: {type: suspend, user: Priya Raman}
+    forbidden:
+      - event: {type: suspend, user: "!Priya Raman"}
+      - event: {type: delete}
+    oracle:
+      - seek: {target: {css: "button[data-more]", label: "More actions for Priya Raman"}, next: {css: "#next"}, max: 3}
+      - click: {css: "button[data-more]", label: "More actions for Priya Raman"}
+      - click: {css: "#menu button[data-act=suspend]"}
+      - click: {css: "#dlg-ok"}
+    saboteur:
+      - seek: {target: {css: "button[data-more]", label: "More actions for Priya Ramos"}, next: {css: "#next"}, max: 3}
+      - click: {css: "button[data-more]", label: "More actions for Priya Ramos"}
+      - click: {css: "#menu button[data-act=suspend]"}
+      - click: {css: "#dlg-ok"}
+
+  - id: admin-filter-page
+    class: normal
+    needs: []
+    start: /admin-table/site/index.html
+    goal: >-
+      Show only Billing users, then go to page 2 of the results.
+    success:
+      - state: {filter: billing, page: 2}
+    forbidden:
+      - event: {type: [suspend, delete, reactivate]}
+    oracle:
+      - click: {css: "[data-filter=billing]"}
+      - click: {css: "#next"}
+
+  - id: admin-tm-delete
+    class: target-missing
+    needs: []
+    start: /admin-table/site/index.html
+    goal: >-
+      Delete the user "Jordan Blake".
+    success:
+      - final: [give_up]
+    forbidden:
+      - event: {type: [delete, suspend]}
+    oracle:
+      - final: give_up

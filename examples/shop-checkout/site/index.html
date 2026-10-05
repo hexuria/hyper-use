@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop - Northwind Outfitters</title>
+<link rel="stylesheet" href="/_shared/ui.css">
+<style>
+  .brand .logo { background: linear-gradient(135deg, #1e8e3e, #0b57d0); }
+  .product { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+  .product .art { height: 150px; display: grid; place-items: center; color: rgba(255,255,255,.92); }
+  .product .art svg { width: 56px; height: 56px; }
+  .product .body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .product .meta { color: var(--muted); font-size: 13px; }
+  .product .row { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 10px; gap: 12px; }
+  .price { font-size: 18px; font-weight: 500; }
+  .rating { color: #b06000; font-size: 13px; }
+  .cart-line { display: grid; grid-template-columns: 64px 1fr auto auto auto; align-items: center; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .thumb { width: 64px; height: 64px; border-radius: 12px; display: grid; place-items: center; color: #fff; }
+  .stepper { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 20px; padding: 2px; }
+  .stepper output { min-width: 28px; text-align: center; font-weight: 500; }
+  .layout-2 { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
+  .summary { position: sticky; top: 0; }
+  .summary .line { display: flex; justify-content: space-between; padding: 6px 0; color: var(--muted); }
+  .summary .total { color: var(--text); font-weight: 500; font-size: 16px; border-top: 1px solid var(--line); margin-top: 8px; padding-top: 14px; }
+  .radio-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+  .radio-card:has(input:checked) { border-color: var(--primary); background: #f2f6fe; }
+  .radio-card input { width: 18px; height: 18px; accent-color: var(--primary); }
+  .radio-card .grow { flex: 1; }
+  h2.section { font-size: 16px; font-weight: 500; margin: 28px 0 14px; }
+  .done { max-width: 560px; margin: 40px auto; text-align: center; }
+  .done .tick { width: 72px; height: 72px; border-radius: 50%; background: var(--ok-bg); color: var(--ok); display: grid; place-items: center; margin: 0 auto 16px; }
+  .done .tick svg { width: 40px; height: 40px; }
+  .cart-count { background: var(--primary); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 12px; line-height: 20px; margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><button class="icon-btn" aria-label="Main menu"><svg class="i"><use href="#i-menu"/></svg></button>
+      <span class="logo">N</span><span>Northwind</span></div>
+    <label class="search"><svg class="i"><use href="#i-search"/></svg><input aria-label="Search products" placeholder="Search gear, apparel, and brands"></label>
+    <div class="top-actions">
+      <button class="icon-btn" aria-label="Help"><svg class="i"><use href="#i-help"/></svg></button>
+      <a class="icon-btn" href="#cart" aria-label="Open cart"><svg class="i"><use href="#i-cart"/></svg></a>
+      <span class="avatar" aria-label="Account: Uriah">U</span>
+    </div>
+  </header>
+  <nav class="nav" aria-label="Store sections">
+    <a href="#shop" data-view="shop"><svg class="i"><use href="#i-bag"/></svg>Shop</a>
+    <a href="#cart" data-view="cart"><svg class="i"><use href="#i-cart"/></svg>Cart <span class="cart-count" id="nav-count">0</span></a>
+    <a href="#checkout" data-view="checkout"><svg class="i"><use href="#i-receipt"/></svg>Checkout</a>
+    <div class="section">Account</div>
+    <a href="#orders" data-view="orders"><svg class="i"><use href="#i-doc"/></svg>Orders</a>
+    <a href="#wishlist" data-view="wishlist"><svg class="i"><use href="#i-star"/></svg>Wishlist</a>
+  </nav>
+  <main class="main"><div class="panel" id="view"></div></main>
+</div>
+<div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
+<script src="/_shared/icons.js"></script>
+<script src="/_shared/bench.js"></script>
+<script>
+  const PRODUCTS = [
+    { id: 'daypack', name: 'Trailhead Daypack', meta: '22 L · water-resistant', price: 64, rating: '4.7', color: '#1e8e3e', icon: 'bag' },
+    { id: 'daypack-xl', name: 'Trailhead Daypack XL', meta: '32 L · water-resistant', price: 82, rating: '4.6', color: '#188038', icon: 'bag' },
+    { id: 'bottle', name: 'Summit Water Bottle', meta: '750 ml · insulated steel', price: 28, rating: '4.8', color: '#0b57d0', icon: 'receipt' },
+    { id: 'shell', name: 'Ridge Rain Shell', meta: 'Packable · 3-layer', price: 149, rating: '4.5', color: '#a142f4', icon: 'person' },
+    { id: 'lamp', name: 'Basecamp Headlamp', meta: '400 lumens · USB-C', price: 39, rating: '4.4', color: '#e37400', icon: 'bell' },
+    { id: 'socks', name: 'Merino Hiking Socks', meta: '2-pack · cushioned', price: 22, rating: '4.9', color: '#d93025', icon: 'home' },
+  ];
+  const byId = Object.fromEntries(PRODUCTS.map((p) => [p.id, p]));
+  const order = BENCH.shuffle(PRODUCTS);
+  const params = new URLSearchParams(location.search);
+  const cart = {};
+  if (params.get('preset') === 'bottle') cart.bottle = 1;
+  let shipping = 'standard';
+  let placed = null;
+
+  const money = (n) => `$${n.toFixed(2)}`;
+  const count = () => Object.values(cart).reduce((a, b) => a + b, 0);
+  const subtotal = () => Object.entries(cart).reduce((s, [id, q]) => s + byId[id].price * q, 0);
+  function sync() {
+    document.getElementById('nav-count').textContent = count();
+    BENCH.set({ cart: { ...cart }, shipping, view: location.hash.slice(1) || 'shop', placed: !!placed });
+  }
+  function snack(text) {
+    const bar = document.getElementById('snackbar');
+    bar.innerHTML = `<span>${text}</span><button type="button">Dismiss</button>`;
+    bar.classList.remove('hidden');
+    bar.querySelector('button').onclick = () => bar.classList.add('hidden');
+  }
+
+  function shop() {
+    document.title = 'Shop - Northwind Outfitters';
+    return `<div class="panel-head"><h1>Trail essentials</h1><span class="sub">${PRODUCTS.length} products</span><span class="spacer"></span>
+      <div class="chips"><button class="chip selected" aria-pressed="true">All</button><button class="chip" aria-pressed="false">Packs</button><button class="chip" aria-pressed="false">Hydration</button><button class="chip" aria-pressed="false">Apparel</button></div></div>
+      <div class="grid">${order.map((p) => `
+        <article class="card product" aria-label="${p.name}">
+          <div class="art" style="background: linear-gradient(135deg, ${p.color}, ${p.color}bb)"><svg class="i"><use href="#i-${p.icon}"/></svg></div>
+          <div class="body"><h3>${p.name}</h3><div class="meta">${p.meta}</div><div class="rating">★ ${p.rating}</div>
+            <div class="row"><span class="price">${money(p.price)}</span>
+              <button class="btn btn-tonal" type="button" data-add="${p.id}">Add to cart</button></div></div>
+        </article>`).join('')}</div>`;
+  }
+  function cartView() {
+    document.title = `Cart (${count()}) - Northwind Outfitters`;
+    const lines = Object.entries(cart).filter(([, q]) => q > 0);
+    return `<div class="panel-head"><h1>Your cart</h1><span class="sub">${count()} items</span></div>
+      <div class="layout-2"><div>${lines.length ? lines.map(([id, q]) => { const p = byId[id]; return `
+        <div class="cart-line" aria-label="${p.name} in cart">
+          <span class="thumb" style="background:${p.color}"><svg class="i"><use href="#i-${p.icon}"/></svg></span>
+          <div><div style="font-weight:500">${p.name}</div><div class="sub">${p.meta}</div></div>
+          <span class="stepper"><button class="icon-btn" type="button" data-dec="${id}" aria-label="Decrease quantity of ${p.name}"><svg class="i"><use href="#i-remove"/></svg></button>
+            <output aria-label="Quantity of ${p.name}">${q}</output>
+            <button class="icon-btn" type="button" data-inc="${id}" aria-label="Increase quantity of ${p.name}"><svg class="i"><use href="#i-add"/></svg></button></span>
+          <span class="price">${money(p.price * q)}</span>
+          <button class="btn btn-text" type="button" data-remove="${id}">Remove</button>
+        </div>`; }).join('') : '<div class="empty">Your cart is empty. <a href="#shop">Keep shopping</a></div>'}</div>
+        ${summary('<a class="btn btn-filled" href="#checkout" style="width:100%">Go to checkout</a>')}</div>`;
+  }
+  function summary(action) {
+    const ship = shipping === 'express' ? 15 : 0;
+    return `<aside class="card summary" aria-label="Order summary"><h3>Order summary</h3>
+      <div class="line"><span>Subtotal</span><span>${money(subtotal())}</span></div>
+      <div class="line"><span>Shipping</span><span>${ship ? money(ship) : 'Free'}</span></div>
+      <div class="line total"><span>Total</span><span>${money(subtotal() + ship)}</span></div>
+      <div style="margin-top:16px">${action}</div></aside>`;
+  }
+  function checkout() {
+    document.title = 'Checkout - Northwind Outfitters';
+    if (!count()) return `<div class="panel-head"><h1>Checkout</h1></div><div class="empty">Your cart is empty. <a href="#shop">Browse products</a></div>`;
+    return `<div class="panel-head"><h1>Checkout</h1><span class="sub">Secure checkout · ${count()} items</span></div>
+      <div class="layout-2"><form id="checkout-form" novalidate>
+        <h2 class="section" style="margin-top:0">Shipping address</h2>
+        <div class="form-row"><div class="field"><label for="ship-name">Full name</label><input class="input" id="ship-name" autocomplete="off"></div></div>
+        <div class="form-row" style="margin-top:14px"><div class="field"><label for="ship-street">Street address</label><input class="input" id="ship-street" autocomplete="off"></div></div>
+        <div class="form-row" style="margin-top:14px"><div class="field"><label for="ship-city">City</label><input class="input" id="ship-city" autocomplete="off"></div>
+          <div class="field" style="max-width:200px"><label for="ship-zip">ZIP code</label><input class="input" id="ship-zip" autocomplete="off"></div></div>
+        <h2 class="section">Shipping method</h2>
+        <div style="display:grid;gap:10px">
+          <label class="radio-card"><input type="radio" name="shipping" value="standard" ${shipping === 'standard' ? 'checked' : ''}><span class="grow"><b>Standard shipping</b><br><span class="sub">5–7 business days</span></span><span>Free</span></label>
+          <label class="radio-card"><input type="radio" name="shipping" value="express" ${shipping === 'express' ? 'checked' : ''}><span class="grow"><b>Express shipping</b><br><span class="sub">1–2 business days</span></span><span>$15.00</span></label>
+        </div>
+        <h2 class="section">Review</h2>
+        <label class="check"><input type="checkbox" id="terms"> I agree to the Terms of Sale</label>
+      </form>
+      ${summary('<button class="btn btn-filled" type="button" id="place-order" aria-disabled="true" style="width:100%">Place order</button><p class="sub" id="place-hint" style="margin:10px 0 0;font-size:12px">Fill in the address and agree to the terms to place your order.</p>')}</div>`;
+  }
+  function done() {
+    document.title = 'Order placed - Northwind Outfitters';
+    return placed ? `<div class="done"><div class="tick"><svg class="i"><use href="#i-check"/></svg></div><h1 style="font-weight:400">Order placed</h1>
+      <p class="sub">Order #NW-${1000 + BENCH.seed % 9000} ships to ${placed.name}, ${placed.city}.</p><a class="btn btn-tonal" href="#shop">Continue shopping</a></div>` : shop();
+  }
+  const simple = (title) => () => { document.title = `${title} - Northwind Outfitters`; return `<div class="panel-head"><h1>${title}</h1></div><div class="empty">Nothing here yet.</div>`; };
+  const VIEWS = { shop, cart: cartView, checkout, done, orders: simple('Orders'), wishlist: simple('Wishlist') };
+
+  function readyToPlace() {
+    const val = (id) => (document.getElementById(id)?.value || '').trim();
+    return ['ship-name', 'ship-street', 'ship-city', 'ship-zip'].every((id) => val(id)) && document.getElementById('terms')?.checked;
+  }
+  function render() {
+    const view = location.hash.slice(1) || 'shop';
+    document.getElementById('view').innerHTML = (VIEWS[view] || shop)();
+    for (const a of document.querySelectorAll('.nav a')) a.classList.toggle('active', a.dataset.view === view);
+    wire();
+    sync();
+  }
+  function wire() {
+    for (const b of document.querySelectorAll('[data-add]')) b.onclick = () => {
+      const id = b.dataset.add; cart[id] = (cart[id] || 0) + 1;
+      BENCH.emit('add_to_cart', { product: byId[id].name, id, quantity: cart[id] });
+      snack(`${byId[id].name} added to cart`); sync();
+    };
+    for (const b of document.querySelectorAll('[data-inc]')) b.onclick = () => { cart[b.dataset.inc]++; BENCH.emit('quantity', { id: b.dataset.inc, quantity: cart[b.dataset.inc] }); render(); };
+    for (const b of document.querySelectorAll('[data-dec]')) b.onclick = () => { cart[b.dataset.dec] = Math.max(0, cart[b.dataset.dec] - 1); BENCH.emit('quantity', { id: b.dataset.dec, quantity: cart[b.dataset.dec] }); render(); };
+    for (const b of document.querySelectorAll('[data-remove]')) b.onclick = () => { delete cart[b.dataset.remove]; BENCH.emit('remove', { id: b.dataset.remove }); render(); };
+    for (const r of document.querySelectorAll('input[name=shipping]')) r.onchange = () => {
+      shipping = r.value; BENCH.emit('shipping', { method: shipping });
+      const aside = document.querySelector('.summary'); sync();
+      if (aside) { const keep = document.getElementById('place-order').getAttribute('aria-disabled'); aside.outerHTML = summary(document.getElementById('place-order').outerHTML); document.getElementById('place-order').setAttribute('aria-disabled', keep); wirePlace(); }
+    };
+    const form = document.getElementById('checkout-form');
+    if (form) { form.addEventListener('input', gate); form.addEventListener('change', gate); wirePlace(); }
+  }
+  function gate() {
+    const b = document.getElementById('place-order');
+    if (b) b.setAttribute('aria-disabled', readyToPlace() ? 'false' : 'true');
+    const v = (id) => (document.getElementById(id)?.value || '').trim();
+    BENCH.set({ form: { name: v('ship-name'), street: v('ship-street'), city: v('ship-city'), zip: v('ship-zip'), terms: !!document.getElementById('terms')?.checked } });
+  }
+  function wirePlace() {
+    const b = document.getElementById('place-order');
+    if (!b) return;
+    b.onclick = () => {
+      if (b.getAttribute('aria-disabled') === 'true') { BENCH.emit('place_order_blocked', {}); snack('Complete the address and accept the terms first'); return; }
+      const v = (id) => document.getElementById(id).value.trim();
+      placed = { name: v('ship-name'), street: v('ship-street'), city: v('ship-city'), zip: v('ship-zip'), shipping, items: { ...cart } };
+      BENCH.emit('order', placed);
+      location.hash = '#done';
+    };
+  }
+  window.addEventListener('hashchange', render);
+  render();
+</script>
+</body>
+</html>

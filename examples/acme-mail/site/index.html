@@ -386,6 +386,15 @@
     button.onclick = () => { const on = button.getAttribute('aria-pressed') !== 'true'; button.setAttribute('aria-pressed', String(on)); button.setAttribute('aria-label', on ? 'Starred' : 'Not starred'); BENCH.emit('star', { thread: button.dataset.thread, starred: on }); };
   }
   BENCH.set({ compose_open: false, cc_visible: false });
+  // ?preset=twin: a written quick reply and an unrelated open draft, so two "Send" buttons are live.
+  if (new URLSearchParams(location.search).get('preset') === 'twin') {
+    compose.classList.remove('hidden');
+    document.getElementById('compose-to').value = 'all@acme.test';
+    document.getElementById('compose-subject').value = 'Draft: launch announcement';
+    document.getElementById('compose-body').value = 'Not ready to send yet.';
+    document.getElementById('reply-text').value = "Thanks Maya, I'll review the checklist today.";
+    BENCH.set({ compose_open: true, preset: 'twin' });
+  }
 </script>
 </body>
 </html>

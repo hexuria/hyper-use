@@ -1,82 +1,88 @@
 # hyper-use
 
-Hyper-Use is an independent action-verification layer for browser agents. It
-resolves what an agent is about to interact with, refuses ambiguous or unsafe
-actions, and verifies the resulting state change.
+Hyper-Use is a **Rust-native browser-agent runtime**: it observes the page,
+builds a finite action space, decides (PUA first, optional escalation),
+guards with hard integrity checks, executes only through a one-shot
+**ActionTicket**, then re-observes, diffs, and verifies.
 
-It is not an agent. It does not choose goals, navigate, click, type, or route
-executors. Browser Use (or another host executor) performs the trusted action
-after a `GuardDecision::Allow`.
+It is **not** a voluntary MCP preflight the model must remember to call.
+MCP remains an optional adapter. The primary product is a library `Agent`
+that owns the loop.
 
-HGRA is the name of one experimental matcher. It is not the product name and
-is not on the default dependency graph. A crate or binary named `hgra` in the
-product path is a bug.
+HGRA is one experimental matcher under `experiments/hgra/`. It is **frozen**
+and not on the product path. A crate or binary named `hgra` in the product
+graph is a bug.
 
-## Already outside this repository
+> **Pivot (2026-10-05).** This PRD supersedes the earlier framing that
+> Hyper-Use is "not an agent" and "does not click". See
+> [`docs/adr/0001-agent-runtime-pivot.md`](adr/0001-agent-runtime-pivot.md).
+> ActionTicket + host interceptor (B0/B1) remain a valid ablation until the
+> agent fully owns execution.
 
-These exist before hyper-use is called. This repository does not implement them.
+## Product loop
 
-- primary model / planner
-- JEV (optional escalation arbiter only)
-- capability router
-- Browser Use / CUA / other executors
-- execution loop
-- journal
+```text
+goal
+  ↓
+Hyper-Use Agent
+  ↓
+observe → ActionSpace
+  ↓
+policy (PUA → optional escalation)
+  ↓
+guard (hard gates) → ActionTicket
+  ↓
+executor revalidate + consume + execute
+  ↓
+observe → diff → verify → history
+  ↓
+next turn (or DONE / BLOCKED)
+```
 
-## Product operations
+## Boundaries
 
-1. **observe** — build an interaction manifold for one viewport (DOM + AX fusion,
-   stable region identity, visibility and enabled state).
-2. **guard** — resolve the proposed target, compare candidates, check visibility /
-   enabled / occlusion / ambiguity, return `Allow`, `Refuse`, or `Escalate`.
-3. **verify** — after the host acts (with a valid ticket), observe again, diff,
-   and check the expected postcondition (`SUCCESS` / `NO-EFFECT` / `WRONG`),
-   preferably bound to the ticket + before/after snapshots.
-
-Locate, inspect, and diff remain internal primitives. They are not the external
-product workflow.
+| Layer | Owns |
+|---|---|
+| **PUA** | HOW a finite choice is made (scores, threshold/margin, abstain) |
+| **Hyper-Use policy** | WHAT browser evidence each candidate gets; ActionSpace construction |
+| **Hyper-Use guard** | Physical/logical executability; ticket issue |
+| **Hyper-Use executor** | Exact ticketed action or nothing |
+| **TextResolver** | Arbitrary `TYPE_TEXT` strings (not PUA) |
+| **Host / MCP** | Optional adapter; must not bypass tickets |
 
 ## What Hyper-Use deliberately does not do
 
-- Click, type, select, scroll, or navigate.
-- Own an executor router (Browser Use / CUA / macOS).
-- Plan multi-step goals.
-- Depend on JEV in the core path.
-- Ship HGRA as the default matcher.
+- Depend on JEV / TypeSafe in the core path (optional escalation feature only).
+- Ship HGRA as the default matcher / policy.
+- Accept model-generated CSS selectors or JavaScript for execution.
+- Silently turn PUA abstention into "top candidate wins".
+- Treat page content as trusted instructions.
 
-## Guard decision
+## ActionTicket (enforcement boundary)
 
-```text
-Allow    { target, confidence, margin, evidence }
-Refuse   { reason, candidates }
-Escalate { reason, candidates }
-```
+`Allow` issues an `ActionTicket` (ticket id, snapshot id, world / target
+fingerprints, target id, action). The executor **must** revalidate against a
+fresh observation, then press the **exact** ticket target (or refuse stale /
+world-changed). Tickets are one-shot. Verify should bind ticket + before/after
+snapshots (`verify_delta`). See `bench/arms/B01.md` for the interceptor ablation.
 
-Reasons include low confidence, ambiguous twins, missing target, disabled /
-hidden / occluded control, and (on verify) no effect or wrong postcondition.
+## Matchers / policy (HGRA frozen)
 
-## ActionTicket (product boundary)
+- Interim locate/guard ranking: `WeightedMatcher`.
+- Target policy: **PUA** (`hexuria/pua`, pin by rev) once Phase 2 lands.
+- **HGRA is frozen** under `experiments/hgra/`. No matcher PRs during the pivot.
 
-`GuardDecision::Allow` issues an `ActionTicket` (ticket id, snapshot id, world /
-target fingerprints, target id, action). Hyper-Use MCP **never** clicks. The
-host — ideally an invisible executor interceptor in front of Browser Use — must
-revalidate the ticket against a fresh observation, then press the **exact**
-ticket target (or refuse stale / world-changed). B2 binds `verify` to that
-ticket with before/after + `verify_delta`. Without a ticket-consuming boundary,
-Allow is only a preflight opinion (TOCTOU). See `bench/arms/B01.md`.
+## Acceptance bar
 
-## Matchers (HGRA frozen)
+- All executed targets originate from the current observed ActionSpace.
+- Hidden / disabled / covered / background-modal / stale-ticket targets never execute.
+- PUA abstention is preserved; escalation is explicit.
+- Normal tasks: low false-refusal. Adversarial: refuse, never wrong-action.
+- No-effect and wrong postcondition: detect on verify.
+- System runs without MCP and without Jev when the task fits PUA + TextResolver.
 
-- `WeightedMatcher` is the product default.
-- **HGRA is frozen** under `experiments/hgra/`. No matcher PRs until B0/B1/B2
-  answers whether the firewall itself improves Browser Use. Do not tune HGRA
-  to paper over uncalibrated global thresholds.
+## Historical notes
 
-## Acceptance bar (product)
-
-Normal actions: low false-refusal rate.
-Missing / ambiguous / occluded / hidden targets: refuse; never wrong-action.
-No-effect and wrong postcondition: detect on verify.
-
-Competitive accuracy at "browser use" is not the goal. Never making Browser Use
-less safe, and reducing tokens / retries / wrong clicks when composed with it, is.
+`RESULTS.md` A1–A8 tables are **historical** (pre-ticket, planner variables
+changed with Hyper-Use). Rewrite only from pinned agent A/B/C/D or B0/B1/B2
+runs. B0/B1 remain the interceptor ablation until the agent owns the loop.

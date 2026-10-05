@@ -1,11 +1,13 @@
 //! Core types for hyper-use.
 //!
 //! A caller builds an [`InteractionManifold`] of [`InteractionRegion`] values
-//! and later asks the resonance crate to rank them. This crate does not locate,
-//! encode, or act. There is no `unsafe` and no shared mutable state.
+//! and may derive a finite [`ActionSpace`] of [`ObservedAction`]s for a policy
+//! to choose from. Ranking / PUA / execution live in other crates. There is no
+//! `unsafe` and no shared mutable state.
 
 #![forbid(unsafe_code)]
 
+mod action_space;
 mod error;
 mod fixture;
 mod id;
@@ -16,6 +18,7 @@ mod region;
 mod text;
 mod vocab;
 
+pub use action_space::{ActionId, ActionKind, ActionSpace, ObservedAction};
 pub use error::{CoreError, FixtureError};
 pub use fixture::{parse_fixture, write_fixture};
 pub use id::{RegionId, StateFingerprint, UnitInterval};

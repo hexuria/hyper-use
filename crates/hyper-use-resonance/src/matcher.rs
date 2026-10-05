@@ -8,11 +8,14 @@
 use hyper_use_core::{
     token_precision, token_recall, InteractionManifold, InteractionRegion, LocateQuery, RegionId,
 };
+#[cfg(feature = "hgra")]
 use hyper_use_hyper::{Dims, Encoder};
 
+#[cfg(feature = "hgra")]
+use crate::locate_with;
 use crate::{
-    actionability_score, cap_text_miss, geometric_score, locate_with, penalty_total,
-    ResonanceError, ResonanceModel,
+    actionability_score, cap_text_miss, geometric_score, penalty_total, ResonanceError,
+    ResonanceModel,
 };
 
 /// One ranked region. `rank` is 1-based. `confidence` is that matcher's total,
@@ -160,6 +163,7 @@ impl RegionMatcher for WeightedMatcher {
     }
 }
 
+#[cfg(feature = "hgra")]
 /// The hyperdimensional ranker. `locate` / `locate_with` remain the
 /// implementation; this type only adapts them to [`RegionMatcher`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,12 +172,14 @@ pub struct HgraMatcher {
     model: ResonanceModel,
 }
 
+#[cfg(feature = "hgra")]
 impl HgraMatcher {
     pub const fn new(dims: Dims, model: ResonanceModel) -> Self {
         Self { dims, model }
     }
 }
 
+#[cfg(feature = "hgra")]
 impl Default for HgraMatcher {
     fn default() -> Self {
         Self {
@@ -183,6 +189,7 @@ impl Default for HgraMatcher {
     }
 }
 
+#[cfg(feature = "hgra")]
 impl RegionMatcher for HgraMatcher {
     fn rank(
         &self,
@@ -202,7 +209,7 @@ impl RegionMatcher for HgraMatcher {
     }
 }
 
-/// Library default. The CLI uses this unless `--matcher hgra` is set.
+/// Library default. The product matcher is weighted; HGRA is feature-gated.
 pub fn default_matcher() -> WeightedMatcher {
     WeightedMatcher::default()
 }

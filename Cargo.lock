@@ -444,24 +444,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-use-browser-use"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "proptest",
- "serde_json",
-]
-
-[[package]]
 name = "hyper-use-cli"
 version = "0.1.0"
 dependencies = [
  "hyper-use-browser",
  "hyper-use-core",
- "hyper-use-executor",
- "hyper-use-hyper",
+ "hyper-use-guard",
  "hyper-use-mcp",
  "hyper-use-observe",
+ "hyper-use-protocol",
  "hyper-use-resonance",
  "serde_json",
  "typesafe-sdk",
@@ -472,32 +463,20 @@ name = "hyper-use-core"
 version = "0.1.0"
 
 [[package]]
-name = "hyper-use-cua"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "proptest",
- "serde_json",
-]
-
-[[package]]
-name = "hyper-use-executor"
-version = "0.1.0"
-dependencies = [
- "hyper-use-browser",
- "hyper-use-browser-use",
- "hyper-use-core",
- "hyper-use-cua",
- "hyper-use-macos",
- "hyper-use-protocol",
- "proptest",
-]
-
-[[package]]
 name = "hyper-use-geometry"
 version = "0.1.0"
 dependencies = [
  "hyper-use-core",
+]
+
+[[package]]
+name = "hyper-use-guard"
+version = "0.1.0"
+dependencies = [
+ "hyper-use-core",
+ "hyper-use-protocol",
+ "hyper-use-resonance",
+ "proptest",
 ]
 
 [[package]]
@@ -508,17 +487,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-use-macos"
-version = "0.1.0"
-
-[[package]]
 name = "hyper-use-mcp"
 version = "0.1.0"
 dependencies = [
  "hyper-use-browser",
  "hyper-use-core",
- "hyper-use-executor",
- "hyper-use-hyper",
+ "hyper-use-guard",
  "hyper-use-observe",
  "hyper-use-protocol",
  "hyper-use-resonance",

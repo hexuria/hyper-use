@@ -2,53 +2,44 @@
 //!
 //! The product default is [`WeightedMatcher`]: semantic match, geometry,
 //! actionability, and the versioned penalties. It does not build hypervectors.
-//! [`locate`] and [`HgraMatcher`] keep the hyperdimensional ranker. Neither
-//! matcher is a measured winner; there is no benchmark that says so.
 //!
-//! [`locate`] builds a bipolar signature for every region, probes it with the
-//! structured [`LocateQuery`], and combines that cosine with semantic, source,
-//! geometric, actionability, temporal, and contextual terms. Penalties are
-//! subtracted afterwards. Nothing in this path reads a clock or a random
-//! source. The same manifold and the same query produce the same order,
-//! including the region-id tie-break.
-//!
-//! Model [`ResonanceModel::V1`] weights:
-//! hypervector 0.35, semantic 0.20, source agreement 0.15, geometric 0.10,
-//! actionability 0.10, temporal stability 0.05, contextual consistency 0.05.
-//! Penalties: disabled 0.25, hidden 0.45, occluded 0.20, offscreen 0.35,
-//! stale 0.15, ambiguous 0.12, detached 0.20, zero-size 0.40.
+//! The hyperdimensional ranker (`locate` / [`HgraMatcher`]) lives behind the
+//! `hgra` feature and the algebra crate under `experiments/hgra/`. It is not
+//! the product default and has not been shown to beat WeightedMatcher.
 //!
 //! Text-miss cap: when the query has text and a region's label shares no
 //! token with it, both matchers clamp that region's total to at most
-//! [`TEXT_MISS_CAP`] (0.45). Without it, a text miss still collects the
-//! credit for constraints the query did not set (geometry with no position,
-//! actionability with no action), which is 0.50 under the weighted V1 model
-//! and more under other weights or HGRA.
+//! [`TEXT_MISS_CAP`] (0.45).
 
 #![forbid(unsafe_code)]
 
 mod error;
 mod matcher;
 mod model;
+#[cfg(feature = "hgra")]
 mod signature;
 mod state;
 
+#[cfg(feature = "hgra")]
+pub use matcher::HgraMatcher;
 pub use matcher::{
-    default_matcher, HgraMatcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher,
-    WeightedModel,
+    default_matcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher, WeightedModel,
 };
 
-use hyper_use_core::{
-    token_recall, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionId, SourceMask,
-};
+use hyper_use_core::{token_recall, InteractionRegion, LocateQuery, Rect};
+#[cfg(feature = "hgra")]
+use hyper_use_core::{InteractionManifold, RegionId, SourceMask};
 use hyper_use_geometry::{is_fully_offscreen, normalize, zones};
+#[cfg(feature = "hgra")]
 use hyper_use_hyper::{cosine, Dims, Encoder};
 
 pub use error::ResonanceError;
+#[cfg(feature = "hgra")]
 pub use hyper_use_hyper::BipolarVector;
 pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
 pub use state::{separating_zone, Availability, RegionState, Visibility};
 
+#[cfg(feature = "hgra")]
 use signature::{query_probes, region_signature as compose_signature, Memory};
 
 /// Highest total any matcher gives a region whose label shares no token with
@@ -74,19 +65,24 @@ pub(crate) fn cap_text_miss(query: &LocateQuery, label: &str, total: f64) -> f64
 
 /// One ranked region. `rank` is 1-based after the deterministic sort.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg(feature = "hgra")]
 pub struct RankedCandidate {
     rank: usize,
     id: RegionId,
     score: ResonanceScore,
 }
 
+#[cfg(feature = "hgra")]
 impl RankedCandidate {
+    #[cfg(feature = "hgra")]
     pub fn rank(&self) -> usize {
         self.rank
     }
+    #[cfg(feature = "hgra")]
     pub fn id(&self) -> &RegionId {
         &self.id
     }
+    #[cfg(feature = "hgra")]
     pub fn score(&self) -> &ResonanceScore {
         &self.score
     }
@@ -95,6 +91,7 @@ impl RankedCandidate {
 /// Breakdown of one region's resonance. `total = weighted positives - penalty`,
 /// then clamped to [`TEXT_MISS_CAP`] on a text miss.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg(feature = "hgra")]
 pub struct ResonanceScore {
     hypervector: f64,
     semantic: f64,
@@ -107,37 +104,48 @@ pub struct ResonanceScore {
     total: f64,
 }
 
+#[cfg(feature = "hgra")]
 impl ResonanceScore {
+    #[cfg(feature = "hgra")]
     pub fn hypervector(&self) -> f64 {
         self.hypervector
     }
+    #[cfg(feature = "hgra")]
     pub fn semantic(&self) -> f64 {
         self.semantic
     }
+    #[cfg(feature = "hgra")]
     pub fn source_agreement(&self) -> f64 {
         self.source_agreement
     }
+    #[cfg(feature = "hgra")]
     pub fn geometric(&self) -> f64 {
         self.geometric
     }
+    #[cfg(feature = "hgra")]
     pub fn actionability(&self) -> f64 {
         self.actionability
     }
+    #[cfg(feature = "hgra")]
     pub fn temporal_stability(&self) -> f64 {
         self.temporal_stability
     }
+    #[cfg(feature = "hgra")]
     pub fn contextual_consistency(&self) -> f64 {
         self.contextual_consistency
     }
+    #[cfg(feature = "hgra")]
     pub fn penalty(&self) -> f64 {
         self.penalty
     }
+    #[cfg(feature = "hgra")]
     pub fn total(&self) -> f64 {
         self.total
     }
 }
 
 /// Locate with the default 2048-dimensional encoder and [`ResonanceModel::V1`].
+#[cfg(feature = "hgra")]
 pub fn locate(
     manifold: &InteractionManifold,
     query: &LocateQuery,
@@ -150,6 +158,7 @@ pub fn locate(
     )
 }
 
+#[cfg(feature = "hgra")]
 pub fn locate_with(
     manifold: &InteractionManifold,
     query: &LocateQuery,
@@ -184,6 +193,7 @@ pub fn locate_with(
 }
 
 /// Public signature so other crates can compare regions without re-ranking.
+#[cfg(feature = "hgra")]
 pub fn region_signature(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
@@ -193,6 +203,7 @@ pub fn region_signature(
     compose_signature(manifold, region, &mut memory)
 }
 
+#[cfg(feature = "hgra")]
 fn probe_similarity(
     probes: &[BipolarVector],
     signature: &BipolarVector,
@@ -207,6 +218,7 @@ fn probe_similarity(
     Ok(sum / probes.len() as f64)
 }
 
+#[cfg(feature = "hgra")]
 fn score_parts(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
@@ -241,6 +253,7 @@ fn score_parts(
     }
 }
 
+#[cfg(feature = "hgra")]
 fn semantic_score(query: &LocateQuery, region: &InteractionRegion) -> f64 {
     let mut parts = 0.0;
     let mut total = 0.0;
@@ -259,7 +272,7 @@ fn semantic_score(query: &LocateQuery, region: &InteractionRegion) -> f64 {
     }
 }
 
-fn geometric_score(viewport: Rect, rect: Rect, query: &LocateQuery) -> f64 {
+pub(crate) fn geometric_score(viewport: Rect, rect: Rect, query: &LocateQuery) -> f64 {
     let Some(wanted) = query.position_ref() else {
         return 1.0;
     };
@@ -275,7 +288,7 @@ fn geometric_score(viewport: Rect, rect: Rect, query: &LocateQuery) -> f64 {
     }
 }
 
-fn actionability_score(region: &InteractionRegion, query: &LocateQuery) -> f64 {
+pub(crate) fn actionability_score(region: &InteractionRegion, query: &LocateQuery) -> f64 {
     match query.action_ref() {
         Some(action) => {
             if region.actions().contains(&action) {
@@ -294,7 +307,8 @@ fn actionability_score(region: &InteractionRegion, query: &LocateQuery) -> f64 {
     }
 }
 
-fn contextual_score(manifold: &InteractionManifold, region: &InteractionRegion) -> f64 {
+#[cfg(feature = "hgra")]
+pub(crate) fn contextual_score(manifold: &InteractionManifold, region: &InteractionRegion) -> f64 {
     if region.flags().detached() {
         return 0.0;
     }
@@ -310,7 +324,11 @@ fn contextual_score(manifold: &InteractionManifold, region: &InteractionRegion) 
     }
 }
 
-fn penalty_total(viewport: Rect, region: &InteractionRegion, model: ResonanceModel) -> f64 {
+pub(crate) fn penalty_total(
+    viewport: Rect,
+    region: &InteractionRegion,
+    model: ResonanceModel,
+) -> f64 {
     let flags = region.flags();
     let mut penalty = 0.0;
     if flags.disabled() {
@@ -340,13 +358,14 @@ fn penalty_total(viewport: Rect, region: &InteractionRegion, model: ResonanceMod
     penalty
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "hgra"))]
 mod tests {
     use super::*;
     use hyper_use_core::{
         parse_fixture, Action, InteractionRegion, Rect, RegionFlags, RegionId, RegionParts, Role,
         SourceMask, UnitInterval, Zone,
     };
+    #[cfg(feature = "hgra")]
     use hyper_use_hyper::HyperError;
 
     fn sample(id: &str, label: &str, x: f64, flags: RegionFlags, width: f64) -> InteractionRegion {

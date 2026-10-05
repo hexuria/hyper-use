@@ -3,18 +3,19 @@ resolver = "2"
 members = [
     "crates/hyper-use-core",
     "crates/hyper-use-geometry",
-    "crates/hyper-use-hyper",
     "crates/hyper-use-observe",
     "crates/hyper-use-resonance",
     "crates/hyper-use-browser",
-    "crates/hyper-use-browser-use",
-    "crates/hyper-use-macos",
-    "crates/hyper-use-cua",
-    "crates/hyper-use-executor",
     "crates/hyper-use-protocol",
+    "crates/hyper-use-guard",
     "crates/hyper-use-mcp",
     "crates/hyper-use-cli",
+    # Experimental. Not on the product path. Build with -p hyper-use-hyper --features unused
+    # or via hyper-use-resonance's `hgra` feature.
+    "experiments/hgra/hyper-use-hyper",
 ]
+# Deleted from the product graph (see docs/DECISIONS.md product pivot):
+# hyper-use-browser-use, hyper-use-cua, hyper-use-macos, hyper-use-executor
 
 [workspace.package]
 version = "0.1.0"

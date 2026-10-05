@@ -38,6 +38,7 @@ proptest! {
             Just("locate"),
             Just("inspect"),
             Just("act"),
+            Just("guard"),
             Just("diff"),
             Just("verify"),
             Just("navigate"),
@@ -66,8 +67,12 @@ proptest! {
             "locate" => {
                 arguments.insert("text".into(), json!("Sign in"));
             }
-            "inspect" | "act" => {
+            "inspect" => {
                 arguments.insert("region".into(), json!("n100"));
+            }
+            "act" | "guard" => {
+                arguments.insert("target".into(), json!("Sign in"));
+                arguments.insert("role".into(), json!("button"));
             }
             "diff" => {
                 arguments.remove("fixture");
@@ -110,21 +115,11 @@ proptest! {
             prop_assert_eq!(variant, "GoalNotAccepted");
         } else if tool == "nope" {
             prop_assert_eq!(variant, "UnknownTool");
-        } else if tool == "act" {
-            match confidence {
-                Some(score) if !(0.0..=1.0).contains(&score) => {
-                    prop_assert_eq!(variant, "ConfidenceOutOfRange");
-                }
-                Some(score) if score < 0.55 => {
-                    prop_assert!(!is_error);
-                    prop_assert_eq!(&body["executed"], false);
-                    prop_assert_eq!(&body["fallback"], "low-confidence");
-                }
-                _ => {
-                    prop_assert!(!is_error, "{body}");
-                    prop_assert_eq!(&body["executed"], true);
-                }
-            }
+        } else if tool == "act" || tool == "guard" {
+            // Guard never clicks. Confidence args are ignored; ranking decides.
+            prop_assert!(!is_error, "{tool}: {body}");
+            prop_assert_eq!(&body["executed"], false);
+            prop_assert!(body.get("decision").is_some(), "{body}");
         } else {
             // Every other verb on a valid fixture succeeds.
             prop_assert!(!is_error, "{tool}: {body}");

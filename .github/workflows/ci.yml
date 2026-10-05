@@ -12,23 +12,18 @@ jobs:
           components: clippy, rustfmt
       # Miri, Loom, and Kani are not justified: no unsafe, no atomics, no threads.
       # Browser tests use a CDP replay fixture. The ignored live test is not in CI.
-      # The MCP server opens a CDP WebSocket to a caller-given endpoint, so the
-      # dependency tree is network-facing: RUSTSEC advisories run in `deny`.
       # cargo-semver-checks is not justified until a crate is published.
-      # No fuzz job: proptests cover parse and tools/call shapes at small case
-      # counts. Wall-clock is not a regression gate. The 2000-region test is a
-      # smoke check with a 10s debug ceiling. See docs/DECISIONS.md.
+      # See docs/DECISIONS.md.
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-      # The optional System One client is not in the default build. Check that
-      # it still compiles so the feature does not rot.
+      # Optional HGRA experiment still compiles behind its feature.
+      - run: cargo test -p hyper-use-resonance --features hgra
       - run: cargo check -p hyper-use-cli --features jev
   deny:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Advisories only. See deny.toml for what is not checked and why.
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories

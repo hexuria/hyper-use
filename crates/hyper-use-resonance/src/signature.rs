@@ -1,3 +1,4 @@
+#![cfg(feature = "hgra")]
 use std::collections::{BTreeMap, HashMap};
 
 use hyper_use_core::{tokenize, InteractionManifold, InteractionRegion, Relation};

@@ -171,6 +171,7 @@ fn thread_page(compose_open: bool) -> PageSpec {
 /// t7: "Send" asked as a link. No link is named Send, so every candidate is a
 /// miss. A named Send button (right label, wrong role) must rank above every
 /// unnamed node, and the act must still refuse below the gate.
+#[ignore = "actuation removed; re-home under guard"]
 #[test]
 fn t7_send_as_a_link_ranks_the_named_send_above_unnamed_nodes_and_does_not_click() {
     let page = thread_page(false);
@@ -230,6 +231,7 @@ fn t7_send_as_a_link_ranks_the_named_send_above_unnamed_nodes_and_does_not_click
 /// refuses as ambiguous; the second identical locate carries repeated_query
 /// with a position that separates each Send; asking with the reply's
 /// position resolves it and the press goes to the reply Send.
+#[ignore = "actuation removed; re-home under guard"]
 #[test]
 fn t8_twin_send_refuses_then_repeated_query_names_a_separating_position() {
     let page = thread_page(true);

@@ -63,6 +63,7 @@ fn stdio_server_lists_tools_and_locates() {
 }
 
 /// One process: observe, then act with expect_text Welcome, then diff by snapshot id.
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn observe_then_diff_by_snapshot_in_one_process() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_hyper-use"))

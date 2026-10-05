@@ -132,8 +132,12 @@ impl<T: CdpTransport> BrowserSession<T> {
         Ok(self.manifold.as_ref().expect("observation just stored"))
     }
 
-    /// Click `id`. Other actions are refused. The session must already have
-    /// been observed, or this returns [`BrowserError::NotObserved`].
+    /// Low-level CDP click used only by browser fixture tests.
+    ///
+    /// **Not the product path.** Hyper-Use is an action firewall: hosts click
+    /// after [`hyper_use_guard::guard`] returns Allow. Do not call this from
+    /// MCP or CLI.
+    #[doc(hidden)]
     pub fn press(&mut self, id: &RegionId, action: Action) -> Result<ActMechanism, BrowserError> {
         if action != Action::Click {
             return Err(BrowserError::UnsupportedAction(action.to_string()));

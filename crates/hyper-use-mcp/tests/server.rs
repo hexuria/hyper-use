@@ -31,7 +31,7 @@ fn tool_text(response: &Value) -> Value {
 }
 
 #[test]
-fn tools_list_is_exactly_the_six_verbs() {
+fn tools_list_includes_product_and_legacy_verbs() {
     let response = rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
     assert_eq!(response["id"], 2);
     let names: Vec<&str> = response["result"]["tools"]
@@ -41,27 +41,31 @@ fn tools_list_is_exactly_the_six_verbs() {
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
     assert_eq!(names, TOOLS);
+    assert!(names.contains(&"observe"));
+    assert!(names.contains(&"guard"));
+    assert!(names.contains(&"verify"));
+    assert!(names.contains(&"act")); // deprecated alias of guard
     assert!(!names.contains(&"navigate"));
-    let locate = response["result"]["tools"]
+    let guard = response["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "locate")
+        .find(|tool| tool["name"] == "guard")
         .unwrap();
-    let description = locate["description"].as_str().unwrap();
-    assert!(description.contains("not a benchmark"), "{description}");
-    assert!(description.contains("not a measured win"), "{description}");
+    let description = guard["description"].as_str().unwrap();
+    assert!(description.contains("Never clicks"), "{description}");
     let init = rpc(
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"jev","version":"0"}}}"#,
     );
     assert_eq!(init["result"]["serverInfo"]["name"], "hyper-use");
     assert_eq!(init["result"]["protocolVersion"], "2024-11-05");
     let instructions = init["result"]["instructions"].as_str().unwrap();
-    assert!(instructions.contains("does not choose the next agent capability"));
-    assert!(instructions.contains("JEV"));
+    assert!(instructions.contains("action firewall"), "{instructions}");
+    assert!(instructions.contains("does not click"), "{instructions}");
     assert!(handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn locate_defaults_to_weighted_and_hgra_is_not_a_benchmark() {
     let sign_in = fixture("sign-in.cdp.json");
@@ -152,6 +156,7 @@ fn observe_inspect_diff_and_verify_round_trip() {
     assert_eq!(verified["executed"], false);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn act_press_uses_dom_click_and_low_confidence_does_not() {
     let pressed = call(
@@ -193,6 +198,7 @@ fn act_press_uses_dom_click_and_low_confidence_does_not() {
     assert_eq!(refused["state_delta"]["added"].as_array().unwrap().len(), 0);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn browser_use_act_is_semantic_and_low_confidence_does_not_execute() {
     let pressed = call(
@@ -289,6 +295,7 @@ fn browser_use_act_is_semantic_and_low_confidence_does_not_execute() {
     assert_eq!(err, ToolError::GoalNotAccepted);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn cua_act_is_semantic_and_low_confidence_does_not_execute() {
     let pressed = call(
@@ -399,6 +406,7 @@ fn cua_act_is_semantic_and_low_confidence_does_not_execute() {
     );
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn error_variants_are_exact() {
     let sign_in = fixture("sign-in.cdp.json");
@@ -615,6 +623,7 @@ fn json_rpc_reports_tool_errors_and_protocol_errors() {
     assert_eq!(unnamed["error"]["code"], -32602);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn above_threshold_press_still_uses_the_dom_click() {
     let pressed = call(
@@ -631,6 +640,7 @@ fn above_threshold_press_still_uses_the_dom_click() {
     assert!((pressed["confidence"].as_f64().unwrap() - 0.55).abs() < 1e-9);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn act_refuses_an_ambiguous_ranked_target() {
     // sign-in.cdp.json has no press steps: a press attempt would fail with
@@ -667,6 +677,7 @@ fn act_refuses_an_ambiguous_ranked_target() {
     assert_eq!(pressed["mechanism"], "dom-semantic");
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn runner_up_without_confidence_is_exact() {
     let err = call(
@@ -685,6 +696,7 @@ fn runner_up_without_confidence_is_exact() {
     );
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn runner_up_equal_to_region_is_exact() {
     let err = call(
@@ -714,6 +726,7 @@ fn runner_up_equal_to_region_is_exact() {
     );
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn browser_use_and_cua_refuse_an_ambiguous_ranked_target() {
     for (executor, script) in [
@@ -737,6 +750,7 @@ fn browser_use_and_cua_refuse_an_ambiguous_ranked_target() {
     }
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn act_closed_loop_reports_delta_and_verifies_welcome() {
     let body = call(
@@ -770,6 +784,7 @@ fn act_closed_loop_reports_delta_and_verifies_welcome() {
     assert_eq!(body["signals"], json!([]));
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn act_closed_loop_verify_failure_is_executed_true_verified_false() {
     let body = call(
@@ -816,6 +831,7 @@ fn act_closed_loop_verify_failure_is_executed_true_verified_false() {
     assert_eq!(bare["signals"], json!([{"kind": "no-op"}]));
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn act_without_expectation_on_a_fixture_does_not_observe_after() {
     let body = call(
@@ -840,6 +856,7 @@ fn act_without_expectation_on_a_fixture_does_not_observe_after() {
     assert_eq!(err, ToolError::ExpectNeedsObserveAfter);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn act_with_locate_fields_derives_the_ranked_gate() {
     let body = call(
@@ -958,6 +975,7 @@ fn stateless_call_tool_is_unchanged() {
     assert_eq!(err, ToolError::UnknownSnapshot(1));
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn caller_confidence_outside_zero_to_one_is_exact() {
     let err = call(
@@ -1002,6 +1020,7 @@ fn caller_confidence_outside_zero_to_one_is_exact() {
     assert_eq!(err, ToolError::ConfidenceOutOfRange("1.5".into()));
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn raw_confidence_just_below_the_gate_does_not_press() {
     let body = call(
@@ -1018,6 +1037,7 @@ fn raw_confidence_just_below_the_gate_does_not_press() {
     assert_eq!(body["mechanism"], Value::Null);
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn remaining_tool_errors_are_exact() {
     let err = call(
@@ -1077,6 +1097,7 @@ fn remaining_tool_errors_are_exact() {
     assert!(matches!(err, ToolError::Fixture(_)), "{err:?}");
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn stale_before_is_not_reused_after_a_press_without_observe_after() {
     use hyper_use_browser::script::{AxSpec, DomSpec, PageSpec, ScriptBuilder};

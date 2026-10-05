@@ -149,6 +149,7 @@ impl Drop for Pages {
     }
 }
 
+#[ignore = "actuation removed in action-firewall pivot"]
 #[test]
 fn an_mcp_client_drives_the_closed_loop_over_stdio() {
     let pages = Pages::new();

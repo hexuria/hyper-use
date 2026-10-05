@@ -130,7 +130,7 @@ fn initialize_result() -> Value {
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": {"tools": {"listChanged": false}},
         "serverInfo": {"name": "hyper-use", "version": env!("CARGO_PKG_VERSION")},
-        "instructions": "hyper-use resolves one computer target and can act on its region id. It does not choose the next agent capability. JEV does. Never guess coordinates. A confidence below 0.55 is a result with executed false, not a click. There is no navigate tool. Selecting matcher hgra is not a benchmark."
+        "instructions": "hyper-use is an action firewall: observe, guard, verify. It resolves what an agent is about to interact with, refuses ambiguous or unsafe actions, and verifies state change. It does not click. Browser Use (or another host) acts after Allow. Never guess coordinates. There is no navigate tool."
     })
 }
 
@@ -161,52 +161,63 @@ fn tool_spec(name: &str) -> Value {
             },
             vec!["region"],
         ),
-        "act" => (
-            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use and executor cua each hand the located region id, role, and label to a replay transport. Neither is in the default policy order, neither changes the page, and neither is a fusion benchmark. A confidence below 0.55 returns executed false and does not click. Pass the locate top confidence as confidence and candidates[1] as runner_up; a gap below 0.05 returns executed false with fallback ambiguous. Omit confidence only when the region was already inspected. Or pass the locate text, role, and position instead of confidence: act ranks its own observation, derives confidence and runner_up, and refuses with TargetNotTop if region is not first. With expect_text or expect_absent, or on a cdp session, act observes again and returns state_delta, verified, before_snapshot, and after_snapshot. signals is no-op or loop-detected data from those snapshots and does not retry. Does not take x or y.",
+        "guard" => (
+            "Decide allow / refuse / escalate for a proposed click. Never clicks. Pass target (or text), optional role/position, optional proposed region id. Returns decision, evidence, candidates.",
             {
-                let mut props = source_props();
-                props.insert("region".into(), json!({"type": "string"}));
+                let mut props = locate_props();
                 props.insert(
-                    "action".into(),
-                    json!({"type": "string", "enum": ["press", "click"]}),
-                );
-                props.insert("confidence".into(), json!({"type": "number"}));
-                props.insert(
-                    "runner_up".into(),
-                    json!({
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "confidence": {"type": "number"}
-                        },
-                        "required": ["id", "confidence"],
-                        "description": "The second locate candidate. Requires confidence."
-                    }),
-                );
-                props.insert("text".into(), json!({"type": "string"}));
-                props.insert("role".into(), json!({"type": "string"}));
-                props.insert("position".into(), json!({"type": "string"}));
-                props.insert(
-                    "matcher".into(),
-                    json!({"type": "string", "enum": ["weighted", "hgra"]}),
-                );
-                props.insert("expect_text".into(), json!({"type": "string"}));
-                props.insert("expect_absent".into(), json!({"type": "string"}));
-                props.insert(
-                    "observe_after".into(),
-                    json!({"type": "boolean", "description": "Observe after the press and diff. Defaults to true with an expectation or a cdp session."}),
-                );
-                props.insert(
-                    "executor".into(),
+                    "target".into(),
                     json!({
                         "type": "string",
-                        "enum": ["browser", "browser-use", "macos", "cua"],
-                        "description": "Default browser is the CDP press. browser-use and cua are opt-in semantic replays and are not fallbacks. macos is not implemented."
+                        "description": "Visible label to resolve (alias of text)."
+                    }),
+                );
+                props.insert(
+                    "proposed".into(),
+                    json!({
+                        "type": "string",
+                        "description": "Optional region id that must be the top match."
+                    }),
+                );
+                props.insert(
+                    "region".into(),
+                    json!({
+                        "type": "string",
+                        "description": "Deprecated alias of proposed."
                     }),
                 );
                 props
             },
-            vec!["region"],
+            Vec::new(),
+        ),
+        "act" => (
+            "Deprecated alias of guard. Returns the same decision and never clicks.",
+            {
+                let mut props = locate_props();
+                props.insert(
+                    "target".into(),
+                    json!({
+                        "type": "string",
+                        "description": "Visible label to resolve (alias of text)."
+                    }),
+                );
+                props.insert(
+                    "proposed".into(),
+                    json!({
+                        "type": "string",
+                        "description": "Optional region id that must be the top match."
+                    }),
+                );
+                props.insert(
+                    "region".into(),
+                    json!({
+                        "type": "string",
+                        "description": "Deprecated alias of proposed."
+                    }),
+                );
+                props
+            },
+            Vec::new(),
         ),
         "diff" => (
             "Id-level difference of two observations, given as before/after fixture paths or as before_snapshot/after_snapshot ids returned by earlier calls on this server. Returns state_delta added, removed, changed, moved, text_changed, focus_changed, and url_changed. Does not click.",

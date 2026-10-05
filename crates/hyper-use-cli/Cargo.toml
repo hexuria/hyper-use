@@ -9,15 +9,14 @@ description = "hyper-use command line"
 
 [dependencies]
 hyper-use-core = { path = "../hyper-use-core" }
-hyper-use-hyper = { path = "../hyper-use-hyper" }
 hyper-use-resonance = { path = "../hyper-use-resonance" }
 hyper-use-browser = { path = "../hyper-use-browser" }
-hyper-use-executor = { path = "../hyper-use-executor" }
+hyper-use-guard = { path = "../hyper-use-guard" }
 hyper-use-observe = { path = "../hyper-use-observe" }
 hyper-use-mcp = { path = "../hyper-use-mcp" }
+hyper-use-protocol = { path = "../hyper-use-protocol" }
 
 [dev-dependencies]
-# Parse JSON-RPC replies in the stdio mock-environment test.
 serde_json = "1"
 
 [lib]
@@ -25,7 +24,7 @@ name = "hyper_use_cli"
 path = "src/lib.rs"
 
 [[example]]
-# Manual, opt-in live drive with JEV. Not built without --features jev.
+# Manual, opt-in live drive with JEV. Historical; product path is observe/guard/verify.
 name = "live_drive"
 required-features = ["jev"]
 
@@ -47,4 +46,3 @@ features = ["blocking"]
 [dependencies.serde_json]
 version = "1"
 optional = true
-

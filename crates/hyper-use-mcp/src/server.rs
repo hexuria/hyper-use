@@ -119,6 +119,7 @@ impl Server {
 
     /// Signature no-op and loop signals for an act pair already in the ring.
     /// Data only. This does not retry.
+    #[allow(dead_code)]
     pub(crate) fn temporal_signals(
         &self,
         before: SnapshotId,
@@ -140,6 +141,7 @@ impl Server {
     }
 
     /// Newest snapshot recorded for `origin`, if it is still in the ring.
+    #[allow(dead_code)]
     pub(crate) fn latest_for(&self, origin: &str) -> Option<SnapshotId> {
         self.history
             .iter_recent()

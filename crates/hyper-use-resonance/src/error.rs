@@ -1,11 +1,13 @@
 use std::fmt;
 
 use hyper_use_geometry::GeometryError;
+#[cfg(feature = "hgra")]
 use hyper_use_hyper::HyperError;
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ResonanceError {
+    #[cfg(feature = "hgra")]
     Hyper(HyperError),
     Geometry(GeometryError),
     /// Positive basis points did not sum to 100. `sum` is the integer total.
@@ -17,6 +19,7 @@ pub enum ResonanceError {
 impl fmt::Display for ResonanceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(feature = "hgra")]
             Self::Hyper(err) => write!(f, "hypervector error: {err}"),
             Self::Geometry(err) => write!(f, "geometry error: {err}"),
             Self::WeightsDoNotSum { sum } => {
@@ -32,6 +35,7 @@ impl fmt::Display for ResonanceError {
 impl std::error::Error for ResonanceError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "hgra")]
             Self::Hyper(err) => Some(err),
             Self::Geometry(err) => Some(err),
             Self::WeightsDoNotSum { .. } => None,
@@ -39,6 +43,7 @@ impl std::error::Error for ResonanceError {
     }
 }
 
+#[cfg(feature = "hgra")]
 impl From<HyperError> for ResonanceError {
     fn from(value: HyperError) -> Self {
         Self::Hyper(value)

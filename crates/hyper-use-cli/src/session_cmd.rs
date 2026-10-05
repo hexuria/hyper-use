@@ -7,16 +7,12 @@
 
 use std::fs;
 use std::path::Path;
-use std::str::FromStr;
 
 use hyper_use_browser::{
     BrowserSession, Expectation, ReplayTransport, WebSocketTransport, DEFAULT_CDP_HTTP,
 };
-use hyper_use_core::{parse_fixture, InteractionManifold, RegionId};
-use hyper_use_executor::{
-    select_act_executor, ActionExecutor, ActionRequest, BrowserExecutor, BrowserUseError,
-    BrowserUseExecutor, CuaError, CuaExecutor, ExecutorError, ExecutorKind, StubExecutor,
-};
+use hyper_use_core::{parse_fixture, InteractionManifold, LocateQuery, RegionId, Role, Zone};
+use hyper_use_guard::{guard, GuardDecision, GuardRequest};
 use hyper_use_observe::diff;
 
 use crate::{set_once, CliError};
@@ -76,13 +72,18 @@ pub(crate) fn inspect_command(args: &[String]) -> Result<String, CliError> {
 }
 
 pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
-    let mut region: Option<String> = None;
-    let mut verb: Option<String> = None;
-    let mut confidence: Option<String> = None;
-    let mut runner_up: Option<String> = None;
+    // Deprecated alias of guard: never clicks.
+    guard_command(args)
+}
+
+pub(crate) fn guard_command(args: &[String]) -> Result<String, CliError> {
+    let mut text: Option<String> = None;
+    let mut role: Option<String> = None;
+    let mut position: Option<String> = None;
+    let mut proposed: Option<String> = None;
     let mut fixture: Option<String> = None;
     let mut cdp: Option<String> = None;
-    let mut executor: Option<String> = None;
+    let mut json = false;
     let mut index = 0;
     while index < args.len() {
         let arg = &args[index];
@@ -90,12 +91,21 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             set_once("fixture", &mut fixture, value.to_owned())?;
         } else if let Some(value) = arg.strip_prefix("--cdp=") {
             set_once("cdp", &mut cdp, value.to_owned())?;
-        } else if let Some(value) = arg.strip_prefix("--confidence=") {
-            set_once("confidence", &mut confidence, value.to_owned())?;
-        } else if let Some(value) = arg.strip_prefix("--executor=") {
-            set_once("executor", &mut executor, value.to_owned())?;
-        } else if let Some(value) = arg.strip_prefix("--runner-up=") {
-            set_once("runner-up", &mut runner_up, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--text=") {
+            set_once("text", &mut text, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--target=") {
+            set_once("text", &mut text, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--role=") {
+            set_once("role", &mut role, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--position=") {
+            set_once("position", &mut position, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--proposed=") {
+            set_once("proposed", &mut proposed, value.to_owned())?;
+        } else if arg == "--json" {
+            if json {
+                return Err(CliError::DuplicateFlag("--json"));
+            }
+            json = true;
         } else if arg == "--cdp" {
             if cdp.is_some() {
                 return Err(CliError::DuplicateFlag("--cdp"));
@@ -108,17 +118,20 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
                 cdp = Some(DEFAULT_CDP_HTTP.to_owned());
             }
         } else if arg == "--fixture"
-            || arg == "--confidence"
-            || arg == "--executor"
-            || arg == "--runner-up"
+            || arg == "--text"
+            || arg == "--target"
+            || arg == "--role"
+            || arg == "--position"
+            || arg == "--proposed"
         {
             index += 1;
-            let flag = match arg.as_str() {
+            let flag: &'static str = match arg.as_str() {
                 "--fixture" => "--fixture",
-                "--confidence" => "--confidence",
-                "--executor" => "--executor",
-                "--runner-up" => "--runner-up",
-                _ => "--flag",
+                "--text" | "--target" => "--text",
+                "--role" => "--role",
+                "--position" => "--position",
+                "--proposed" => "--proposed",
+                other => return Err(CliError::UnknownFlag(other.to_owned())),
             };
             let Some(value) = args.get(index) else {
                 return Err(CliError::MissingValue(flag));
@@ -126,130 +139,100 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             if value.starts_with("--") {
                 return Err(CliError::MissingValue(flag));
             }
-            match arg.as_str() {
+            match flag {
                 "--fixture" => set_once("fixture", &mut fixture, value.clone())?,
-                "--confidence" => set_once("confidence", &mut confidence, value.clone())?,
-                "--executor" => set_once("executor", &mut executor, value.clone())?,
-                "--runner-up" => set_once("runner-up", &mut runner_up, value.clone())?,
-                _ => unreachable!("flag matched"),
+                "--text" | "--target" => set_once("text", &mut text, value.clone())?,
+                "--role" => set_once("role", &mut role, value.clone())?,
+                "--position" => set_once("position", &mut position, value.clone())?,
+                "--proposed" => set_once("proposed", &mut proposed, value.clone())?,
+                _ => unreachable!(),
             }
         } else if arg.starts_with("--") {
             return Err(CliError::UnknownFlag(arg.clone()));
-        } else if region.is_none() {
-            region = Some(arg.clone());
-        } else if verb.is_none() {
-            verb = Some(arg.clone());
+        } else if text.is_none() {
+            // positional: target text, or legacy `region press` form
+            if arg == "press" || arg == "click" {
+                // ignore legacy verb; target must already be set via --text/--target
+            } else {
+                text = Some(arg.clone());
+            }
+        } else if arg == "press" || arg == "click" {
+            // legacy verb after a region id — treat previous positional as proposed id
+            proposed = text.take();
+            // need text from somewhere else; leave error if missing below
         } else {
             return Err(CliError::UnknownFlag(arg.clone()));
         }
         index += 1;
     }
-    let region = region.ok_or(CliError::MissingRegion)?;
-    let verb = verb.ok_or(CliError::MissingVerb)?;
-    if verb != "press" && verb != "click" {
-        return Err(CliError::UnknownAction(verb));
+    let text = text.ok_or(CliError::EmptyText)?;
+    let mut query = LocateQuery::new()
+        .text(text)
+        .map_err(|_| CliError::EmptyText)?;
+    if let Some(role) = role {
+        let parsed = Role::parse(&role).ok_or(CliError::UnknownRole(role))?;
+        query = query.role(parsed);
     }
-    let id = RegionId::try_new(&region).map_err(|_| CliError::UnknownRegion(region.clone()))?;
-    let mut request = ActionRequest::new(id, hyper_use_core::Action::Click);
-    let parse_score =
-        |raw: &str| f64::from_str(raw).map_err(|_| CliError::BadConfidence(raw.to_owned()));
-    match (confidence.as_deref(), runner_up.as_deref()) {
-        (None, None) => {}
-        (None, Some(_)) => return Err(CliError::RunnerUpNeedsConfidence),
-        (Some(top), None) => request = request.scored(parse_score(top)?),
-        (Some(top), Some(second)) => {
-            request = request.ranked(parse_score(top)?, parse_score(second)?);
-        }
+    if let Some(position) = position {
+        let parsed = Zone::parse(&position).ok_or(CliError::UnknownPosition(position))?;
+        query = query.position(parsed);
     }
-    let requested = match executor.as_deref() {
-        None => None,
-        Some(name) => Some(
-            ExecutorKind::parse(name).ok_or_else(|| CliError::UnknownExecutor(name.to_owned()))?,
-        ),
-    };
-    let available = match requested {
-        Some(kind) => vec![kind],
-        None => vec![ExecutorKind::Browser],
-    };
-    let selected = select_act_executor(requested, &available).map_err(|err| match err {
-        ExecutorError::Unavailable(kind) => CliError::NotImplemented {
-            executor: kind.as_str().to_owned(),
-        },
-        other => CliError::Browser(other.to_string()),
-    })?;
-    match selected {
-        ExecutorKind::BrowserUse => {
-            if cdp.is_some() {
-                return Err(CliError::BrowserUseIsReplay);
-            }
-            let Some(path) = fixture else {
-                return Err(CliError::MissingSource);
-            };
-            let body = read_path(&path)?;
-            let mut backend = BrowserUseExecutor::from_replay(&body).map_err(|err| match err {
-                BrowserUseError::BadScript { message } => CliError::BrowserUseScript { message },
-                other => CliError::BrowserUseScript {
-                    message: other.to_string(),
-                },
-            })?;
-            finish_act(&mut backend, &request)
-        }
-        ExecutorKind::Cua => {
-            if cdp.is_some() {
-                return Err(CliError::CuaIsReplay);
-            }
-            let Some(path) = fixture else {
-                return Err(CliError::MissingSource);
-            };
-            let body = read_path(&path)?;
-            let mut backend = CuaExecutor::from_replay(&body).map_err(|err| match err {
-                CuaError::BadScript { message } => CliError::CuaScript { message },
-                other => CliError::CuaScript {
-                    message: other.to_string(),
-                },
-            })?;
-            finish_act(&mut backend, &request)
-        }
-        ExecutorKind::Macos => {
-            let mut backend = StubExecutor::new(selected);
-            finish_act(&mut backend, &request)
-        }
-        ExecutorKind::Browser => {
-            if let Some(url) = cdp.as_deref() {
-                let mut backend = BrowserExecutor::new(BrowserSession::new(connect_live(url)?));
-                return finish_act(&mut backend, &request);
-            }
-            let Some(path) = fixture else {
-                return Err(CliError::MissingSource);
-            };
-            let body = read_path(&path)?;
-            if !body.trim_start().starts_with('{') {
-                return Err(CliError::Browser(
-                    "act against a browser session needs a CDP fixture or --cdp".into(),
-                ));
-            }
-            let transport =
-                ReplayTransport::parse(&body).map_err(|err| CliError::Browser(err.to_string()))?;
-            let mut backend = BrowserExecutor::new(BrowserSession::new(transport));
-            finish_act(&mut backend, &request)
-        }
-        other => Err(CliError::NotImplemented {
-            executor: other.as_str().to_owned(),
-        }),
+    let mut request = GuardRequest::click(query);
+    if let Some(raw) = proposed {
+        let id = RegionId::try_new(&raw).map_err(|_| CliError::UnknownRegion(raw.clone()))?;
+        request = request.proposed(id);
     }
+    let manifold = load_source(fixture.as_deref(), cdp.as_deref())?;
+    let decision = guard(&manifold, &request).map_err(|err| CliError::Locate(err.to_string()))?;
+    Ok(render_decision(&decision, json))
 }
 
-fn finish_act(
-    executor: &mut impl ActionExecutor,
-    request: &ActionRequest,
-) -> Result<String, CliError> {
-    match executor.execute(request) {
-        Ok(receipt) => Ok(format!(
-            "{}\tpress\t{}\texecuted\n",
-            receipt.region_id(),
-            receipt.mechanism()
-        )),
-        Err(err) => map_executor(err),
+fn render_decision(decision: &GuardDecision, json: bool) -> String {
+    match decision {
+        GuardDecision::Allow {
+            target,
+            confidence,
+            margin,
+            evidence,
+        } => {
+            if json {
+                format!(
+                    "{{\"decision\":\"allow\",\"id\":\"{}\",\"label\":\"{}\",\"confidence\":{},\"margin\":{},\"enabled\":{},\"visible\":{}}}\n",
+                    target.id.as_str(),
+                    target.label.replace('"', "\\\""),
+                    confidence.get(),
+                    margin.map(|m| m.get()).unwrap_or(0.0),
+                    evidence.enabled,
+                    evidence.visible,
+                )
+            } else {
+                format!(
+                    "allow\t{}\t{}\t{:.4}\n",
+                    target.id.as_str(),
+                    target.label,
+                    confidence.get()
+                )
+            }
+        }
+        GuardDecision::Refuse { reason, candidates }
+        | GuardDecision::Escalate { reason, candidates } => {
+            let kind = decision.as_str();
+            let top = candidates
+                .first()
+                .map(|c| format!("{}\t{}", c.id.as_str(), c.label))
+                .unwrap_or_default();
+            if json {
+                format!(
+                    "{{\"decision\":\"{}\",\"reason\":\"{}\",\"candidates\":{}}}\n",
+                    kind,
+                    reason.as_str(),
+                    candidates.len(),
+                )
+            } else {
+                format!("{}\t{}\t{top}\n", kind, reason.as_str())
+            }
+        }
+        _ => format!("{}\n", decision.as_str()),
     }
 }
 
@@ -489,55 +472,4 @@ fn render_regions(manifold: &InteractionManifold) -> String {
         ));
     }
     out
-}
-
-fn map_executor(err: ExecutorError) -> Result<String, CliError> {
-    match err {
-        ExecutorError::ConfidenceBelowThreshold {
-            confidence_millis,
-            minimum_millis,
-        } => Err(CliError::ConfidenceBelowThreshold {
-            confidence_millis,
-            minimum_millis,
-        }),
-        ExecutorError::AmbiguousTarget {
-            top_millis,
-            runner_up_millis,
-            margin_millis,
-            minimum_margin_millis,
-        } => Err(CliError::AmbiguousTarget {
-            top_millis,
-            runner_up_millis,
-            margin_millis,
-            minimum_margin_millis,
-        }),
-        ExecutorError::NonFiniteConfidence => Err(CliError::NonFiniteConfidence),
-        ExecutorError::NotImplemented(kind) => Err(CliError::NotImplemented {
-            executor: kind.as_str().to_owned(),
-        }),
-        ExecutorError::BrowserUse(err) => match err {
-            BrowserUseError::UnknownRegion(id) => Err(CliError::UnknownRegion(id)),
-            BrowserUseError::UnsupportedAction(action) => Err(CliError::UnsupportedAction(action)),
-            BrowserUseError::Rejected { message } => Err(CliError::BrowserUseRejected { message }),
-            BrowserUseError::BadScript { message }
-            | BrowserUseError::ParamsMismatch { message } => {
-                Err(CliError::BrowserUseScript { message })
-            }
-            other => Err(CliError::BrowserUseScript {
-                message: other.to_string(),
-            }),
-        },
-        ExecutorError::Cua(err) => match err {
-            CuaError::UnknownRegion(id) => Err(CliError::UnknownRegion(id)),
-            CuaError::UnsupportedAction(action) => Err(CliError::UnsupportedAction(action)),
-            CuaError::Rejected { message } => Err(CliError::CuaRejected { message }),
-            CuaError::BadScript { message } | CuaError::ParamsMismatch { message } => {
-                Err(CliError::CuaScript { message })
-            }
-            other => Err(CliError::CuaScript {
-                message: other.to_string(),
-            }),
-        },
-        other => Err(CliError::Browser(other.to_string())),
-    }
 }

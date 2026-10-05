@@ -1,3 +1,4 @@
+#![cfg(feature = "hgra")]
 //! Property tests for deterministic ranking. They call `locate_with` and
 //! `WeightedMatcher::rank`. They are not a second ranker.
 

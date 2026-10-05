@@ -14,6 +14,7 @@ mod error;
 mod extract;
 mod fusion;
 mod identity;
+mod page;
 mod replay;
 mod session;
 mod transport;
@@ -22,10 +23,11 @@ mod ws;
 
 pub use error::{ActMechanism, BrowserError, CdpError};
 pub use fusion::{MAX_CENTROID_PX, MIN_IOU, MIN_LABEL_JACCARD};
+pub use page::{page_delta, PageDelta, PageState};
 pub use replay::ReplayTransport;
 pub use session::{BrowserSession, DOM_CLICK_FUNCTION};
 pub use transport::CdpTransport;
-pub use verify::{verify, Expectation, VerifyError};
+pub use verify::{verify, verify_delta, Expectation, VerifyError};
 pub use ws::{WebSocketTransport, DEFAULT_CDP_HTTP};
 
 /// A session can be opened. This is not a claim that a browser is running.
@@ -57,7 +59,7 @@ mod proptest_parse {
 #[cfg(test)]
 mod phase2 {
     use super::*;
-    use hyper_use_core::{Action, LocateQuery, RegionId, SourceMask};
+    use hyper_use_core::{Action, LocateQuery, RegionId, Role, SourceMask};
     use hyper_use_observe::diff;
     use hyper_use_resonance::{default_matcher, RegionMatcher};
 
@@ -418,6 +420,173 @@ mod phase2 {
         assert!(
             version.contains("Chrome") || version.contains("protocolVersion"),
             "{version}"
+        );
+    }
+
+    fn history_url(script: &str, url: &str) -> String {
+        let mut value: serde_json::Value = serde_json::from_str(script).unwrap();
+        let history = value["calls"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|call| call["method"] == "Page.getNavigationHistory")
+            .unwrap();
+        history["result"]["entries"][0]["url"] = serde_json::json!(url);
+        value.to_string()
+    }
+
+    #[test]
+    fn url_change_is_reported_without_a_region_change() {
+        let base = include_str!("../../../fixtures/sign-in.cdp.json");
+        let mut transport =
+            ReplayTransport::parse(&history_url(base, "https://example.test/sign-in")).unwrap();
+        transport
+            .append(&history_url(base, "https://example.test/account"))
+            .unwrap();
+        let mut session = BrowserSession::new(transport);
+        let before = session.observe().unwrap().clone();
+        let before_page = session.page().unwrap().clone();
+        let after = session.observe().unwrap().clone();
+        let after_page = session.page().unwrap().clone();
+        assert!(diff(&before, &after).is_empty());
+        assert_eq!(before.captured_at_ms(), 0);
+        assert_eq!(after.captured_at_ms(), 0);
+        let pages = page_delta(&before_page, &after_page);
+        assert!(pages.url_changed());
+        assert!(!pages.focus_changed());
+        assert_eq!(after_page.url(), "https://example.test/account");
+        verify_delta(&diff(&before, &after), &pages, &Expectation::url_changed()).unwrap();
+    }
+
+    fn focus_sign_in(script: &str) -> String {
+        let mut value: serde_json::Value = serde_json::from_str(script).unwrap();
+        value["calls"][2]["result"]["nodes"][0]["properties"] = serde_json::json!([{
+            "name": "focused",
+            "value": {"type": "boolean", "value": true}
+        }]);
+        value.to_string()
+    }
+
+    fn with_focused_email(script: &str) -> String {
+        let mut value: serde_json::Value = serde_json::from_str(script).unwrap();
+        let calls = value["calls"].as_array_mut().unwrap();
+        calls[1]["result"]["root"]["children"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "nodeId": 30,
+                "backendNodeId": 300,
+                "nodeType": 1,
+                "nodeName": "INPUT",
+                "attributes": ["type", "email", "aria-label", "Email"],
+                "children": []
+            }));
+        calls[2]["result"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "nodeId": "ax30",
+                "backendDOMNodeId": 300,
+                "ignored": false,
+                "role": {"value": "textbox"},
+                "name": {"value": "Email"},
+                "properties": [{
+                    "name": "focused",
+                    "value": {"type": "boolean", "value": true}
+                }]
+            }));
+        let node_20 = calls
+            .iter()
+            .position(|call| {
+                call["method"] == "DOM.getBoxModel"
+                    && call["params"].get("nodeId").and_then(|id| id.as_i64()) == Some(20)
+            })
+            .unwrap();
+        calls.insert(
+            node_20 + 1,
+            serde_json::json!({
+                "method": "DOM.getBoxModel",
+                "params": {"nodeId": 30},
+                "result": {"model": {"content": [400, 360, 560, 360, 560, 392, 400, 392]}}
+            }),
+        );
+        let history_at = calls
+            .iter()
+            .position(|call| call["method"] == "Page.getNavigationHistory")
+            .unwrap();
+        calls.insert(
+            history_at,
+            serde_json::json!({
+                "method": "DOM.getBoxModel",
+                "params": {"backendNodeId": 300},
+                "result": {"model": {"content": [400, 360, 560, 360, 560, 392, 400, 392]}}
+            }),
+        );
+        value.to_string()
+    }
+
+    #[test]
+    fn focus_moves_to_the_text_field() {
+        let base = include_str!("../../../fixtures/sign-in.cdp.json");
+        let mut transport = ReplayTransport::parse(&focus_sign_in(base)).unwrap();
+        transport.append(&with_focused_email(base)).unwrap();
+        let mut session = BrowserSession::new(transport);
+        session.observe().unwrap();
+        let before_page = session.page().unwrap().clone();
+        assert_eq!(
+            before_page.focused().map(hyper_use_core::RegionId::as_str),
+            Some("n100")
+        );
+        let after = session.observe().unwrap();
+        let email = after.get_str("n300").unwrap();
+        assert_eq!(email.role(), Role::TextField);
+        assert_eq!(email.label(), "Email");
+        let after_page = session.page().unwrap();
+        assert_eq!(
+            after_page.focused().map(hyper_use_core::RegionId::as_str),
+            Some("n300")
+        );
+        let pages = page_delta(&before_page, after_page);
+        assert!(pages.focus_changed());
+        assert!(!pages.url_changed());
+    }
+
+    #[test]
+    fn navigation_history_protocol_error_omits_url_and_title() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let history = value["calls"].as_array_mut().unwrap().last_mut().unwrap();
+        assert_eq!(history["method"], "Page.getNavigationHistory");
+        history.as_object_mut().unwrap().remove("result");
+        history["error"] = serde_json::json!("Inspector not attached");
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert_eq!(manifold.captured_at_ms(), 0);
+        let page = session.page().unwrap();
+        assert_eq!(page.url(), "");
+        assert_eq!(page.title(), "");
+        assert!(page.focused().is_none());
+    }
+
+    #[test]
+    fn missing_navigation_history_step_is_fatal() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let removed = value["calls"].as_array_mut().unwrap().pop().unwrap();
+        assert_eq!(removed["method"], "Page.getNavigationHistory");
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let err = session.observe().unwrap_err();
+        assert_eq!(
+            err,
+            BrowserError::Cdp(CdpError::NoScriptedResponse {
+                method: "Page.getNavigationHistory".into(),
+            })
+        );
+        assert_eq!(
+            err.to_string(),
+            "no scripted CDP response for `Page.getNavigationHistory`"
         );
     }
 }

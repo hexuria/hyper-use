@@ -159,5 +159,7 @@ mod tests {
         assert_eq!(FallbackReason::VerifyFailed.as_str(), "verify-failed");
         assert_eq!(FallbackReason::Ambiguous.as_str(), "ambiguous");
         assert_eq!(FallbackReason::Ambiguous.to_string(), "ambiguous");
+        assert_eq!(FallbackReason::NoEffect.as_str(), "no-effect");
+        assert_eq!(FallbackReason::NoEffect.to_string(), "no-effect");
     }
 }

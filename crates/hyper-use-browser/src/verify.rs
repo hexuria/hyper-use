@@ -1,14 +1,21 @@
-//! Postconditions on a manifold. This does not click and does not diff.
-//! The host diffs with `hyper-use-observe` and then calls [`verify`].
+//! Postconditions on a manifold. This does not click.
+//! [`verify`] checks one snapshot. [`verify_delta`] checks a diff the host
+//! already computed with `hyper-use-observe`, plus a page delta.
 
 use std::fmt;
 
 use hyper_use_core::{token_recall, tokenize, InteractionManifold, RegionId};
+use hyper_use_observe::ManifoldDiff;
+
+use crate::page::PageDelta;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expectation {
     TextPresent(String),
     RegionAbsent(RegionId),
+    Appeared(RegionId),
+    Disappeared(RegionId),
+    UrlChanged,
 }
 
 impl Expectation {
@@ -23,14 +30,43 @@ impl Expectation {
     pub fn region_absent(id: RegionId) -> Self {
         Self::RegionAbsent(id)
     }
+
+    pub fn appeared(id: RegionId) -> Self {
+        Self::Appeared(id)
+    }
+
+    pub fn disappeared(id: RegionId) -> Self {
+        Self::Disappeared(id)
+    }
+
+    pub fn url_changed() -> Self {
+        Self::UrlChanged
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum VerifyError {
-    ExpectedTextMissing { expected: String },
-    RegionStillPresent { id: String },
+    ExpectedTextMissing {
+        expected: String,
+    },
+    RegionStillPresent {
+        id: String,
+    },
     EmptyExpectation,
+    /// The diff is empty and the page state is unchanged.
+    NoEffect,
+    RegionDidNotAppear {
+        id: String,
+    },
+    RegionDidNotDisappear {
+        id: String,
+    },
+    UrlUnchanged,
+    /// [`Expectation::TextPresent`] and [`Expectation::RegionAbsent`] are snapshot checks.
+    NotADeltaExpectation,
+    /// [`Expectation::Appeared`], [`Expectation::Disappeared`], and [`Expectation::UrlChanged`] need [`verify_delta`].
+    NeedsDelta,
 }
 
 impl fmt::Display for VerifyError {
@@ -42,6 +78,16 @@ impl fmt::Display for VerifyError {
             Self::RegionStillPresent { id } => write!(f, "region `{id}` is still present"),
             Self::EmptyExpectation => {
                 f.write_str("expected text must contain at least one alphanumeric token")
+            }
+            Self::NoEffect => f.write_str("act changed nothing"),
+            Self::RegionDidNotAppear { id } => write!(f, "region `{id}` did not appear"),
+            Self::RegionDidNotDisappear { id } => write!(f, "region `{id}` did not disappear"),
+            Self::UrlUnchanged => f.write_str("url did not change"),
+            Self::NotADeltaExpectation => {
+                f.write_str("text and region expectations are checked on a snapshot, not a delta")
+            }
+            Self::NeedsDelta => {
+                f.write_str("appeared, disappeared, and url changes are checked with verify_delta")
             }
         }
     }
@@ -75,6 +121,47 @@ pub fn verify(
                 Err(VerifyError::RegionStillPresent { id: id.to_string() })
             }
         }
+        Expectation::Appeared(_) | Expectation::Disappeared(_) | Expectation::UrlChanged => {
+            Err(VerifyError::NeedsDelta)
+        }
+    }
+}
+
+/// Delta postcondition. [`VerifyError::NoEffect`] when nothing in the region
+/// diff or the page state changed, before the specific expectation is checked.
+pub fn verify_delta(
+    regions: &ManifoldDiff,
+    page: &PageDelta,
+    expectation: &Expectation,
+) -> Result<(), VerifyError> {
+    if regions.is_empty() && page.is_unchanged() {
+        return Err(VerifyError::NoEffect);
+    }
+    match expectation {
+        Expectation::Appeared(id) => {
+            if regions.added().iter().any(|added| added == id) {
+                Ok(())
+            } else {
+                Err(VerifyError::RegionDidNotAppear { id: id.to_string() })
+            }
+        }
+        Expectation::Disappeared(id) => {
+            if regions.removed().iter().any(|removed| removed == id) {
+                Ok(())
+            } else {
+                Err(VerifyError::RegionDidNotDisappear { id: id.to_string() })
+            }
+        }
+        Expectation::UrlChanged => {
+            if page.url_changed() {
+                Ok(())
+            } else {
+                Err(VerifyError::UrlUnchanged)
+            }
+        }
+        Expectation::TextPresent(_) | Expectation::RegionAbsent(_) => {
+            Err(VerifyError::NotADeltaExpectation)
+        }
     }
 }
 
@@ -84,6 +171,9 @@ mod tests {
     use hyper_use_core::{
         Action, InteractionRegion, Rect, RegionFlags, RegionParts, Role, SourceMask, UnitInterval,
     };
+    use hyper_use_observe::diff;
+
+    use crate::page::{page_delta, PageState};
 
     fn manifold(label: &str, id: &str) -> InteractionManifold {
         let region = InteractionRegion::try_new(RegionParts {
@@ -140,5 +230,22 @@ mod tests {
             &Expectation::region_absent(RegionId::try_new("gone").unwrap()),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn executed_act_with_no_delta_is_no_effect() {
+        let before = manifold("Sign in", "n100");
+        let regions = diff(&before, &before);
+        assert!(regions.is_empty());
+        let page = page_delta(&PageState::blank(), &PageState::blank());
+        assert!(page.is_unchanged());
+        let err = verify_delta(
+            &regions,
+            &page,
+            &Expectation::appeared(RegionId::try_new("n300").unwrap()),
+        )
+        .unwrap_err();
+        assert_eq!(err, VerifyError::NoEffect);
+        assert_eq!(err.to_string(), "act changed nothing");
     }
 }

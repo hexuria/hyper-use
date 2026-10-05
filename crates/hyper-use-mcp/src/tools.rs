@@ -13,7 +13,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use hyper_use_browser::{
-    verify, BrowserSession, CdpTransport, Expectation, ReplayTransport, VerifyError,
+    page_delta, verify, verify_delta, BrowserSession, CdpTransport, Expectation, PageState,
+    ReplayTransport, VerifyError,
 };
 use hyper_use_core::{
     parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
@@ -25,6 +26,7 @@ use hyper_use_executor::{
 };
 use hyper_use_hyper::Dims;
 use hyper_use_observe::{diff, history::SnapshotId, ManifoldDiff};
+use hyper_use_protocol::{FallbackReason, StateDelta};
 use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
 use serde_json::{json, Value};
 
@@ -86,7 +88,7 @@ pub(crate) fn dispatch(
 }
 
 fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let regions: Vec<Value> = manifold
         .regions()
         .map(|region| {
@@ -114,7 +116,7 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
 }
 
 fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let query = build_query(arguments)?;
     let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
@@ -176,7 +178,7 @@ fn rank(
 }
 
 fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let region = require_region(arguments)?;
     let found = manifold
         .get(&region)
@@ -305,15 +307,21 @@ fn run_act<T: CdpTransport>(
         .is_some()
         .then(|| server.latest_for(&plan.key))
         .flatten();
-    let (before_id, before) = match reuse {
+    let (before_id, before, before_page) = match reuse {
         Some(id) => {
             let manifold = session.manifold().expect("checked above").clone();
-            (id, manifold)
+            let page = session.page().cloned().unwrap_or_else(PageState::blank);
+            (id, manifold, page)
         }
         None => match session.observe() {
             Ok(manifold) => {
                 let manifold = manifold.clone();
-                (server.record(&plan.key, manifold.clone()), manifold)
+                let page = session.page().cloned().unwrap_or_else(PageState::blank);
+                (
+                    server.record(&plan.key, manifold.clone(), page.clone()),
+                    manifold,
+                    page,
+                )
             }
             Err(err) => return (Err(ToolError::Browser(err.to_string())), session, false),
         },
@@ -362,16 +370,23 @@ fn run_act<T: CdpTransport>(
             Ok(manifold) => manifold.clone(),
             Err(err) => return (Err(ToolError::Browser(err.to_string())), session, false),
         };
-        after_id = Some(server.record(&plan.key, after.clone()));
-        delta = delta_json(&diff(&before, &after));
+        let after_page = session.page().cloned().unwrap_or_else(PageState::blank);
+        after_id = Some(server.record(&plan.key, after.clone(), after_page.clone()));
+        let regions = diff(&before, &after);
+        let pages = page_delta(&before_page, &after_page);
+        delta = delta_json(&regions, &pages);
         if let Some(expectation) = &plan.expectation {
             match verify(&after, expectation) {
                 Ok(()) => verified = true,
                 Err(err) => {
-                    fallback = Some("verify-failed");
+                    fallback = Some(FallbackReason::VerifyFailed.as_str());
                     verify_error = Some(verify_tool_error(err).to_value());
                 }
             }
+        } else if let Err(VerifyError::NoEffect) =
+            verify_delta(&regions, &pages, &Expectation::url_changed())
+        {
+            fallback = Some(FallbackReason::NoEffect.as_str());
         }
     }
     let mut body = outcome(
@@ -480,16 +495,25 @@ fn verify_tool_error(err: VerifyError) -> ToolError {
     }
 }
 
-fn delta_json(delta: &ManifoldDiff) -> Value {
-    let changed: Vec<&str> = delta
+fn delta_json(delta: &ManifoldDiff, page: &hyper_use_browser::PageDelta) -> Value {
+    let changed: Vec<hyper_use_core::RegionId> = delta
         .changed()
         .iter()
-        .map(|change| change.id().as_str())
+        .map(|change| change.id().clone())
         .collect();
+    let state = StateDelta::new(delta.added().to_vec(), delta.removed().to_vec(), changed)
+        .with_moved(delta.moved().cloned().collect())
+        .with_text_changed(delta.relabeled().cloned().collect())
+        .with_focus_changed(page.focus_changed())
+        .with_url_changed(page.url_changed());
     json!({
-        "added": id_strings(delta.added()),
-        "removed": id_strings(delta.removed()),
-        "changed": changed,
+        "added": id_strings(state.added()),
+        "removed": id_strings(state.removed()),
+        "changed": id_strings(state.changed()),
+        "moved": id_strings(state.moved()),
+        "text_changed": id_strings(state.text_changed()),
+        "focus_changed": state.focus_changed(),
+        "url_changed": state.url_changed(),
     })
 }
 
@@ -584,19 +608,28 @@ fn diff_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
     let after_id = opt_snapshot(arguments, "after_snapshot")?;
     let by_path = before_path.is_some() || after_path.is_some();
     let by_id = before_id.is_some() || after_id.is_some();
-    let delta = match (by_path, by_id) {
+    let (delta, pages) = match (by_path, by_id) {
         (true, true) => return Err(ToolError::MixedDiffSources),
         (false, true) => {
             let before_id = before_id.ok_or(ToolError::MissingBefore)?;
             let after_id = after_id.ok_or(ToolError::MissingAfter)?;
-            let before = &server.snapshot(before_id)?.manifold;
-            let after = &server.snapshot(after_id)?.manifold;
-            diff(before, after)
+            let (before_m, before_p, after_m, after_p) = {
+                let before = server.snapshot(before_id)?;
+                let after = server.snapshot(after_id)?;
+                (
+                    before.manifold.clone(),
+                    before.page.clone(),
+                    after.manifold.clone(),
+                    after.page.clone(),
+                )
+            };
+            (diff(&before_m, &after_m), page_delta(&before_p, &after_p))
         }
         _ => {
-            let before = load_path_manifold(before_path.ok_or(ToolError::MissingBefore)?)?;
-            let after = load_path_manifold(after_path.ok_or(ToolError::MissingAfter)?)?;
-            diff(&before, &after)
+            let (before_m, before_p) =
+                load_observation(before_path.ok_or(ToolError::MissingBefore)?)?;
+            let (after_m, after_p) = load_observation(after_path.ok_or(ToolError::MissingAfter)?)?;
+            (diff(&before_m, &after_m), page_delta(&before_p, &after_p))
         }
     };
     Ok(outcome(
@@ -605,7 +638,7 @@ fn diff_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
         None,
         false,
         false,
-        delta_json(&delta),
+        delta_json(&delta, &pages),
         None,
         None,
         None,
@@ -624,7 +657,7 @@ fn opt_snapshot(arguments: &Value, key: &str) -> Result<Option<u64>, ToolError> 
 }
 
 fn verify_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (_snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let (_snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let expect_text = opt_str(arguments, "expect_text")?;
     let expect_absent = opt_str(arguments, "expect_absent")?;
     match (expect_text, expect_absent) {
@@ -892,35 +925,40 @@ fn origin_key(origin: &Origin) -> String {
 fn observe_origin(
     server: &mut Server,
     origin: &Origin,
-) -> Result<(SnapshotId, InteractionManifold), ToolError> {
-    let manifold = match origin {
-        Origin::Fixture(path) => load_path_manifold(path)?,
+) -> Result<(SnapshotId, InteractionManifold, PageState), ToolError> {
+    let (manifold, page) = match origin {
+        Origin::Fixture(path) => load_observation(path)?,
         Origin::Cdp(url) => {
             let mut session = server.take_session(url)?;
             let manifold = session
                 .observe()
                 .cloned()
                 .map_err(|err| ToolError::Browser(err.to_string()))?;
+            let page = session.page().cloned().unwrap_or_else(PageState::blank);
             server.keep_session(url, session);
-            manifold
+            (manifold, page)
         }
     };
-    let id = server.record(&origin_key(origin), manifold.clone());
-    Ok((id, manifold))
+    let id = server.record(&origin_key(origin), manifold.clone(), page.clone());
+    Ok((id, manifold, page))
 }
 
-fn load_path_manifold(path: &str) -> Result<InteractionManifold, ToolError> {
+fn load_observation(path: &str) -> Result<(InteractionManifold, PageState), ToolError> {
     let body = read_path(path)?;
     if body.trim_start().starts_with('{') {
         let transport =
             ReplayTransport::parse(&body).map_err(|err| ToolError::Browser(err.to_string()))?;
         let mut session = BrowserSession::new(transport);
-        session
+        let manifold = session
             .observe()
             .cloned()
-            .map_err(|err| ToolError::Browser(err.to_string()))
+            .map_err(|err| ToolError::Browser(err.to_string()))?;
+        let page = session.page().cloned().unwrap_or_else(PageState::blank);
+        Ok((manifold, page))
     } else {
-        parse_fixture(&body).map_err(|err| ToolError::Fixture(err.to_string()))
+        parse_fixture(&body)
+            .map(|manifold| (manifold, PageState::blank()))
+            .map_err(|err| ToolError::Fixture(err.to_string()))
     }
 }
 

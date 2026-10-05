@@ -21,6 +21,8 @@ pub enum FallbackReason {
     VerifyFailed,
     /// The top two candidates were too close. Nothing was clicked.
     Ambiguous,
+    /// The act ran and neither the regions nor the page state changed.
+    NoEffect,
 }
 
 impl FallbackReason {
@@ -30,6 +32,7 @@ impl FallbackReason {
             Self::NotImplemented => "not-implemented",
             Self::VerifyFailed => "verify-failed",
             Self::Ambiguous => "ambiguous",
+            Self::NoEffect => "no-effect",
         }
     }
 }
@@ -202,12 +205,18 @@ impl ComputerTask {
 }
 
 /// Id-level change between two observations. Not a second diff algorithm:
-/// a host fills this from `hyper-use-observe::diff`.
+/// a host fills this from `hyper-use-observe::diff`. Page flags are separate
+/// and use `url_changed`, never a navigate field. `new` leaves those flags
+/// unset so existing callers compile; set them with the `with_*` builders.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StateDelta {
     added: Vec<RegionId>,
     removed: Vec<RegionId>,
     changed: Vec<RegionId>,
+    moved: Vec<RegionId>,
+    text_changed: Vec<RegionId>,
+    focus_changed: bool,
+    url_changed: bool,
 }
 
 impl StateDelta {
@@ -226,15 +235,39 @@ impl StateDelta {
             added,
             removed,
             changed,
+            moved: Vec::new(),
+            text_changed: Vec::new(),
+            focus_changed: false,
+            url_changed: false,
         }
     }
 
+    pub fn with_moved(mut self, mut ids: Vec<RegionId>) -> Self {
+        ids.sort();
+        ids.dedup();
+        self.moved = ids;
+        self
+    }
+
+    pub fn with_text_changed(mut self, mut ids: Vec<RegionId>) -> Self {
+        ids.sort();
+        ids.dedup();
+        self.text_changed = ids;
+        self
+    }
+
+    pub fn with_focus_changed(mut self, changed: bool) -> Self {
+        self.focus_changed = changed;
+        self
+    }
+
+    pub fn with_url_changed(mut self, changed: bool) -> Self {
+        self.url_changed = changed;
+        self
+    }
+
     pub fn empty() -> Self {
-        Self {
-            added: Vec::new(),
-            removed: Vec::new(),
-            changed: Vec::new(),
-        }
+        Self::new(Vec::new(), Vec::new(), Vec::new())
     }
 
     pub fn added(&self) -> &[RegionId] {
@@ -249,8 +282,30 @@ impl StateDelta {
         &self.changed
     }
 
+    pub fn moved(&self) -> &[RegionId] {
+        &self.moved
+    }
+
+    pub fn text_changed(&self) -> &[RegionId] {
+        &self.text_changed
+    }
+
+    pub const fn focus_changed(&self) -> bool {
+        self.focus_changed
+    }
+
+    pub const fn url_changed(&self) -> bool {
+        self.url_changed
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
+        self.added.is_empty()
+            && self.removed.is_empty()
+            && self.changed.is_empty()
+            && self.moved.is_empty()
+            && self.text_changed.is_empty()
+            && !self.focus_changed
+            && !self.url_changed
     }
 }
 

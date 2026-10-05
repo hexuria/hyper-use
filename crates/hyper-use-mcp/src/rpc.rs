@@ -209,7 +209,7 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "diff" => (
-            "Id-level difference of two observations, given as before/after fixture paths or as before_snapshot/after_snapshot ids returned by earlier calls on this server. Returns state_delta added, removed, and changed. Does not click.",
+            "Id-level difference of two observations, given as before/after fixture paths or as before_snapshot/after_snapshot ids returned by earlier calls on this server. Returns state_delta added, removed, changed, moved, text_changed, focus_changed, and url_changed. Does not click.",
             {
                 let mut props = serde_json::Map::new();
                 props.insert("before".into(), json!({"type": "string"}));

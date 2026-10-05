@@ -189,7 +189,9 @@ value is a journal record, not a second executor. CUA is not invoked.
 CDP methods, in order, for one observation: `Page.getLayoutMetrics`,
 `DOM.getDocument` depth -1, `Accessibility.getFullAXTree`, then
 `DOM.getBoxModel` per DOM node id, then `DOM.getBoxModel` per accessibility
-backend id. A `DOM.getBoxModel` CDP error omits that node. Press:
+backend id, then one `Page.getNavigationHistory`. A `DOM.getBoxModel` CDP
+error omits that node. A protocol error on `Page.getNavigationHistory` omits
+the url and title; any other failure of that call aborts observe. Press:
 `DOM.resolveNode` then `Runtime.callFunctionOn` of `function(){this.click()}`,
 by node id and then by backend node id. A CDP error, or `exceptionDetails` in
 the call result, falls through to the next tier and finally to
@@ -640,3 +642,43 @@ Verifiers: `same_backend_node_joins_even_when_labels_differ`,
 `parent_is_the_nearest_ancestor_that_is_a_region`,
 `observe_records_the_nearest_dom_parent`, and the updated
 `one_pixel_shift_merges_and_different_labels_do_not`.
+
+
+## Page state, richer diff, and no-effect verify
+
+An observation now ends with one `Page.getNavigationHistory` call. The current
+history entry supplies `PageState` url and title. The payload has no time, so
+`captured_at_ms` stays 0, the same value fusion already stored. `focused` is
+the stable id of the accessibility node whose `focused` property is true, after
+the identity map renames it. It is not read from the history call.
+
+A CDP protocol error on the history call omits the url and title and observe
+continues. That is the same split as `DOM.getBoxModel`: `CdpError::Protocol`
+omits, and `NoScriptedResponse`, `ParamsMismatch`, `BadJson`, and `Transport`
+stay fatal. Omitting is not a silent success. The page record keeps an empty
+url and title, and it does not invent a timestamp. A missing script entry is
+still `CdpError::NoScriptedResponse`.
+
+`ManifoldDiff::moved` and `relabeled` read the existing id diff. Moved means
+the id survived and the rectangle is the only changed field. The fingerprint may also differ, because it hashes the rectangle; that is not a second change. Relabeled means
+the id survived with a different label. They are not a second diff.
+`StateDelta` gains `moved`, `text_changed`, `focus_changed`, and `url_changed`
+through builders, so `StateDelta::new` still takes only the three id lists.
+The field is `url_changed`. There is no navigate tool and no navigate intent.
+
+`verify_delta` checks `Appeared`, `Disappeared`, and `UrlChanged`. It returns
+`VerifyError::NoEffect` when the region diff is empty and the page state is
+unchanged, before the specific expectation. The host string is
+`FallbackReason::NoEffect`, `"no-effect"`. An act that asked for `expect_text`
+or `expect_absent` still reports `verify-failed` when that postcondition
+fails, including when the page did not change.
+
+Downside accepted: a protocol error and a history entry with an empty URL look
+the same on `PageState`. Callers cannot tell them apart. `captured_at_ms` is
+still not a clock.
+
+Verifiers: `moved_only_rect_is_moved_not_relabeled`,
+`url_change_is_reported_without_a_region_change`,
+`focus_moves_to_the_text_field`, `executed_act_with_no_delta_is_no_effect`,
+`navigation_history_protocol_error_omits_url_and_title`, and
+`missing_navigation_history_step_is_fatal`. No second formal model.

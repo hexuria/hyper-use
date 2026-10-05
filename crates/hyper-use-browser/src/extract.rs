@@ -26,6 +26,7 @@ pub(crate) struct AxElement {
     pub role: Role,
     pub name: String,
     pub disabled: bool,
+    pub focused: bool,
 }
 
 pub(crate) fn parse_viewport(result_json: &str) -> Result<hyper_use_core::Rect, BrowserError> {
@@ -87,12 +88,14 @@ pub(crate) fn ax_elements(tree_json: &str) -> Result<Vec<AxElement>, BrowserErro
             .trim()
             .to_owned();
         let backend = node.get("backendDOMNodeId").and_then(Value::as_i64);
-        let disabled = ax_disabled(node);
+        let disabled = ax_flag(node, "disabled");
+        let focused = ax_flag(node, "focused");
         out.push(AxElement {
             backend_dom_node_id: backend,
             role,
             name,
             disabled,
+            focused,
         });
     }
     Ok(out)
@@ -305,18 +308,48 @@ fn ax_role(value: &str) -> Option<Role> {
     }
 }
 
-fn ax_disabled(node: &Value) -> bool {
+fn ax_flag(node: &Value, name: &str) -> bool {
     let Some(properties) = node.get("properties").and_then(Value::as_array) else {
         return false;
     };
     properties.iter().any(|property| {
-        property.get("name").and_then(Value::as_str) == Some("disabled")
+        property.get("name").and_then(Value::as_str) == Some(name)
             && property
                 .get("value")
                 .and_then(|value| value.get("value"))
                 .and_then(Value::as_bool)
                 == Some(true)
     })
+}
+
+/// URL and title of the current history entry. An empty history omits both.
+/// This does not read a timestamp: `Page.getNavigationHistory` has none.
+pub(crate) fn navigation_entry(history_json: &str) -> Result<(String, String), BrowserError> {
+    let value = parse_json(history_json)?;
+    let Some(entries) = value.get("entries").and_then(Value::as_array) else {
+        return Ok((String::new(), String::new()));
+    };
+    let index = value
+        .get("currentIndex")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let Some(entry) = usize::try_from(index)
+        .ok()
+        .and_then(|index| entries.get(index))
+    else {
+        return Ok((String::new(), String::new()));
+    };
+    let url = entry
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let title = entry
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    Ok((url, title))
 }
 
 fn direct_text(node: &Value) -> String {

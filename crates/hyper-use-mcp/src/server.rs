@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use hyper_use_browser::{BrowserSession, WebSocketTransport};
+use hyper_use_browser::{BrowserSession, PageState, WebSocketTransport};
 use hyper_use_core::InteractionManifold;
 use hyper_use_observe::history::{HistoryError, SnapshotId, SnapshotRing};
 use serde_json::Value;
@@ -21,6 +21,7 @@ pub const MAX_LIVE_SESSIONS: usize = 4;
 pub(crate) struct Snapshot {
     pub(crate) origin: String,
     pub(crate) manifold: InteractionManifold,
+    pub(crate) page: PageState,
 }
 
 pub struct Server {
@@ -48,10 +49,16 @@ impl Server {
         crate::tools::dispatch(self, name, arguments)
     }
 
-    pub(crate) fn record(&mut self, origin: &str, manifold: InteractionManifold) -> SnapshotId {
+    pub(crate) fn record(
+        &mut self,
+        origin: &str,
+        manifold: InteractionManifold,
+        page: PageState,
+    ) -> SnapshotId {
         self.history.push(Snapshot {
             origin: origin.to_owned(),
             manifold,
+            page,
         })
     }
 

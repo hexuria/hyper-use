@@ -754,7 +754,15 @@ fn act_closed_loop_reports_delta_and_verifies_welcome() {
     assert_eq!(body["mechanism"], "dom-semantic");
     assert_eq!(
         body["state_delta"],
-        json!({"added": ["n300"], "removed": ["n100", "n200"], "changed": []})
+        json!({
+            "added": ["n300"],
+            "removed": ["n100", "n200"],
+            "changed": [],
+            "moved": [],
+            "text_changed": [],
+            "focus_changed": false,
+            "url_changed": true
+        })
     );
     assert_eq!(body["before_snapshot"], 1);
     assert_eq!(body["after_snapshot"], 2);
@@ -780,7 +788,15 @@ fn act_closed_loop_verify_failure_is_executed_true_verified_false() {
     );
     assert_eq!(
         body["state_delta"],
-        json!({"added": [], "removed": [], "changed": []})
+        json!({
+            "added": [],
+            "removed": [],
+            "changed": [],
+            "moved": [],
+            "text_changed": [],
+            "focus_changed": false,
+            "url_changed": false
+        })
     );
 }
 

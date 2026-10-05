@@ -2,6 +2,8 @@
 //! that transport is a replay script or a live CDP websocket.
 //!
 //! Snapshots use `captured_at_ms = 0`. The ranker must not see a local clock.
+//! `Page.getNavigationHistory` may set the page URL and title. That payload
+//! has no time, so it does not change `captured_at_ms`.
 //!
 //! Press preference, and only for [`Action::Click`]:
 //! 1. DOM semantic click by node id (`DOM.resolveNode` + `Runtime.callFunctionOn`)
@@ -25,9 +27,10 @@ use serde_json::json;
 use hyper_use_core::{Action, InteractionManifold, Rect, RegionId};
 
 use crate::error::{ActMechanism, BrowserError, CdpError};
-use crate::extract::{self, content_rect};
+use crate::extract::{self, content_rect, AxElement};
 use crate::fusion::{self, NodeBinding, RawNode};
 use crate::identity::IdentityMap;
+use crate::page::PageState;
 use crate::transport::CdpTransport;
 use crate::verify::{self, Expectation};
 
@@ -36,6 +39,7 @@ pub const DOM_CLICK_FUNCTION: &str = "function(){this.click()}";
 pub struct BrowserSession<T: CdpTransport> {
     transport: T,
     manifold: Option<InteractionManifold>,
+    page: Option<PageState>,
     bindings: BTreeMap<RegionId, NodeBinding>,
     identity: IdentityMap,
 }
@@ -45,6 +49,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         Self {
             transport,
             manifold: None,
+            page: None,
             bindings: BTreeMap::new(),
             identity: IdentityMap::default(),
         }
@@ -60,6 +65,10 @@ impl<T: CdpTransport> BrowserSession<T> {
 
     pub fn manifold(&self) -> Option<&InteractionManifold> {
         self.manifold.as_ref()
+    }
+
+    pub fn page(&self) -> Option<&PageState> {
+        self.page.as_ref()
     }
 
     pub fn observe(&mut self) -> Result<&InteractionManifold, BrowserError> {
@@ -94,7 +103,10 @@ impl<T: CdpTransport> BrowserSession<T> {
         let (manifold, bindings) =
             self.identity
                 .assign(self.manifold.as_ref(), fused, fused_bindings)?;
+        let focused = focused_region(&ax_nodes, &bindings);
+        let page = self.read_page(focused)?;
         self.bindings = bindings;
+        self.page = Some(page);
         self.manifold = Some(manifold);
         Ok(self.manifold.as_ref().expect("observation just stored"))
     }
@@ -130,6 +142,20 @@ impl<T: CdpTransport> BrowserSession<T> {
     pub fn verify(&self, expectation: &Expectation) -> Result<(), BrowserError> {
         let manifold = self.manifold.as_ref().ok_or(BrowserError::NotObserved)?;
         verify::verify(manifold, expectation).map_err(BrowserError::Verify)
+    }
+
+    /// Protocol errors omit the URL and title. Every other failure aborts.
+    fn read_page(&mut self, focused: Option<RegionId>) -> Result<PageState, BrowserError> {
+        match self.call("Page.getNavigationHistory", &json!({}).to_string()) {
+            Ok(body) => {
+                let (url, title) = extract::navigation_entry(&body)?;
+                Ok(PageState::new(url, title, focused))
+            }
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => {
+                Ok(PageState::new(String::new(), String::new(), focused))
+            }
+            Err(other) => Err(other),
+        }
     }
 
     /// `Ok(None)` when CDP reports an error for this node's box.
@@ -182,4 +208,27 @@ impl<T: CdpTransport> BrowserSession<T> {
             .call(method, params_json)
             .map_err(BrowserError::from)
     }
+}
+
+fn focused_region(
+    ax_nodes: &[AxElement],
+    bindings: &BTreeMap<RegionId, NodeBinding>,
+) -> Option<RegionId> {
+    let backends: Vec<i64> = ax_nodes
+        .iter()
+        .filter(|element| element.focused)
+        .filter_map(|element| element.backend_dom_node_id)
+        .collect();
+    if backends.is_empty() {
+        return None;
+    }
+    bindings
+        .iter()
+        .filter(|(_, binding)| {
+            binding
+                .backend_node_id
+                .is_some_and(|id| backends.contains(&id))
+        })
+        .map(|(id, _)| id.clone())
+        .min()
 }

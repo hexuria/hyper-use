@@ -244,7 +244,8 @@ pub fn neighborhood_of(manifold: &InteractionManifold, target: &RegionId) -> BTr
                 // Flat page: only geometrically nearby peers matter.
                 out.insert(region.id().clone());
             }
-            (None, None) => {}
+            // Different parents, or one side parented and the other root:
+            // not a neighbor.
             _ => {}
         }
     }

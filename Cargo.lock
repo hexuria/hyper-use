@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -55,6 +61,19 @@ name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+
+[[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.1",
+]
 
 [[package]]
 name = "block-buffer"
@@ -109,6 +128,12 @@ dependencies = [
  "cpufeatures 0.3.1",
  "rand_core 0.10.1",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "core-foundation"
@@ -440,6 +465,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-use-agent"
+version = "0.1.0"
+dependencies = [
+ "hyper-use-browser",
+ "hyper-use-core",
+ "hyper-use-guard",
+ "hyper-use-observe",
+ "hyper-use-policy",
+ "hyper-use-protocol",
+]
+
+[[package]]
 name = "hyper-use-browser"
 version = "0.1.0"
 dependencies = [
@@ -516,6 +553,16 @@ version = "0.1.0"
 dependencies = [
  "hyper-use-core",
  "proptest",
+]
+
+[[package]]
+name = "hyper-use-policy"
+version = "0.1.0"
+dependencies = [
+ "hyper-use-core",
+ "pua-core",
+ "pua-lexicon",
+ "pua-text",
 ]
 
 [[package]]
@@ -847,6 +894,34 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "pua-core"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
+name = "pua-lexicon"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
+dependencies = [
+ "pua-core",
+ "pua-text",
+]
+
+[[package]]
+name = "pua-text"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
+dependencies = [
+ "pua-core",
+ "unicode-normalization",
+ "unicode-security",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -1586,6 +1661,37 @@ name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
+name = "unicode-script"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "383ad40bb927465ec0ce7720e033cb4ca06912855fc35db31b5755d0de75b1ee"
+
+[[package]]
+name = "unicode-security"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e4ddba1535dd35ed8b61c52166b7155d7f4e4b8847cec6f48e71dc66d8b5e50"
+dependencies = [
+ "unicode-normalization",
+ "unicode-script",
+]
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "untrusted"

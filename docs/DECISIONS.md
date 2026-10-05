@@ -1,5 +1,19 @@
 # Decisions
 
+## PUA pin + Agent loop (Phases 2–7) (2026-10-05)
+
+Status: accepted on `feat/agent-pua-runtime`. Asia/Manila.
+ADR: [`docs/adr/0002-pua-policy-and-agent-loop.md`](adr/0002-pua-policy-and-agent-loop.md).
+
+**Decision.** Pin PUA @ `fe3f1fd…`. Ship `hyper-use-policy` (PuaPolicy,
+EscalatingPolicy, TextResolver) and `hyper-use-agent` (owned loop, MockBrowser
+e2e). TicketLedger enforces one-shot consume. Stale prediction → re-observe.
+HGRA stays frozen. Eval honesty in `docs/EVAL.md`.
+
+**Discarded.** Rewriting RESULTS from A1–A8; mechanical jev-ultrafast port;
+deleting resonance wholesale before unreachable; required Jev/remote dependency.
+
+
 
 ## Agent-runtime pivot: Hyper-Use owns the loop; PUA owns HOW (2026-10-05)
 

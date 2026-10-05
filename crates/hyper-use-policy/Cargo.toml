@@ -1,0 +1,21 @@
+[package]
+name = "hyper-use-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Browser policy: PUA finite decisions + optional escalation. Hard invalidity stays in guard."
+
+[features]
+default = []
+# Optional remote/Jev-shaped fallback. Not required to build or run PUA-only agents.
+remote = []
+
+[dependencies]
+hyper-use-core = { path = "../hyper-use-core" }
+pua-core = { workspace = true }
+pua-text = { workspace = true }
+pua-lexicon = { workspace = true }
+
+[dev-dependencies]

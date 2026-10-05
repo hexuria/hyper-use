@@ -8,6 +8,8 @@ members = [
     "crates/hyper-use-browser",
     "crates/hyper-use-protocol",
     "crates/hyper-use-guard",
+    "crates/hyper-use-policy",
+    "crates/hyper-use-agent",
     "crates/hyper-use-mcp",
     "crates/hyper-use-cli",
     # Experimental. Not on the product path. Build with -p hyper-use-hyper --features unused
@@ -23,3 +25,10 @@ edition = "2021"
 license = "MIT"
 publish = false
 rust-version = "1.99"
+
+
+[workspace.dependencies]
+# Pinned Exact: hexuria/pua @ fe3f1fd (ADR 0001 / Phase 2). Bump only with deliberate eval.
+pua-core = { git = "https://github.com/hexuria/pua", rev = "fe3f1fd3818feb452fae1771ff2171b8598f86e6" }
+pua-text = { git = "https://github.com/hexuria/pua", rev = "fe3f1fd3818feb452fae1771ff2171b8598f86e6" }
+pua-lexicon = { git = "https://github.com/hexuria/pua", rev = "fe3f1fd3818feb452fae1771ff2171b8598f86e6" }

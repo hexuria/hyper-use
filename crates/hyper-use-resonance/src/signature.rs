@@ -203,29 +203,67 @@ pub(crate) fn query_probes(
     Ok(probes)
 }
 
-/// The query as one hypervector: the probes from [`query_probes`] bundled
-/// with equal weight (`QUERY_PART_WEIGHT` each), the same `bind` then
-/// `bundle` the region signature uses for its own parts. The ranker takes a
-/// single cosine of this vector against each region signature.
+/// The query as one hypervector: the probes from [`query_probes`] plus any
+/// world-context parent channel from [`ContextScope`], bundled the same way
+/// the region signature bundles its parts. The ranker takes a single cosine
+/// of this vector against each region signature.
+///
+/// Context encoding: when `within` or a resolved `near` scope names a
+/// container, the query adds the same permuted `parent` bindings the region
+/// signature stores for that container's role and label tokens. Cosine then
+/// prefers descendants of that container; the hard `ContextScope::score`
+/// minimum still zeros out-of-scope regions.
 ///
 /// Equal weight keeps parity with the probe set the old probe-mean scored:
 /// every constraint (and every label token) counts once. With an even number
 /// of probes a component can sum to zero; [`bundle`] breaks that tie to `+1`,
 /// as documented in the algebra crate. `None` when the query has no
-/// constraint, so the caller keeps the neutral empty-query behaviour.
+/// constraint and no context channel, so the caller keeps the neutral
+/// empty-query behaviour.
 pub(crate) fn query_vector(
     query: &hyper_use_core::LocateQuery,
+    scope: &crate::ContextScope,
+    manifold: &InteractionManifold,
     memory: &mut Memory<'_>,
 ) -> Result<Option<BipolarVector>, ResonanceError> {
     let probes = query_probes(query, memory)?;
-    if probes.is_empty() {
-        return Ok(None);
-    }
-    let parts: Vec<(BipolarVector, f64)> = probes
+    let mut parts: Vec<(BipolarVector, f64)> = probes
         .into_iter()
         .map(|probe| (probe, QUERY_PART_WEIGHT))
         .collect();
+    // Prefer near_scope when both are set: within already filtered the pool,
+    // and near is the cursor-local container (cargo-runner rule).
+    let container = scope.near_scope().or(scope.within());
+    if let Some(container) = container {
+        push_context_parent_channel(&mut parts, memory, manifold, container)?;
+    }
+    if parts.is_empty() {
+        return Ok(None);
+    }
     Ok(Some(bundle(&parts)?))
+}
+
+/// Match [`region_signature`]'s parent channel so cosine aligns on ancestry.
+fn push_context_parent_channel(
+    parts: &mut Vec<(BipolarVector, f64)>,
+    memory: &mut Memory<'_>,
+    manifold: &InteractionManifold,
+    container: &hyper_use_core::RegionId,
+) -> Result<(), ResonanceError> {
+    let Some(region) = manifold.get(container) else {
+        return Ok(());
+    };
+    push_permuted(
+        parts,
+        memory,
+        "parent",
+        region.role().as_str(),
+        PARENT_WEIGHT,
+    )?;
+    for token in tokenize(region.label()) {
+        push_permuted(parts, memory, "parent", &token, PARENT_WEIGHT)?;
+    }
+    Ok(())
 }
 
 fn source_name(bits: u8) -> &'static str {

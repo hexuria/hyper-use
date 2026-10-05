@@ -103,3 +103,16 @@ for variable change is `crates/hyper-use-guard/tests/world_context.rs` (see
 cargo test -p hyper-use-resonance --features hgra --test hgra_remeasure -- --nocapture
 cargo test -p hyper-use-resonance --features hgra --lib bundled_query
 ```
+
+## World-context channel (feat/world-context-gate)
+
+`query_vector` now takes the resolved [`ContextScope`]. When `within` or a
+resolved `near` scope names a container, the query bundles the same permuted
+`parent` bindings the region signature already stores for that container's
+role and label tokens. Cosine therefore prefers in-scope twins; the semantic
+minimum still zeros out-of-scope regions (parity with WeightedMatcher).
+
+Evidence: `hgra_query_vector_encodes_within_as_parent_channel` and
+`hgra_near_encodes_resolved_scope_into_the_query_vector` on
+`fixtures/twin-suspend-rows.manifold`. The 5-case `hgra_remeasure` corpus is
+unchanged (no ancestry on those pages).

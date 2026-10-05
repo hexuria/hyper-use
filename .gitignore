@@ -9,3 +9,4 @@
 !/examples/*/runs/summary.json
 /bench/runs/
 bench/.env
+proptest-regressions/

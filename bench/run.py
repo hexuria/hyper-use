@@ -42,6 +42,9 @@ ARMS = {
     "A4": {"name": "CUA jev-use (generic task)", "python": CUA_PY, "script": "arms/a4_jev_use.py", "browser": "cua", "typesafe": True},
     "A5": {"name": "JEV + hyper-use (live_drive)", "python": MAIN_PY, "script": "arms/a5_live_drive.py", "browser": "harness", "typesafe": True},
     "A6": {"name": "Luna + hyper-use (MCP)", "python": MAIN_PY, "script": "arms/a6_luna_hyper_use.py", "browser": "harness", "typesafe": False},
+    # Combined arms (bench/arms/COMBO.md): Luna plans, hyper-use observes/presses, JEV breaks ties, executor types/selects.
+    "A7": {"name": "Luna + JEV + hyper-use + CUA", "python": MAIN_PY, "script": "arms/a7_combo_cua.py", "browser": "cua", "typesafe": True},
+    "A8": {"name": "Luna + JEV + hyper-use + Browser Use", "python": MAIN_PY, "script": "arms/a8_combo_bu.py", "browser": "harness", "typesafe": True},
 }
 for mode in ["oracle", "saboteur", "spinner", "wanderer", "sleeper"]:
     ARMS[f"mock-{mode}"] = {"name": f"mock {mode}", "python": MAIN_PY, "script": "arms/mock.py", "browser": "harness",

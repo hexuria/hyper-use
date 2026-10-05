@@ -1,6 +1,6 @@
 # Uniform hyper-use benchmark
 
-One harness, six arms, six local scenario sites, the same Chrome, the same loopback
+One harness, eight arms, six local scenario sites, the same Chrome, the same loopback
 server, the same 1280×800 viewport, and the same caps for everyone. Results:
 [`../RESULTS.md`](../RESULTS.md) and `examples/<scenario>/RESULTS.md`.
 
@@ -17,6 +17,8 @@ not statistics.
 | A4 | Cua's jev-use recipe with a generic task (one candidate per actionable ref, quoted literals for typing, reobserve/abstain/done), no declared steps | JEV |
 | A5 | hyper-use `live_drive` example in bench mode (`--task-json`, `--trace`, `--max-steps`) | JEV |
 | A6 | Luna tool loop over `hyper-use mcp` (observe, locate, inspect, act, verify, diff; CDP endpoint injected) | Luna |
+| A7 | Combined: Luna plans; hyper-use observes/locates/presses over CDP on CUA's own isolated Chrome; JEV breaks ranking ties (with row context, NONE option, hyper-use's act gate on its probabilities); CUA driver types, scrolls, reads, and does a gated fallback click ([`arms/COMBO.md`](arms/COMBO.md)) | Luna + JEV |
+| A8 | Combined: same loop on the harness Chrome; Browser Use 0.13 `Tools` (no Browser Use agent) types, selects, scrolls, reads, and does the gated fallback click by element index ([`arms/COMBO.md`](arms/COMBO.md)) | Luna + JEV |
 
 A6 shows a trimmed schema (same tools, only the knobs the default path needs, `position`
 enum from the CLI help): with the shipped MCP schemas Luna filled every optional field
@@ -55,7 +57,7 @@ bench/bench run --config bench/bench.toml --seed 42         # the real run
 bench/bench report                                           # RESULTS.md files
 ```
 
-`TYPESAFE_API_KEY` (JEV arms A3–A5) is read from the environment or a gitignored
+`TYPESAFE_API_KEY` (JEV arms A3–A5, A7, A8) is read from the environment or a gitignored
 `bench/.env`; without it those arms are recorded as "not run". OpenCodex must be
 listening on `127.0.0.1:8080`. Useful flags: `--arms`, `--tasks`, `--scenarios`,
 `--max-tries`, `--reps`, `--resume <run-id>`.

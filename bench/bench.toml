@@ -3,7 +3,7 @@
 seed = 42
 reps = 1          # runs per arm per task (n=1 by design for this pass)
 max_tries = 3     # fresh attempts per task, stop at the first strict pass
-arms = ["A1", "A2", "A3", "A4", "A5", "A6"]
+arms = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"]
 scenarios = ["acme-mail", "shop-checkout", "admin-table", "booking-calendar", "hard-dom", "travel-search"]
 
 [caps]            # enforced by the harness from outside every arm, per attempt

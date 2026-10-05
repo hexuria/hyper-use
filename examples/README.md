@@ -46,7 +46,8 @@ HYPER_USE_MATCHER=hgra ./examples/world-context/smoke.sh
 
 `live-drive/` — hand-run JEV + `hyper-use mcp` against the Acme Mail page
 (same site as the `acme-mail/` bench scenario). Not CI and not a benchmark.
-See [live-drive/README.md](live-drive/README.md).
+Thread tasks start on `#thread/q3` (`t8` adds `?preset=twin`). See
+[live-drive/README.md](live-drive/README.md).
 
 ```sh
 python3 bench/server.py --port 8765 &

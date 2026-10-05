@@ -86,20 +86,22 @@ const TASKS: [Task; 8] = [
     },
     Task {
         id: "t6-thread-archive",
-        start: "index.html",
-        text: r#"Open the "Q3 launch checklist" message, then click the visible "Archive" button in its toolbar and verify "Conversation archived" appears."#,
+        // Thread toolbar Archive is only on #thread/<id>; start already there.
+        start: "index.html#thread/q3",
+        text: r#"On the open "Q3 launch checklist" thread, click the visible "Archive" button in its toolbar and verify "Conversation archived" appears."#,
         expect: "snackbar Conversation archived",
     },
     Task {
         id: "t7-thread-reply",
-        start: "index.html",
-        text: r#"Open the "Q3 launch checklist" message, then click "Send" in the quick reply box and verify "Reply sent" appears."#,
+        start: "index.html#thread/q3",
+        text: r#"On the open "Q3 launch checklist" thread, click "Send" in the quick reply box and verify "Reply sent" appears."#,
         expect: "snackbar Reply sent, url #thread/q3",
     },
     Task {
         id: "t8-twin-send",
-        start: "index.html",
-        text: r#"Open the "Q3 launch checklist" message, open "Compose", then click "Send"."#,
+        // preset=twin opens Compose + fills quick reply so both Send buttons are live.
+        start: "index.html?preset=twin#thread/q3",
+        text: r#"On the open "Q3 launch checklist" thread with Compose already open, click "Send"."#,
         expect: "unspecified (twin probe: compose Send vs quick-reply Send both visible)",
     },
 ];
@@ -203,14 +205,22 @@ struct Tab {
 }
 
 fn open_tab(cdp: &str, url: &str) -> Tab {
-    let body = http("PUT", cdp, &format!("/json/new?{url}"));
+    // `/json/new?{url}` cannot carry a `#fragment` in the HTTP request-target.
+    // Open a blank tab, then `Page.navigate` to the full URL (query + hash) so
+    // thread starts (`#thread/q3`) and `?preset=twin` apply in document order.
+    let body = http("PUT", cdp, "/json/new?about:blank");
     let value: Value = serde_json::from_str(&body).expect("json/new");
     let tab = Tab {
         id: value["id"].as_str().unwrap().to_owned(),
         ws: value["webSocketDebuggerUrl"].as_str().unwrap().to_owned(),
     };
-    // Let the page load before the first observe.
-    std::thread::sleep(Duration::from_millis(1200));
+    let mut socket = WebSocketTransport::connect(&tab.ws).expect("cdp for navigate");
+    let nav = json!({"url": url});
+    socket
+        .call("Page.navigate", &nav.to_string())
+        .expect("Page.navigate");
+    // Let the page load (and hash route / preset) before the first observe.
+    std::thread::sleep(Duration::from_millis(1400));
     tab
 }
 
@@ -564,6 +574,8 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 "verify checks that a quoted string is present on the page after a click",
                 "locate signals repeated_query means this exact query already ran on this unchanged page and will return the same ranking; use a suggested_position it names, or change the text or role",
                 "each region has a state: availability enabled or disabled, visibility visible, occluded, offscreen, or hidden",
+                "thread toolbar Archive and quick-reply Send exist only when the thread view is open; do not guard inbox row links or occluded twins to open a thread — this task already starts on the right view when needed",
+                "when two Send buttons are visible (Compose and quick reply), prefer the Compose sheet Send unless the task names the quick reply box",
                 "choose done when the task's check has passed, or give up when it cannot pass"
             ],
             "page_regions": regions,

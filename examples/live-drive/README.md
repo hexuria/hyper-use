@@ -16,6 +16,10 @@ nothing statistical. Use it to read transcripts and find bugs.
   an enabled "Save". `help.html` is the link target that changes URL and title.
 - `crates/hyper-use-cli/examples/live_drive.rs`: the harness. It needs the
   `jev` feature (add `hgra` when remasuring with `HYPER_USE_MATCHER=hgra`).
+  Thread tasks (`t6`–`t8`) start already on `#thread/q3` (blank tab via
+  `/json/new`, then `Page.navigate` to the full URL so the hash and query
+  survive). `t8` also uses `?preset=twin` so Compose and quick-reply `Send`
+  are both visible.
 
 ## Tools
 
@@ -64,6 +68,19 @@ guard decision, and a history of call summaries. When the last locate carried
 `repeated_query`, the position options name the candidate each suggested
 position would pick. The option order does not change, and the harness does
 not pick for JEV.
+
+## Built-in Acme tasks
+
+| id | start | notes |
+| --- | --- | --- |
+| `t1-compose-send` | `index.html` | Compose → Send |
+| `t2-nav-settings` | `index.html` | left nav Settings |
+| `t3-reveal-cc` | `index.html` | Compose → Add Cc |
+| `t4-enabled-save` | `settings.html` | enabled Save |
+| `t5-help-link` | `index.html` | top-bar Help |
+| `t6-thread-archive` | `index.html#thread/q3` | toolbar Archive (thread already open) |
+| `t7-thread-reply` | `index.html#thread/q3` | quick-reply Send |
+| `t8-twin-send` | `index.html?preset=twin#thread/q3` | twin Send probe |
 
 ## Limits
 

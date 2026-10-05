@@ -106,6 +106,8 @@ pub struct WorldSnapshot {
 }
 
 impl WorldSnapshot {
+    /// Whole-page world (MCP ranked `guard` / `seen_world`). Any new clickable
+    /// or occluded id anywhere counts as a change.
     pub fn of(manifold: &InteractionManifold, focused: Option<RegionId>) -> Self {
         let clickable = manifold
             .regions()
@@ -114,6 +116,37 @@ impl WorldSnapshot {
             .collect();
         let occluded = manifold
             .regions()
+            .filter(|region| region.flags().occluded())
+            .map(|region| region.id().clone())
+            .collect();
+        Self {
+            focused,
+            front_layer: FrontLayer::of(manifold),
+            clickable,
+            occluded,
+        }
+    }
+
+    /// Target-scoped world for agent tickets: front layer stays global (a modal
+    /// anywhere still invalidates), but clickable / occluded sets are limited
+    /// to the target's local neighborhood (ancestors, same-parent siblings,
+    /// children, and geometrically nearby root peers). An unrelated banner
+    /// elsewhere does not force a stale discard.
+    pub fn of_target(
+        manifold: &InteractionManifold,
+        focused: Option<RegionId>,
+        target: &RegionId,
+    ) -> Self {
+        let neighborhood = neighborhood_of(manifold, target);
+        let clickable = neighborhood
+            .iter()
+            .filter_map(|id| manifold.get(id))
+            .filter(|region| region.actions().contains(&Action::Click))
+            .map(|region| region.id().clone())
+            .collect();
+        let occluded = neighborhood
+            .iter()
+            .filter_map(|id| manifold.get(id))
             .filter(|region| region.flags().occluded())
             .map(|region| region.id().clone())
             .collect();
@@ -174,6 +207,56 @@ pub fn with_front_layer(manifold: &InteractionManifold) -> InteractionManifold {
         out.replace(updated);
     }
     out
+}
+
+
+/// Maximum center-to-center distance (CSS px) for two root-level regions to
+/// count as "nearby siblings" when they share no parent link.
+const NEIGHBOR_RADIUS_PX: f64 = 160.0;
+
+/// Target + ancestors + same-parent siblings + children + nearby root peers.
+pub fn neighborhood_of(manifold: &InteractionManifold, target: &RegionId) -> BTreeSet<RegionId> {
+    let mut out = BTreeSet::new();
+    out.insert(target.clone());
+    let Some(target_region) = manifold.get(target) else {
+        return out;
+    };
+    // Ancestors.
+    let mut cursor = target_region.parent().cloned();
+    while let Some(id) = cursor {
+        out.insert(id.clone());
+        cursor = manifold.get(&id).and_then(|r| r.parent().cloned());
+    }
+    let parent = target_region.parent().cloned();
+    for region in manifold.regions() {
+        if region.id() == target {
+            continue;
+        }
+        // Explicit children of the target.
+        if region.parent() == Some(target) {
+            out.insert(region.id().clone());
+            continue;
+        }
+        match (&parent, region.parent()) {
+            (Some(p), Some(rp)) if p == rp => {
+                out.insert(region.id().clone());
+            }
+            (None, None) => {
+                // Flat page: only geometrically nearby peers matter.
+                if nearby(target_region, region) {
+                    out.insert(region.id().clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn nearby(target: &InteractionRegion, other: &InteractionRegion) -> bool {
+    let tc = target.rect().center();
+    let oc = other.rect().center();
+    tc.distance(oc) <= NEIGHBOR_RADIUS_PX
 }
 
 fn dialogs(manifold: &InteractionManifold) -> impl Iterator<Item = &InteractionRegion> {
@@ -438,5 +521,136 @@ mod tests {
         ]);
         assert!(FrontLayer::of(&m).is_empty());
         assert!(blocker(&m, m.get_str("bg").unwrap()).is_none());
+    }
+
+    #[test]
+    fn target_scoped_world_ignores_unrelated_banner() {
+        let before = page(vec![
+            region(
+                "go",
+                Role::Button,
+                "Go",
+                (20.0, 20.0, 80.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+            region(
+                "search",
+                Role::TextField,
+                "Search",
+                (20.0, 60.0, 200.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+        ]);
+        let ticket_world = WorldSnapshot::of_target(&before, None, &RegionId::try_new("go").unwrap());
+        let with_banner = page(vec![
+            region(
+                "go",
+                Role::Button,
+                "Go",
+                (20.0, 20.0, 80.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+            region(
+                "search",
+                Role::TextField,
+                "Search",
+                (20.0, 60.0, 200.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+            // Far away cookie banner — outside neighborhood radius.
+            region(
+                "cookie",
+                Role::Button,
+                "Accept cookies",
+                (900.0, 700.0, 120.0, 40.0),
+                None,
+                DOM,
+                "",
+            ),
+        ]);
+        let after_world = WorldSnapshot::of_target(&with_banner, None, &RegionId::try_new("go").unwrap());
+        assert_eq!(ticket_world, after_world);
+
+        // Whole-page snapshot still sees the banner.
+        assert_ne!(
+            WorldSnapshot::of(&before, None),
+            WorldSnapshot::of(&with_banner, None)
+        );
+    }
+
+    #[test]
+    fn target_scoped_world_sees_target_swap_and_modal() {
+        let before = page(vec![
+            region(
+                "go",
+                Role::Button,
+                "Go",
+                (20.0, 20.0, 80.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+        ]);
+        let world = WorldSnapshot::of_target(&before, None, &RegionId::try_new("go").unwrap());
+
+        // Nearby twin replaces the action space around the target.
+        let swapped = page(vec![
+            region(
+                "go",
+                Role::Button,
+                "Go",
+                (20.0, 20.0, 80.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+            region(
+                "go2",
+                Role::Button,
+                "Go now",
+                (110.0, 20.0, 80.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+        ]);
+        assert_ne!(
+            world,
+            WorldSnapshot::of_target(&swapped, None, &RegionId::try_new("go").unwrap())
+        );
+
+        // Modal anywhere is global front-layer.
+        let modal = page(vec![
+            region(
+                "go",
+                Role::Button,
+                "Go",
+                (20.0, 20.0, 80.0, 30.0),
+                None,
+                DOM,
+                "",
+            ),
+            region(
+                "dlg",
+                Role::Dialog,
+                "Confirm",
+                (300.0, 200.0, 400.0, 300.0),
+                None,
+                DOM,
+                "modal",
+            ),
+        ]);
+        assert_ne!(
+            world,
+            WorldSnapshot::of_target(&modal, None, &RegionId::try_new("go").unwrap())
+        );
     }
 }

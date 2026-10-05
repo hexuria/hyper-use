@@ -19,7 +19,7 @@ mod text;
 mod types;
 
 pub use escalate::EscalatingPolicy;
-pub use goal::AgentGoal;
+pub use goal::{split_sequential_clauses, AgentGoal};
 pub use pua_policy::PuaPolicy;
 #[cfg(feature = "remote")]
 pub use remote::{

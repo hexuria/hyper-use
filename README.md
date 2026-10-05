@@ -42,6 +42,13 @@ cargo run -p hyper-use-cli -- run --cdp http://127.0.0.1:9222 \
 # Offline: predict-only dry run on a manifold (a --fixture *.cdp.json replay
 # runs the full loop, but must script every observe/input/observe CDP call)
 cargo run -p hyper-use-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
+# Full offline agent loop (type / click / select CDP replays)
+cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+  --fixture fixtures/agent-type-search.cdp.json
+cargo run -p hyper-use-cli -- run --goal "Click Go" \
+  --fixture fixtures/agent-click-go.cdp.json
+cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
+  --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
 ```rust
@@ -62,6 +69,13 @@ debug helpers.
 ```bash
 cargo test --workspace
 cargo run -p hyper-use-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
+# Full offline agent loop (type / click / select CDP replays)
+cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+  --fixture fixtures/agent-type-search.cdp.json
+cargo run -p hyper-use-cli -- run --goal "Click Go" \
+  --fixture fixtures/agent-click-go.cdp.json
+cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
+  --fixture fixtures/agent-select-cabin.cdp.json
 cargo run -p hyper-use-cli -- observe --fixture fixtures/sign-in.cdp.json
 cargo run -p hyper-use-cli -- guard \
   --fixture fixtures/sign-in.cdp.json \

@@ -87,11 +87,12 @@ fn readonly_field_rejection_over_cdp_types_nothing() {
 #[test]
 fn stale_rerender_over_cdp_never_reaches_input() {
     let page = search_page();
+    // Nearby peer (not a far banner): target-scoped world must go stale.
     let changed = PageSpec::of(
         &[
             Control::text_field(10, 100, "Search", (20.0, 20.0, 300.0, 28.0)),
             Control::button(11, 101, "Go", (340.0, 20.0, 60.0, 28.0)),
-            Control::button(12, 102, "Accept cookies", (20.0, 600.0, 160.0, 28.0)),
+            Control::button(12, 102, "Accept cookies", (420.0, 20.0, 160.0, 28.0)),
         ],
         "http://127.0.0.1/search",
         "Search",

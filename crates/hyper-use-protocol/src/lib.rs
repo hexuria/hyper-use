@@ -77,6 +77,7 @@ mod tests {
         assert_eq!(GuardReason::Ambiguous.as_str(), "ambiguous");
         assert_eq!(GuardReason::MissingTarget.as_str(), "missing-target");
         assert_eq!(GuardReason::Disabled.as_str(), "disabled");
+        assert_eq!(GuardReason::Readonly.as_str(), "readonly");
         assert_eq!(GuardReason::FrontLayer.as_str(), "front-layer");
         assert_eq!(GuardReason::WorldChanged.as_str(), "world-changed");
         assert_eq!(

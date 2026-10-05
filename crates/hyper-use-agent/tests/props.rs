@@ -6,11 +6,20 @@ use hyper_use_guard::{gate, TicketLedger};
 use hyper_use_policy::PuaPolicy;
 use proptest::prelude::*;
 
+#[derive(Clone, Copy)]
+enum Extra {
+    None,
+    /// Far from every button in this fixture — target-scoped world ignores it.
+    FarBanner,
+    /// One peer beside each button — must invalidate every target's neighborhood.
+    NearPeers,
+}
+
 fn page(
     n: usize,
     relabel: Option<(usize, &str)>,
     drop: Option<usize>,
-    extra: bool,
+    extra: Extra,
     modal: bool,
 ) -> InteractionManifold {
     let mut src = String::from("viewport w=800 h=600\n");
@@ -27,8 +36,24 @@ fn page(
             10 + i * 30
         ));
     }
-    if extra {
-        src.push_str("region id=toast role=button label=\"Undo\" x=600 y=500 w=80 h=20 actions=click sources=dom,accessibility\n");
+    match extra {
+        Extra::None => {}
+        Extra::FarBanner => {
+            src.push_str(
+                "region id=toast role=button label=\"Undo\" x=600 y=500 w=80 h=20 actions=click sources=dom,accessibility\n",
+            );
+        }
+        Extra::NearPeers => {
+            for i in 0..n {
+                if drop == Some(i) {
+                    continue;
+                }
+                src.push_str(&format!(
+                    "region id=near{i} role=button label=\"Peer {i}\" x=100 y={} w=80 h=20 actions=click sources=dom,accessibility\n",
+                    10 + i * 30
+                ));
+            }
+        }
     }
     if modal {
         src.push_str("region id=dlg role=dialog label=\"Hold on\" x=300 y=200 w=200 h=150 actions=focus sources=dom,accessibility flags=modal\n");
@@ -38,29 +63,33 @@ fn page(
 
 proptest! {
     /// The executor dispatches only the ticket's target, and only when the
-    /// target and world are unchanged since the ticket was issued.
+    /// target and neighborhood (or global front layer) are unchanged since
+    /// the ticket was issued. An unrelated far banner is not a world change.
     #[test]
     fn stale_never_executes_and_target_cannot_be_substituted(
         n in 2usize..6,
         pick in 0usize..6,
-        mutation in 0u8..6,
+        mutation in 0u8..7,
         other in 0usize..6,
     ) {
         let pick = pick % n;
         let other = other % n;
-        let before = page(n, None, None, false, false);
+        let before = page(n, None, None, Extra::None, false);
         let target = RegionId::try_new(format!("b{pick}")).unwrap();
         let ticket = gate(&before, &target, Action::Click, None, 0).unwrap();
         let after = match mutation {
             0 => before.clone(),
-            1 => page(n, Some((pick, "Delete everything")), None, false, false),
-            2 => page(n, None, Some(pick), false, false),
-            3 => page(n, None, None, true, false),
-            4 => page(n, None, None, false, true),
-            _ => page(n, Some((other, "Renamed")), None, false, false),
+            1 => page(n, Some((pick, "Delete everything")), None, Extra::None, false),
+            2 => page(n, None, Some(pick), Extra::None, false),
+            3 => page(n, None, None, Extra::FarBanner, false),
+            4 => page(n, None, None, Extra::None, true),
+            5 => page(n, Some((other, "Renamed")), None, Extra::None, false),
+            _ => page(n, None, None, Extra::NearPeers, false),
         };
         let expect_exec = match mutation {
             0 => true,
+            // Far banner: target-scoped world does not change.
+            3 => true,
             5 => other != pick,
             _ => false,
         };

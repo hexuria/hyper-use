@@ -126,7 +126,8 @@ fn fingerprint_of(parts: &RegionParts) -> StateFingerprint {
         Some(id) => mix(&mut hash, id.as_str().as_bytes()),
         None => mix(&mut hash, b"-"),
     }
-    mix(&mut hash, &[parts.sources.bits(), parts.flags.bits()]);
+    mix(&mut hash, &[parts.sources.bits()]);
+    mix(&mut hash, &parts.flags.bits().to_le_bytes());
     let stability_q = (parts.temporal_stability.get() * 1_000_000.0).round() as u64;
     mix(&mut hash, &stability_q.to_le_bytes());
     StateFingerprint::from_bits(hash)

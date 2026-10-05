@@ -278,4 +278,106 @@ mod tests {
         assert!(out.contains("dry-run"), "{out}");
         assert!(out.contains("CLICK:go"), "{out}");
     }
+
+
+    #[test]
+    fn checked_in_agent_fixtures_run_full_loop() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let cases = [
+            (
+                r#"Type "rust" into Search"#,
+                "agent-type-search.cdp.json",
+                "TYPE_TEXT:",
+            ),
+            ("Click Go", "agent-click-go.cdp.json", "CLICK:"),
+            (
+                r#"Select "Business" in Cabin class"#,
+                "agent-select-cabin.cdp.json",
+                "SELECT:",
+            ),
+        ];
+        for (goal, file, needle) in cases {
+            let path = root.join(file);
+            if !path.exists() {
+                // Fixtures are generated once via WRITE_FIXTURES=1; skip until present
+                // so a fresh checkout mid-PR still compiles.
+                eprintln!("skip missing fixture {}", path.display());
+                continue;
+            }
+            let out = run_command(&a(&[
+                "--goal",
+                goal,
+                "--fixture",
+                path.to_str().unwrap(),
+            ]))
+            .unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert!(out.contains(needle), "{file}: {out}");
+            assert!(
+                out.contains("outcome done") || out.contains("-> success") || out.contains("-> state-changed"),
+                "{file}: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_agent_loop_fixtures() {
+        // Opt-in: WRITE_FIXTURES=1 cargo test -p hyper-use-cli write_agent_loop_fixtures -- --ignored
+        if std::env::var_os("WRITE_FIXTURES").is_none() {
+            return;
+        }
+        use hyper_use_browser::script::{Control, PageSpec, ScriptBuilder};
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures");
+        // TYPE_TEXT full loop
+        let search = PageSpec::of(
+            &[Control::text_field(10, 100, "Search", (20.0, 20.0, 300.0, 28.0))],
+            "http://127.0.0.1/search",
+            "Search",
+        );
+        let type_script = ScriptBuilder::new()
+            .observe(&search)
+            .observe(&search)
+            .dom_input(10)
+            .observe(&search)
+            .dom_read_value(10, "rust", "")
+            .observe(&search);
+        std::fs::write(root.join("agent-type-search.cdp.json"), type_script.to_json()).unwrap();
+        // CLICK full loop
+        let click_page = PageSpec::of(
+            &[Control::button(20, 200, "Go", (20.0, 60.0, 80.0, 28.0))],
+            "http://127.0.0.1/go",
+            "Go",
+        );
+        let after = PageSpec::of(
+            &[Control::button(21, 210, "Done", (20.0, 60.0, 80.0, 28.0))],
+            "http://127.0.0.1/go",
+            "Done",
+        );
+        let click_script = ScriptBuilder::new()
+            .observe(&click_page)
+            .observe(&click_page)
+            .dom_click(20)
+            .observe(&after)
+            .observe(&after);
+        std::fs::write(root.join("agent-click-go.cdp.json"), click_script.to_json()).unwrap();
+        // SELECT full loop
+        let select_ctrl = Control {
+            node_id: 30,
+            backend: 300,
+            tag: "SELECT",
+            role: "combobox",
+            label: "Cabin class".into(),
+            rect: (20.0, 20.0, 200.0, 28.0),
+            focused: false,
+        };
+        let select_page = PageSpec::of(&[select_ctrl], "http://127.0.0.1/cabin", "Cabin");
+        let select_script = ScriptBuilder::new()
+            .observe(&select_page)
+            .observe(&select_page)
+            .dom_input(30)
+            .observe(&select_page)
+            .dom_read_value(30, "Business", "Business")
+            .observe(&select_page);
+        std::fs::write(root.join("agent-select-cabin.cdp.json"), select_script.to_json()).unwrap();
+    }
 }

@@ -16,6 +16,8 @@ pub(crate) struct DomElement {
     pub actions: Vec<Action>,
     pub disabled: bool,
     pub hidden: bool,
+    /// HTML `readonly` attribute or `aria-readonly="true"`.
+    pub readonly: bool,
     /// `aria-modal="true"`. Only meaningful on a dialog.
     pub modal: bool,
     /// Backend ids of kept ancestors, nearest first.
@@ -284,6 +286,8 @@ fn element_from(node: &Value) -> Option<DomElement> {
         || attributes.get("aria-disabled").map(String::as_str) == Some("true");
     let hidden = attributes.contains_key("hidden")
         || attributes.get("aria-hidden").map(String::as_str) == Some("true");
+    let readonly = attributes.contains_key("readonly")
+        || attributes.get("aria-readonly").map(String::as_str) == Some("true");
     let modal = attributes.get("aria-modal").map(String::as_str) == Some("true");
     Some(DomElement {
         node_id,
@@ -293,6 +297,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         actions: dom_actions(name, role),
         disabled,
         hidden,
+        readonly,
         modal,
         ancestors: Vec::new(),
     })

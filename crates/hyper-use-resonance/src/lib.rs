@@ -47,7 +47,7 @@ use hyper_use_hyper::{cosine, Dims, Encoder};
 pub use error::ResonanceError;
 pub use hyper_use_hyper::BipolarVector;
 pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
-pub use state::{Availability, RegionState, Visibility};
+pub use state::{separating_zone, Availability, RegionState, Visibility};
 
 use signature::{query_probes, region_signature as compose_signature, Memory};
 

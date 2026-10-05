@@ -15,11 +15,13 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod repeat;
 mod rpc;
 mod server;
 mod tools;
 
 pub use error::ToolError;
+pub use repeat::{REPEAT_THRESHOLD, REPEAT_WINDOW};
 pub use rpc::{handle_line, serve_stdio};
 pub use server::{CdpConnector, Server, MAX_LIVE_SESSIONS};
 pub use tools::call_tool;

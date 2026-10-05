@@ -148,7 +148,7 @@ fn tool_spec(name: &str) -> Value {
             Vec::<&str>::new(),
         ),
         "locate" => (
-            "Rank regions for one query. Default matcher is weighted. matcher hgra selects the hyperdimensional ranker and is not a benchmark and not a measured win. Returns the top target id, role, label, and confidence. Does not click.",
+            "Rank regions for one query. Default matcher is weighted. matcher hgra selects the hyperdimensional ranker and is not a benchmark and not a measured win. Returns the top target id, role, label, and confidence, and candidates with state. signals carries repeated_query when the same query already ran on the same page state, with top and runner_up ids and a suggested_position that separates each; it is data and does not refuse or retry. Does not click.",
             locate_props(),
             Vec::new(),
         ),

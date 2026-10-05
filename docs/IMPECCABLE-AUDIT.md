@@ -133,6 +133,6 @@ Exit code 0 = all caught; 2 = missed mutants (see `mutants.out/missed.txt`);
 - Live A/B/C/D on pinned main (needs jev-ultrafast / paid remote).
 - Model-backed `TextResolver` — done after this audit behind `model-text`
   ([ADR 0006](adr/0006-model-text-resolver.md)).
-- iframes, shadow DOM, virtualized lists, autocomplete.
+- cross-origin iframe / closed shadow / off-window virtualized inventory (ADR 0007 covers same-origin pierce, open shadow, visible window, autocomplete).
 - Retiring the MCP float gate with A5 / A6.
 - Known limits in `docs/DECISIONS.md` ("Known limits, not fixed").

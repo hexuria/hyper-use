@@ -203,7 +203,7 @@ label-only gate gets wrong (the tests assert the old failure first).
   custom backdrops, and high-z toasts refuse as `occluded`. Dialog
   `front-layer` remains the path for `Role::Dialog`.
 - Still invisible to both paths: `clip-path` / mask, canvas / WebGL, cross-origin
-  iframe contents, closed shadow trees (`DOM.getDocument` uses `pierce: false`),
+  cross-origin iframe contents, closed shadow trees (open shadow + same-origin iframe content are walked with `pierce: true`),
   and mid-animation frames. `pointer-events: none` coverers do not bury victims
   in the stacking map; hit-test already skips them the same way Chrome does.
 - A native `<dialog>` opened with `showModal()` without `aria-modal` is modal
@@ -1299,3 +1299,11 @@ Verifiers: `hgra_exact_label_outranks_superset_labels_with_lower_ids`,
 `hgra_label_hit_with_the_wrong_role_outranks_a_nameless_region`,
 `hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum`, and the
 printing test `remeasure_hgra_against_weighted_on_the_locate_corpus`.
+
+## Harder page types (ADR 0007)
+
+`DOM.getDocument` uses `pierce: true`. Walk order: `children` → open
+`shadowRoots` → same-origin `contentDocument`. Roles `combobox` / `listbox` /
+`option` are first-class. Virtualized lists expose only the visible window;
+autocomplete is TYPE then ticketed option CLICK after re-observe. Still
+invisible: cross-origin iframes, closed shadow, off-window recycler rows.

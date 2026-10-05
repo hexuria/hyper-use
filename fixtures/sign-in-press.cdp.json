@@ -16,7 +16,7 @@
       "method": "DOM.getDocument",
       "params": {
         "depth": -1,
-        "pierce": false
+        "pierce": true
       },
       "result": {
         "root": {

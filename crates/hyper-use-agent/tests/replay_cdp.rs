@@ -191,3 +191,60 @@ fn scroll_over_cdp_is_one_wheel_event_at_viewport_center() {
         (720.0 * SCROLL_VIEWPORT_FRACTION).round()
     );
 }
+
+#[test]
+fn autocomplete_type_then_option_click_over_cdp() {
+    let empty = PageSpec::of(
+        &[Control::combobox(
+            10,
+            100,
+            "City",
+            (10.0, 10.0, 200.0, 28.0),
+        )],
+        "http://127.0.0.1/auto",
+        "Auto",
+    );
+    let open = PageSpec::of(
+        &[
+            Control::combobox(10, 100, "City", (10.0, 10.0, 200.0, 28.0)),
+            Control::option(11, 110, "Manila", (10.0, 40.0, 200.0, 28.0)),
+        ],
+        "http://127.0.0.1/auto",
+        "Auto",
+    );
+    // Post-click page keeps Manila (history → DONE) and adds a marker so
+    // verify sees state-changed rather than no-effect.
+    let picked = PageSpec::of(
+        &[
+            Control::combobox(10, 100, "City", (10.0, 10.0, 200.0, 28.0)),
+            Control::option(11, 110, "Manila", (10.0, 40.0, 200.0, 28.0)),
+            Control::button(12, 120, "picked", (10.0, 80.0, 80.0, 24.0)),
+        ],
+        "http://127.0.0.1/auto",
+        "Auto",
+    );
+    let script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10)
+        .observe(&open) // after TYPE (popup open)
+        .dom_read_value(10, "man", "")
+        .observe(&open) // TYPE clause → DONE
+        .observe(&open) // predict CLICK Manila
+        .observe(&open) // executor revalidate CLICK
+        .dom_click(11)
+        .observe(&picked) // after CLICK (state-changed)
+        .observe(&picked); // CLICK clause → DONE
+    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+        .max_steps(6)
+        .build(r#"Type "man" into City then click Manila"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[1].kind, ActionKind::Click);
+    assert_eq!(steps[1].label, "Manila");
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+}

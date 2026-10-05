@@ -224,12 +224,13 @@ fn role_mentioned(goal: &str, role: Role) -> bool {
     let key = match role {
         Role::Button => "button",
         Role::Link => "link",
-        Role::TextField => "text",
+        Role::TextField | Role::ComboBox => "text",
         Role::Checkbox => "checkbox",
-        Role::MenuItem => "menu",
+        Role::MenuItem | Role::Option => "menu",
         Role::Tab => "tab",
         Role::Dialog => "dialog",
         Role::Navigation => "nav",
+        Role::ListBox => "list",
         _ => return false,
     };
     g.contains(key)

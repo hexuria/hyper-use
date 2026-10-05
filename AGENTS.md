@@ -64,6 +64,11 @@ crate.
 >    replies must echo the context fingerprint, pass shape checks, and occur
 >    in the goal clause, else deterministic fallback, else abstain. CI uses
 >    scripted models only; no provider SDK or key handling in the tree.
+> 7b. **Harder page types** (ADR 0007). Observe pierces open shadow roots and
+>    same-origin iframes (`pierce: true`). ComboBox / ListBox / Option are
+>    first-class roles. Virtualized lists are the visible window only (scroll
+>    + re-observe). Autocomplete is TYPE then ticketed option act after
+>    re-observe. Do not claim cross-origin iframe or closed-shadow coverage.
 > 8. **Remote escalation is explicit and closed.** Feature `remote`;
 >    reply is exactly a choice id + kind from the offered menu or abstain.
 >    Selectors, coordinates, scripts, extra fields → hard error.

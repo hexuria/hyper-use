@@ -455,3 +455,131 @@ fn readonly_flipped_after_predict_refuses_at_executor_gate() {
     );
     assert!(agent.browser_mut().input_log().is_empty());
 }
+
+#[test]
+fn autocomplete_type_then_click_option_with_ticket_revalidate() {
+    use hyper_use_agent::TickResult;
+    let before = m(r#"
+        viewport w=800 h=600
+        region id=city role=combobox label="City" x=10 y=10 w=240 h=28 actions=click,type,select,focus sources=dom,accessibility
+        "#);
+    // After typing, a suggestion list appears (visible window only).
+    let after_type = m(r#"
+        viewport w=800 h=600
+        region id=city role=combobox label="City" x=10 y=10 w=240 h=28 actions=click,type,select,focus sources=dom,accessibility
+        region id=list role=listbox label="Suggestions" x=10 y=40 w=240 h=120 actions=focus sources=dom,accessibility
+        region id=opt1 role=option label="Manila" x=10 y=40 w=240 h=28 actions=click,select,focus sources=dom,accessibility parent=list
+        region id=opt2 role=option label="Cebu" x=10 y=70 w=240 h=28 actions=click,select,focus sources=dom,accessibility parent=list
+        "#);
+    let after_click = m(r#"
+        viewport w=800 h=600
+        region id=city role=combobox label="City" x=10 y=10 w=240 h=28 actions=click,type,select,focus sources=dom,accessibility
+        region id=opt1 role=option label="Manila" x=10 y=40 w=240 h=28 actions=click,select,focus sources=dom,accessibility
+        region id=picked role=text label="picked Manila" x=10 y=80 w=200 h=20 actions=focus sources=dom,accessibility
+        "#);
+    let mut browser = MockBrowser::new(before);
+    // Typing opens the suggestion popup (next dispatch swaps the manifold).
+    browser.set_on_press(after_type);
+    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+        .max_steps(10)
+        .build(r#"Type "man" into City then click Manila"#);
+    assert_eq!(agent.clauses().len(), 2);
+    let mut outcome = None;
+    for _ in 0..20 {
+        match agent.tick() {
+            Ok(TickResult::Stepped(step)) if step.kind == ActionKind::TypeText => {
+                // The option click (ticketed, revalidated on fresh observe)
+                // closes the popup.
+                agent.browser_mut().set_on_press(after_click.clone());
+            }
+            Ok(TickResult::Stepped(_))
+            | Ok(TickResult::StaleDiscarded { .. })
+            | Ok(TickResult::ClauseAdvanced { .. }) => {}
+            Ok(TickResult::Finished(o)) => {
+                outcome = Some(o);
+                break;
+            }
+            Err(e) => panic!("tick failed: {e}"),
+        }
+    }
+    let outcome = outcome.expect("agent did not finish");
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[1].kind, ActionKind::Click);
+    assert_eq!(steps[1].label, "Manila");
+    assert_eq!(
+        agent.browser_mut().input_log(),
+        &[
+            (id("city"), Input::Type("man".into())),
+            (id("opt1"), Input::Click),
+        ]
+    );
+}
+
+#[test]
+fn virtualized_list_scroll_then_click_newly_visible_row() {
+    use hyper_use_agent::TickResult;
+    // Visible window only: Item 1..3 on screen. Item 50 is off-window (absent).
+    let window_a = m(r#"
+        viewport w=800 h=600
+        region id=list role=listbox label="Rows" x=0 y=0 w=800 h=200 actions=focus sources=dom,accessibility
+        region id=r1 role=option label="Alpha top" x=0 y=0 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        region id=r2 role=option label="Bravo mid" x=0 y=40 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        region id=r3 role=option label="Charlie low" x=0 y=80 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        "#);
+    // After scroll, the recycler swaps the visible window (new ids / labels).
+    let window_b = m(r#"
+        viewport w=800 h=600
+        region id=list role=listbox label="Rows" x=0 y=0 w=800 h=200 actions=focus sources=dom,accessibility
+        region id=r48 role=option label="Xray far" x=0 y=0 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        region id=r49 role=option label="Yankee near" x=0 y=40 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        region id=r50 role=option label="Zebra target" x=0 y=80 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        "#);
+    let after_click = m(r#"
+        viewport w=800 h=600
+        region id=list role=listbox label="Rows" x=0 y=0 w=800 h=200 actions=focus sources=dom,accessibility
+        region id=r50 role=option label="Zebra target" x=0 y=80 w=800 h=40 actions=click,focus sources=dom,accessibility parent=list
+        region id=picked role=text label="opened zebra" x=0 y=220 w=200 h=20 actions=focus sources=dom,accessibility
+        "#);
+    let mut browser = MockBrowser::new(window_a);
+    // Predict observes window A once; the post-scroll re-observe sees the
+    // recycled window B (Item 50 did not exist as a region before).
+    browser.schedule_swap(1, window_b);
+    browser.set_on_press(after_click);
+    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+        .max_steps(10)
+        .build(r#"scroll down then click Zebra target"#);
+    assert_eq!(agent.clauses().len(), 2);
+    let mut outcome = None;
+    for _ in 0..20 {
+        match agent.tick() {
+            Ok(TickResult::Stepped(_))
+            | Ok(TickResult::StaleDiscarded { .. })
+            | Ok(TickResult::ClauseAdvanced { .. }) => {}
+            Ok(TickResult::Finished(o)) => {
+                outcome = Some(o);
+                break;
+            }
+            Err(e) => panic!("tick failed: {e}"),
+        }
+    }
+    let outcome = outcome.expect("agent did not finish");
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert!(
+        steps.iter().any(|s| s.kind == ActionKind::ScrollDown),
+        "{steps:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.kind == ActionKind::Click && s.label == "Zebra target"),
+        "{steps:?}"
+    );
+    assert_eq!(
+        agent.browser_mut().input_log().last(),
+        Some(&(id("r50"), Input::Click))
+    );
+}

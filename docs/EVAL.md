@@ -117,9 +117,12 @@ browser; it measures nothing.
 | readonly observed before TYPE | `gate` unit, `adversarial` | hard refuse / no input |
 | unrelated far banner vs nearby twin | `world` unit, `ticket`, `adversarial` | far OK; nearby/modal stale |
 
-Not covered yet: iframes, shadow DOM, virtualized lists, autocomplete
-suggestion popups, checkbox/radio "already satisfied", navigation between
-prediction and execution on a live page.
+Covered offline (ADR 0007): same-origin iframe pierce, open shadow pierce,
+ARIA combobox/option autocomplete (TYPE → re-observe → ticketed CLICK),
+virtualized list visible window + scroll → re-observe → click.
+Still not covered: cross-origin iframe, closed shadow, infinite-scroll
+inventory, checkbox/radio "already satisfied", navigation between prediction
+and execution on a live page.
 
 ## Honest gaps / out of scope
 
@@ -154,7 +157,9 @@ stdin and prints `{"text":"…","context_fingerprint":<same number>}` or
 `{"declined":"reason"}`. Library: `AgentBuilder::model_text(model)` with any
 `TextModel`, or `.text_resolver(ModelTextResolver::new(m).without_fallback())`
 to abstain instead of falling back.
-- iframes / shadow DOM / virtualized lists / autocomplete are not covered.
+- Harder page types (ADR 0007): same-origin iframe + open shadow pierced;
+  autocomplete TYPE→option CLICK; virtualized visible window only.
+  Still out: cross-origin iframe, closed shadow, off-window inventory.
 - MCP `guard` still uses the float `0.55` / `0.05` ranking gate for host
   preflight (A5/A6 / combo benches). Agent path uses hard `gate` only.
   Allow tickets now share `gate::check` + target-scoped world fingerprints.

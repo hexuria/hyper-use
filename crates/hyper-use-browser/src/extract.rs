@@ -1,5 +1,9 @@
 //! Turn CDP JSON into raw nodes. This is the only parser of these result
 //! shapes. Fusion does not parse CDP.
+//!
+//! `walk_dom` follows `children`, then open `shadowRoots`, then same-origin
+//! `contentDocument` (iframe). That matches `DOM.getDocument` with
+//! `pierce: true`. Closed shadow trees and cross-origin iframes stay invisible.
 
 use serde_json::Value;
 
@@ -249,6 +253,17 @@ fn walk_dom(
             walk_dom(child, next_parent, kept_ancestors, out);
         }
     }
+    // Open shadow roots (closed ones are absent). CDP only populates
+    // `shadowRoots` when `DOM.getDocument` was called with `pierce: true`.
+    if let Some(roots) = node.get("shadowRoots").and_then(Value::as_array) {
+        for root in roots {
+            walk_dom(root, next_parent, kept_ancestors, out);
+        }
+    }
+    // Same-origin iframe document. Cross-origin frames omit `contentDocument`.
+    if let Some(doc) = node.get("contentDocument") {
+        walk_dom(doc, next_parent, kept_ancestors, out);
+    }
     if pushed_kept {
         kept_ancestors.pop();
     }
@@ -317,6 +332,7 @@ fn keep_element(name: &str, role_attr: Option<&str>, label: &str) -> bool {
             | "INPUT"
             | "TEXTAREA"
             | "SELECT"
+            | "OPTION"
             | "NAV"
             | "IMG"
             | "H1"
@@ -345,7 +361,11 @@ fn dom_role(name: &str, role_attr: Option<&str>, input_type: Option<&str>) -> Ro
         "BUTTON" => Role::Button,
         "A" => Role::Link,
         "TEXTAREA" => Role::TextField,
+        // Native <select> stays Generic (Chrome AX often says combobox); the
+        // tag still adds Select/Click via `dom_actions`. ARIA listbox/option
+        // use the dedicated roles.
         "SELECT" => Role::Generic,
+        "OPTION" => Role::Option,
         "NAV" => Role::Navigation,
         "IMG" => Role::Image,
         "H1" | "H2" | "H3" | "H4" | "H5" | "H6" => Role::Heading,
@@ -359,8 +379,8 @@ fn dom_role(name: &str, role_attr: Option<&str>, input_type: Option<&str>) -> Ro
     }
 }
 
-/// DOM element claims. A native `<select>` has no manifold role of its own
-/// (it observes as `generic`), so the tag adds the `select` claim.
+/// DOM element claims. Native `<select>` / ARIA listbox get Select; options
+/// get Click + Select so autocomplete popups are ticketable.
 fn dom_actions(name: &str, role: Role) -> Vec<Action> {
     let mut actions = actions_for_role(role);
     if name.eq_ignore_ascii_case("SELECT") {
@@ -376,10 +396,15 @@ fn dom_actions(name: &str, role: Role) -> Vec<Action> {
 pub(crate) fn actions_for_role(role: Role) -> Vec<Action> {
     match role {
         Role::TextField => vec![Action::Click, Action::Focus, Action::Type],
+        Role::ComboBox => {
+            vec![Action::Click, Action::Focus, Action::Type, Action::Select]
+        }
         Role::Checkbox => vec![Action::Click, Action::Focus, Action::Toggle],
         Role::Button | Role::Link | Role::MenuItem | Role::Tab => {
             vec![Action::Click, Action::Focus]
         }
+        Role::Option => vec![Action::Click, Action::Focus, Action::Select],
+        Role::ListBox => vec![Action::Focus, Action::Click, Action::Select],
         Role::Slider => vec![Action::Click, Action::Focus],
         _ => vec![Action::Focus],
     }
@@ -391,6 +416,9 @@ fn ax_role(value: &str) -> Option<Role> {
         "button" => Some(Role::Button),
         "link" => Some(Role::Link),
         "textbox" | "searchbox" | "textfield" => Some(Role::TextField),
+        "combobox" => Some(Role::ComboBox),
+        "listbox" => Some(Role::ListBox),
+        "option" => Some(Role::Option),
         "checkbox" => Some(Role::Checkbox),
         "menuitem" => Some(Role::MenuItem),
         "navigation" => Some(Role::Navigation),
@@ -496,4 +524,107 @@ fn parse_json(text: &str) -> Result<Value, BrowserError> {
             message: err.to_string(),
         })
     })
+}
+
+#[cfg(test)]
+mod pierce_tests {
+    use super::*;
+
+    #[test]
+    fn open_shadow_roots_are_walked_when_present() {
+        let json = r##"{
+          "root": {
+            "nodeId": 1, "backendNodeId": 1, "nodeType": 9, "nodeName": "#document",
+            "children": [{
+              "nodeId": 2, "backendNodeId": 2, "nodeType": 1, "nodeName": "DIV",
+              "attributes": [],
+              "children": [],
+              "shadowRoots": [{
+                "nodeId": 3, "backendNodeId": 3, "nodeType": 11, "nodeName": "#document-fragment",
+                "children": [{
+                  "nodeId": 10, "backendNodeId": 100, "nodeType": 1, "nodeName": "BUTTON",
+                  "attributes": ["aria-label", "Shadow Go"],
+                  "children": [{"nodeId": 11, "backendNodeId": 101, "nodeType": 3, "nodeName": "#text", "nodeValue": "Shadow Go"}]
+                }]
+              }]
+            }]
+          }
+        }"##;
+        let doc = dom_document(json).unwrap();
+        assert_eq!(doc.elements.len(), 1);
+        assert_eq!(doc.elements[0].label, "Shadow Go");
+        assert_eq!(doc.elements[0].backend_node_id, 100);
+    }
+
+    #[test]
+    fn same_origin_iframe_content_document_is_walked() {
+        let json = r##"{
+          "root": {
+            "nodeId": 1, "backendNodeId": 1, "nodeType": 9, "nodeName": "#document",
+            "children": [{
+              "nodeId": 2, "backendNodeId": 2, "nodeType": 1, "nodeName": "IFRAME",
+              "attributes": [],
+              "children": [],
+              "contentDocument": {
+                "nodeId": 3, "backendNodeId": 3, "nodeType": 9, "nodeName": "#document",
+                "children": [{
+                  "nodeId": 20, "backendNodeId": 200, "nodeType": 1, "nodeName": "BUTTON",
+                  "attributes": ["aria-label", "Frame Save"],
+                  "children": [{"nodeId": 21, "backendNodeId": 201, "nodeType": 3, "nodeName": "#text", "nodeValue": "Frame Save"}]
+                }]
+              }
+            }]
+          }
+        }"##;
+        let doc = dom_document(json).unwrap();
+        assert_eq!(doc.elements.len(), 1);
+        assert_eq!(doc.elements[0].label, "Frame Save");
+        assert_eq!(doc.elements[0].backend_node_id, 200);
+    }
+
+    #[test]
+    fn combobox_and_option_roles_claim_type_and_select() {
+        let json = r##"{
+          "root": {
+            "nodeId": 1, "backendNodeId": 1, "nodeType": 9, "nodeName": "#document",
+            "children": [
+              {
+                "nodeId": 10, "backendNodeId": 100, "nodeType": 1, "nodeName": "INPUT",
+                "attributes": ["role", "combobox", "aria-label", "City"],
+                "children": []
+              },
+              {
+                "nodeId": 20, "backendNodeId": 200, "nodeType": 1, "nodeName": "DIV",
+                "attributes": ["role", "option", "aria-label", "Manila"],
+                "children": []
+              }
+            ]
+          }
+        }"##;
+        let doc = dom_document(json).unwrap();
+        assert_eq!(doc.elements.len(), 2);
+        assert_eq!(doc.elements[0].role, Role::ComboBox);
+        assert!(doc.elements[0].actions.contains(&Action::Type));
+        assert_eq!(doc.elements[1].role, Role::Option);
+        assert!(doc.elements[1].actions.contains(&Action::Click));
+        assert!(doc.elements[1].actions.contains(&Action::Select));
+    }
+
+    #[test]
+    fn native_select_observes_as_generic_with_select_claim() {
+        let json = r##"{
+          "root": {
+            "nodeId": 1, "backendNodeId": 1, "nodeType": 9, "nodeName": "#document",
+            "children": [{
+              "nodeId": 10, "backendNodeId": 100, "nodeType": 1, "nodeName": "SELECT",
+              "attributes": ["aria-label", "Cabin"],
+              "children": []
+            }]
+          }
+        }"##;
+        let doc = dom_document(json).unwrap();
+        assert_eq!(doc.elements.len(), 1);
+        assert_eq!(doc.elements[0].role, Role::Generic);
+        assert!(doc.elements[0].actions.contains(&Action::Select));
+    }
 }

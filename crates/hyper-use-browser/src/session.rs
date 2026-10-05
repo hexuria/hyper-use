@@ -129,7 +129,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         let viewport = extract::parse_viewport(&layout)?;
         let document = self.call(
             "DOM.getDocument",
-            &json!({"depth": -1, "pierce": false}).to_string(),
+            &json!({"depth": -1, "pierce": true}).to_string(),
         )?;
         let dom = extract::dom_document(&document)?;
         let ax_tree = self.call("Accessibility.getFullAXTree", &json!({}).to_string())?;

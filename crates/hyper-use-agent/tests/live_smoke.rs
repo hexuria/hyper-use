@@ -93,3 +93,58 @@ fn owned_loop_drives_type_select_click_scroll_on_live_chrome() {
         VerificationKind::StateChanged,
     );
 }
+
+const HARDER: &str = r#"<!doctype html><title>HU harder</title>
+<div id=host></div>
+<script>
+const host = document.getElementById('host');
+const root = host.attachShadow({mode:'open'});
+root.innerHTML = '<button aria-label="Shadow Ping">Shadow Ping</button>';
+</script>
+<input role=combobox aria-label=City id=city style=width:200px>
+<div role=listbox aria-label=Suggestions>
+  <div role=option aria-label=Manila>Manila</div>
+</div>
+<iframe id=frame srcdoc="<button aria-label=Frame Hi>Frame Hi</button>"></iframe>
+"#;
+
+fn harder_data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in HARDER.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (HYPER_USE_CDP)"]
+fn harder_page_types_observe_shadow_iframe_combobox_on_live_chrome() {
+    let endpoint =
+        std::env::var("HYPER_USE_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&harder_data_url()).unwrap();
+    session.settle();
+    let m = BrowserRuntime::observe(&mut session).unwrap().clone();
+    let labels: Vec<_> = m.regions().map(|r| r.label().to_owned()).collect();
+    eprintln!("labels: {labels:?}");
+    assert!(
+        labels.iter().any(|l| l == "Shadow Ping"),
+        "open shadow button missing: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "City"),
+        "combobox missing: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "Manila"),
+        "option missing: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "Frame Hi"),
+        "same-origin iframe button missing: {labels:?}"
+    );
+}

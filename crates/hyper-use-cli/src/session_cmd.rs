@@ -79,6 +79,7 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
     let mut region: Option<String> = None;
     let mut verb: Option<String> = None;
     let mut confidence: Option<String> = None;
+    let mut runner_up: Option<String> = None;
     let mut fixture: Option<String> = None;
     let mut cdp: Option<String> = None;
     let mut executor: Option<String> = None;
@@ -93,6 +94,8 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             set_once("confidence", &mut confidence, value.to_owned())?;
         } else if let Some(value) = arg.strip_prefix("--executor=") {
             set_once("executor", &mut executor, value.to_owned())?;
+        } else if let Some(value) = arg.strip_prefix("--runner-up=") {
+            set_once("runner-up", &mut runner_up, value.to_owned())?;
         } else if arg == "--cdp" {
             if cdp.is_some() {
                 return Err(CliError::DuplicateFlag("--cdp"));
@@ -104,12 +107,17 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
             } else {
                 cdp = Some(DEFAULT_CDP_HTTP.to_owned());
             }
-        } else if arg == "--fixture" || arg == "--confidence" || arg == "--executor" {
+        } else if arg == "--fixture"
+            || arg == "--confidence"
+            || arg == "--executor"
+            || arg == "--runner-up"
+        {
             index += 1;
             let flag = match arg.as_str() {
                 "--fixture" => "--fixture",
                 "--confidence" => "--confidence",
                 "--executor" => "--executor",
+                "--runner-up" => "--runner-up",
                 _ => "--flag",
             };
             let Some(value) = args.get(index) else {
@@ -122,6 +130,7 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
                 "--fixture" => set_once("fixture", &mut fixture, value.clone())?,
                 "--confidence" => set_once("confidence", &mut confidence, value.clone())?,
                 "--executor" => set_once("executor", &mut executor, value.clone())?,
+                "--runner-up" => set_once("runner-up", &mut runner_up, value.clone())?,
                 _ => unreachable!("flag matched"),
             }
         } else if arg.starts_with("--") {
@@ -142,9 +151,15 @@ pub(crate) fn act_command(args: &[String]) -> Result<String, CliError> {
     }
     let id = RegionId::try_new(&region).map_err(|_| CliError::UnknownRegion(region.clone()))?;
     let mut request = ActionRequest::new(id, hyper_use_core::Action::Click);
-    if let Some(raw) = confidence {
-        let value = f64::from_str(&raw).map_err(|_| CliError::BadConfidence(raw.clone()))?;
-        request = request.scored(value);
+    let parse_score =
+        |raw: &str| f64::from_str(raw).map_err(|_| CliError::BadConfidence(raw.to_owned()));
+    match (confidence.as_deref(), runner_up.as_deref()) {
+        (None, None) => {}
+        (None, Some(_)) => return Err(CliError::RunnerUpNeedsConfidence),
+        (Some(top), None) => request = request.scored(parse_score(top)?),
+        (Some(top), Some(second)) => {
+            request = request.ranked(parse_score(top)?, parse_score(second)?);
+        }
     }
     let requested = match executor.as_deref() {
         None => None,
@@ -484,6 +499,17 @@ fn map_executor(err: ExecutorError) -> Result<String, CliError> {
         } => Err(CliError::ConfidenceBelowThreshold {
             confidence_millis,
             minimum_millis,
+        }),
+        ExecutorError::AmbiguousTarget {
+            top_millis,
+            runner_up_millis,
+            margin_millis,
+            minimum_margin_millis,
+        } => Err(CliError::AmbiguousTarget {
+            top_millis,
+            runner_up_millis,
+            margin_millis,
+            minimum_margin_millis,
         }),
         ExecutorError::NonFiniteConfidence => Err(CliError::NonFiniteConfidence),
         ExecutorError::NotImplemented(kind) => Err(CliError::NotImplemented {

@@ -151,4 +151,13 @@ mod tests {
         assert_eq!(refused.confidence().get(), 0.49);
         assert!(refused.state_delta().is_empty());
     }
+
+    #[test]
+    fn fallback_reasons_have_stable_names() {
+        assert_eq!(FallbackReason::LowConfidence.as_str(), "low-confidence");
+        assert_eq!(FallbackReason::NotImplemented.as_str(), "not-implemented");
+        assert_eq!(FallbackReason::VerifyFailed.as_str(), "verify-failed");
+        assert_eq!(FallbackReason::Ambiguous.as_str(), "ambiguous");
+        assert_eq!(FallbackReason::Ambiguous.to_string(), "ambiguous");
+    }
 }

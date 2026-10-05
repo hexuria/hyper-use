@@ -156,7 +156,7 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "act" => (
-            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use and executor cua each hand the located region id, role, and label to a replay transport. Neither is in the default policy order, neither changes the page, and neither is a fusion benchmark. A confidence below 0.55 returns executed false and does not click. Omit confidence only when the region was already inspected. Does not take x or y.",
+            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use and executor cua each hand the located region id, role, and label to a replay transport. Neither is in the default policy order, neither changes the page, and neither is a fusion benchmark. A confidence below 0.55 returns executed false and does not click. Pass the locate top confidence as confidence and candidates[1] as runner_up; a gap below 0.05 returns executed false with fallback ambiguous. Omit confidence only when the region was already inspected. Does not take x or y.",
             {
                 let mut props = source_props();
                 props.insert("region".into(), json!({"type": "string"}));
@@ -165,6 +165,18 @@ fn tool_spec(name: &str) -> Value {
                     json!({"type": "string", "enum": ["press", "click"]}),
                 );
                 props.insert("confidence".into(), json!({"type": "number"}));
+                props.insert(
+                    "runner_up".into(),
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "confidence": {"type": "number"}
+                        },
+                        "required": ["id", "confidence"],
+                        "description": "The second locate candidate. Requires confidence."
+                    }),
+                );
                 props.insert(
                     "executor".into(),
                     json!({

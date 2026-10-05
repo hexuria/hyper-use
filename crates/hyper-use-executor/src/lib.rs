@@ -12,8 +12,11 @@
 //! A pixel CUA driver does not exist; [`hyper_use_cua::CuaStub`] says so.
 //! A scored confidence below [`MIN_ACT_CONFIDENCE_MILLIS`] returns
 //! [`ExecutorError::ConfidenceBelowThreshold`] and does not click, and it does
-//! not call the Browser Use or CUA transport. [`ActConfidence::Inspected`] is
-//! the operator naming a region; the gate does not apply.
+//! not call the Browser Use or CUA transport. A ranked confidence whose top
+//! and runner-up are closer than [`MIN_ACT_MARGIN_MILLIS`] returns
+//! [`ExecutorError::AmbiguousTarget`] and does not act either.
+//! [`ActConfidence::Inspected`] is the operator naming a region; the gate does
+//! not apply.
 
 #![forbid(unsafe_code)]
 
@@ -89,13 +92,22 @@ impl ExecutorKind {
 /// This is not a probability and is not calibrated across matchers.
 pub const MIN_ACT_CONFIDENCE_MILLIS: i32 = 550;
 
+/// Minimum gap between the top candidate and the runner-up, in millis of the
+/// same matcher's total. 50 means 0.05. Not calibrated across matchers.
+pub const MIN_ACT_MARGIN_MILLIS: i32 = 50;
+
 /// Where the confidence came from. These variants cannot be combined.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ActConfidence {
     /// The operator named the region. The confidence gate does not apply.
     Inspected,
     /// A matcher total. Compared with [`MIN_ACT_CONFIDENCE_MILLIS`].
     Scored(f64),
+    /// The top total and the runner-up total from one ranking. The top is
+    /// compared with [`MIN_ACT_CONFIDENCE_MILLIS`], and the gap with
+    /// [`MIN_ACT_MARGIN_MILLIS`].
+    Ranked { top: f64, runner_up: f64 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +129,12 @@ impl ActionRequest {
 
     pub fn scored(mut self, confidence: f64) -> Self {
         self.confidence = ActConfidence::Scored(confidence);
+        self
+    }
+
+    /// Top and runner-up totals from the same ranking.
+    pub fn ranked(mut self, top: f64, runner_up: f64) -> Self {
+        self.confidence = ActConfidence::Ranked { top, runner_up };
         self
     }
 
@@ -200,6 +218,14 @@ pub enum ExecutorError {
         confidence_millis: i32,
         minimum_millis: i32,
     },
+    /// The top and runner-up totals differ by less than
+    /// [`MIN_ACT_MARGIN_MILLIS`]. No click was sent.
+    AmbiguousTarget {
+        top_millis: i32,
+        runner_up_millis: i32,
+        margin_millis: i32,
+        minimum_margin_millis: i32,
+    },
     NonFiniteConfidence,
     Browser(BrowserError),
     BrowserUse(BrowserUseError),
@@ -222,6 +248,15 @@ impl fmt::Display for ExecutorError {
             } => write!(
                 f,
                 "confidence {confidence_millis} is below the act minimum {minimum_millis}"
+            ),
+            Self::AmbiguousTarget {
+                top_millis,
+                runner_up_millis,
+                margin_millis,
+                minimum_margin_millis,
+            } => write!(
+                f,
+                "top {top_millis} and runner-up {runner_up_millis} differ by {margin_millis} millis, below the act margin {minimum_margin_millis}"
             ),
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
             Self::Browser(err) => write!(f, "{err}"),
@@ -257,9 +292,7 @@ impl ActionExecutor for StubExecutor {
     }
 
     fn execute(&mut self, request: &ActionRequest) -> Result<ActionReceipt, ExecutorError> {
-        if let ActConfidence::Scored(confidence) = request.confidence() {
-            gate_scored_confidence(confidence)?;
-        }
+        gate_confidence(request.confidence())?;
         Err(ExecutorError::NotImplemented(self.kind))
     }
 }
@@ -285,9 +318,7 @@ impl<T: CdpTransport> ActionExecutor for BrowserExecutor<T> {
     }
 
     fn execute(&mut self, request: &ActionRequest) -> Result<ActionReceipt, ExecutorError> {
-        if let ActConfidence::Scored(confidence) = request.confidence() {
-            gate_scored_confidence(confidence)?;
-        }
+        gate_confidence(request.confidence())?;
         if self.session.manifold().is_none() {
             self.session.observe().map_err(ExecutorError::Browser)?;
         }
@@ -353,9 +384,7 @@ impl<T: BrowserUseTransport> ActionExecutor for BrowserUseExecutor<T> {
                 BrowserUseError::UnsupportedAction(request.action().as_str().to_owned()),
             ));
         }
-        if let ActConfidence::Scored(confidence) = request.confidence() {
-            gate_scored_confidence(confidence)?;
-        }
+        gate_confidence(request.confidence())?;
         let receipt = self
             .transport
             .submit(&self.target)
@@ -425,9 +454,7 @@ impl<T: CuaTransport> ActionExecutor for CuaExecutor<T> {
                 request.action().as_str().to_owned(),
             )));
         }
-        if let ActConfidence::Scored(confidence) = request.confidence() {
-            gate_scored_confidence(confidence)?;
-        }
+        gate_confidence(request.confidence())?;
         let receipt = self
             .transport
             .submit(&self.target)
@@ -463,6 +490,37 @@ pub fn gate_scored_confidence(confidence: f64) -> Result<(), ExecutorError> {
     Ok(())
 }
 
+/// Refuse a ranked act whose top is low or whose runner-up is too close.
+/// The threshold is checked first, so a low top is `ConfidenceBelowThreshold`
+/// even when it is also ambiguous. A runner-up above the top also refuses.
+pub fn gate_ranked_confidence(top: f64, runner_up: f64) -> Result<(), ExecutorError> {
+    if !runner_up.is_finite() {
+        return Err(ExecutorError::NonFiniteConfidence);
+    }
+    gate_scored_confidence(top)?;
+    let top_millis = (top * 1000.0).round() as i32;
+    let runner_up_millis = (runner_up * 1000.0).round() as i32;
+    let margin_millis = top_millis - runner_up_millis;
+    if margin_millis < MIN_ACT_MARGIN_MILLIS {
+        return Err(ExecutorError::AmbiguousTarget {
+            top_millis,
+            runner_up_millis,
+            margin_millis,
+            minimum_margin_millis: MIN_ACT_MARGIN_MILLIS,
+        });
+    }
+    Ok(())
+}
+
+/// The single act gate. `Inspected` is not gated.
+pub fn gate_confidence(confidence: ActConfidence) -> Result<(), ExecutorError> {
+    match confidence {
+        ActConfidence::Inspected => Ok(()),
+        ActConfidence::Scored(score) => gate_scored_confidence(score),
+        ActConfidence::Ranked { top, runner_up } => gate_ranked_confidence(top, runner_up),
+    }
+}
+
 impl ExecutorError {
     /// Journal shape for a refusal. `executed` is false. This does not act.
     pub fn refusal_result(&self) -> Option<ComputerResult> {
@@ -475,6 +533,14 @@ impl ExecutorError {
                 Some(ComputerResult::refused(
                     confidence,
                     FallbackReason::LowConfidence,
+                ))
+            }
+            Self::AmbiguousTarget { top_millis, .. } => {
+                let confidence =
+                    MatcherConfidence::try_new(f64::from(*top_millis) / 1000.0).ok()?;
+                Some(ComputerResult::refused(
+                    confidence,
+                    FallbackReason::Ambiguous,
                 ))
             }
             Self::NotImplemented(_) => Some(ComputerResult::refused(
@@ -1082,6 +1148,126 @@ mod tests {
                 }
             );
             assert!(executor.transport().submitted().is_empty());
+        }
+    }
+
+    #[test]
+    fn ambiguous_ranked_act_does_not_click_and_refusal_is_typed() {
+        let mut executor = BrowserExecutor::new(BrowserSession::new(
+            hyper_use_browser::ReplayTransport::parse(include_str!(
+                "../../../fixtures/sign-in-press.cdp.json"
+            ))
+            .unwrap(),
+        ));
+        let request =
+            ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click).ranked(1.0, 0.98);
+        let err = executor.execute(&request).unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::AmbiguousTarget {
+                top_millis: 1000,
+                runner_up_millis: 980,
+                margin_millis: 20,
+                minimum_margin_millis: 50,
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "top 1000 and runner-up 980 differ by 20 millis, below the act margin 50"
+        );
+        assert!(executor.session().transport().logged_methods().is_empty());
+        let refused = err.refusal_result().unwrap();
+        assert!(!refused.executed());
+        assert_eq!(
+            refused.fallback(),
+            Some(hyper_use_protocol::FallbackReason::Ambiguous)
+        );
+        assert_eq!(refused.confidence().get(), 1.0);
+    }
+
+    #[test]
+    fn low_confidence_wins_over_ambiguity() {
+        assert_eq!(
+            gate_ranked_confidence(0.50, 0.49).unwrap_err(),
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: 500,
+                minimum_millis: 550,
+            }
+        );
+        assert_eq!(
+            gate_ranked_confidence(0.9, 0.95).unwrap_err(),
+            ExecutorError::AmbiguousTarget {
+                top_millis: 900,
+                runner_up_millis: 950,
+                margin_millis: -50,
+                minimum_margin_millis: 50,
+            }
+        );
+        assert_eq!(
+            gate_ranked_confidence(0.9, f64::NAN).unwrap_err(),
+            ExecutorError::NonFiniteConfidence
+        );
+        assert!(gate_ranked_confidence(1.0, 0.875).is_ok());
+        assert!(gate_ranked_confidence(1.0, 0.95).is_ok());
+    }
+
+    #[test]
+    fn inspected_act_ignores_the_margin() {
+        assert!(gate_confidence(ActConfidence::Inspected).is_ok());
+        let mut executor = BrowserExecutor::new(BrowserSession::new(
+            hyper_use_browser::ReplayTransport::parse(include_str!(
+                "../../../fixtures/sign-in-press.cdp.json"
+            ))
+            .unwrap(),
+        ));
+        let receipt = executor
+            .execute(&ActionRequest::new(
+                RegionId::try_new("n100").unwrap(),
+                Action::Click,
+            ))
+            .unwrap();
+        assert_eq!(receipt.region_id().as_str(), "n100");
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(16))]
+        #[test]
+        fn ranked_within_margin_does_not_submit(top in 550i32..=1000, gap in 0i32..50) {
+            let top_f = f64::from(top) / 1000.0;
+            let runner_f = f64::from(top - gap) / 1000.0;
+            let request = ActionRequest::new(RegionId::try_new("n100").unwrap(), Action::Click)
+                .ranked(top_f, runner_f);
+            let mut browser_use = BrowserUseExecutor::from_replay(include_str!(
+                "../../../fixtures/sign-in.browser-use.json"
+            ))
+            .unwrap();
+            let is_ambiguous = matches!(
+                browser_use.execute(&request).unwrap_err(),
+                ExecutorError::AmbiguousTarget { .. }
+            );
+            proptest::prop_assert!(is_ambiguous);
+            proptest::prop_assert!(browser_use.transport().submitted().is_empty());
+            let mut cua = CuaExecutor::from_replay(include_str!(
+                "../../../fixtures/sign-in.cua.json"
+            ))
+            .unwrap();
+            let is_ambiguous = matches!(
+                cua.execute(&request).unwrap_err(),
+                ExecutorError::AmbiguousTarget { .. }
+            );
+            proptest::prop_assert!(is_ambiguous);
+            proptest::prop_assert!(cua.transport().submitted().is_empty());
+        }
+
+        #[test]
+        fn ranked_outside_margin_passes_the_gate(top in 600i32..=1000, gap in 50i32..=600) {
+            let runner = (top - gap).max(0);
+            proptest::prop_assume!(top - runner >= 50);
+            let result = gate_ranked_confidence(
+                f64::from(top) / 1000.0,
+                f64::from(runner) / 1000.0,
+            );
+            proptest::prop_assert_eq!(result, Ok(()));
         }
     }
 }

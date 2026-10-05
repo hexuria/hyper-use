@@ -15,9 +15,9 @@ use hyper_use_core::{
     parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
 };
 use hyper_use_executor::{
-    gate_scored_confidence, select_act_executor, ActionExecutor, ActionReceipt, ActionRequest,
-    BrowserExecutor, BrowserUseError, BrowserUseExecutor, CuaError, CuaExecutor, ExecutorError,
-    ExecutorKind, StubExecutor,
+    gate_confidence, select_act_executor, ActConfidence, ActionExecutor, ActionReceipt,
+    ActionRequest, BrowserExecutor, BrowserUseError, BrowserUseExecutor, CuaError, CuaExecutor,
+    ExecutorError, ExecutorKind, StubExecutor,
 };
 use hyper_use_hyper::Dims;
 use hyper_use_observe::diff;
@@ -215,24 +215,20 @@ fn act_browser(arguments: &Value) -> Result<Value, ToolError> {
     let origin = resolve_origin(arguments)?;
     let region = require_region(arguments)?;
     let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
+    let score = parse_act_score(arguments, &region)?;
     let manifold = load_origin(&origin)?;
     if manifold.get(&region).is_none() {
         return Err(ToolError::UnknownRegion(region.to_string()));
     }
-    if let Some(score) = confidence {
-        match gate_scored_confidence(score) {
+    if let Some(score) = &score {
+        match gate_confidence(score.confidence()) {
             Ok(()) => {}
-            Err(ExecutorError::NonFiniteConfidence) => {
-                return Err(ToolError::NonFiniteConfidence);
+            Err(err) => {
+                return refusal(err, target_of(&manifold, &region), score, Some(&manifold));
             }
-            Err(ExecutorError::ConfidenceBelowThreshold { .. }) => {
-                return Ok(refused_act(&manifold, &region, score));
-            }
-            Err(other) => return Err(ToolError::Browser(other.to_string())),
         }
     }
-    let receipt = press(&origin, &region, confidence)?;
+    let receipt = press(&origin, &region, score.as_ref())?;
     let mut body = outcome(
         "act",
         target_of(&manifold, &region),
@@ -240,12 +236,96 @@ fn act_browser(arguments: &Value) -> Result<Value, ToolError> {
         true,
         false,
         empty_delta(),
-        confidence,
+        score.as_ref().map(|s| s.top),
         None,
         Some("browser"),
     );
     insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
     Ok(body)
+}
+
+/// Confidence the caller passed for an act. `None` means inspected.
+struct ActScore {
+    top: f64,
+    runner_up: Option<(RegionId, f64)>,
+}
+
+impl ActScore {
+    fn confidence(&self) -> ActConfidence {
+        match &self.runner_up {
+            None => ActConfidence::Scored(self.top),
+            Some((_, runner_up)) => ActConfidence::Ranked {
+                top: self.top,
+                runner_up: *runner_up,
+            },
+        }
+    }
+
+    fn apply(&self, request: ActionRequest) -> ActionRequest {
+        match &self.runner_up {
+            None => request.scored(self.top),
+            Some((_, runner_up)) => request.ranked(self.top, *runner_up),
+        }
+    }
+}
+
+fn parse_act_score(arguments: &Value, region: &RegionId) -> Result<Option<ActScore>, ToolError> {
+    let top = parse_confidence(arguments)?;
+    let runner_up = match arguments.get("runner_up") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(object)) => {
+            let id = object
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ToolError::BadRunnerUp("id must be a string".into()))?;
+            let id = RegionId::try_new(id)
+                .map_err(|_| ToolError::BadRunnerUp(format!("bad region id `{id}`")))?;
+            if &id == region {
+                return Err(ToolError::RunnerUpIsTarget);
+            }
+            let confidence = object
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| ToolError::BadRunnerUp("confidence must be a number".into()))?;
+            if !confidence.is_finite() {
+                return Err(ToolError::NonFiniteConfidence);
+            }
+            Some((id, confidence))
+        }
+        Some(_) => return Err(ToolError::BadRunnerUp("runner_up must be an object".into())),
+    };
+    match (top, runner_up) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(ToolError::RunnerUpNeedsConfidence),
+        (Some(top), runner_up) => Ok(Some(ActScore { top, runner_up })),
+    }
+}
+
+/// A gate refusal as a successful tool result with `executed: false`.
+fn refusal(
+    err: ExecutorError,
+    target: Value,
+    score: &ActScore,
+    manifold: Option<&InteractionManifold>,
+) -> Result<Value, ToolError> {
+    match err {
+        ExecutorError::ConfidenceBelowThreshold { .. } => Ok(refused_target(target, score.top)),
+        ExecutorError::AmbiguousTarget { margin_millis, .. } => {
+            let mut body = refused_with(target, score.top, "ambiguous");
+            if let Some((id, confidence)) = &score.runner_up {
+                let mut runner = match manifold {
+                    Some(manifold) if manifold.get(id).is_some() => target_of(manifold, id),
+                    _ => json!({"id": id.as_str()}),
+                };
+                insert(&mut runner, "confidence", json!(confidence));
+                insert(&mut body, "runner_up", runner);
+            }
+            insert(&mut body, "margin_millis", json!(margin_millis));
+            Ok(body)
+        }
+        ExecutorError::NonFiniteConfidence => Err(ToolError::NonFiniteConfidence),
+        other => Err(map_executor(other)),
+    }
 }
 
 fn diff_tool(arguments: &Value) -> Result<Value, ToolError> {
@@ -332,7 +412,7 @@ fn act_browser_use(arguments: &Value) -> Result<Value, ToolError> {
     }
     let region = require_region(arguments)?;
     let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
+    let score = parse_act_score(arguments, &region)?;
     let path = opt_str(arguments, "fixture")?.ok_or(ToolError::MissingFixture)?;
     let body = read_path(path)?;
     let mut executor = BrowserUseExecutor::from_replay(&body).map_err(map_browser_use_script)?;
@@ -340,8 +420,8 @@ fn act_browser_use(arguments: &Value) -> Result<Value, ToolError> {
         return Err(ToolError::UnknownRegion(region.to_string()));
     }
     let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
+    if let Some(score) = &score {
+        request = score.apply(request);
     }
     let target = json!({
         "id": executor.target().region_id().as_str(),
@@ -357,43 +437,37 @@ fn act_browser_use(arguments: &Value) -> Result<Value, ToolError> {
                 true,
                 false,
                 empty_delta(),
-                confidence,
+                score.as_ref().map(|s| s.top),
                 None,
                 Some(receipt.kind().as_str()),
             );
             insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
             Ok(body)
         }
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
-            Some(score) => Ok(refused_target(target, score)),
-            None => Err(ToolError::Browser(
-                "unscored act was refused for confidence".into(),
-            )),
+        Err(err) => match &score {
+            Some(score) => refusal(err, target, score, None),
+            None => Err(map_executor(err)),
         },
-        Err(err) => Err(map_executor(err)),
     }
 }
 
 fn act_stub(kind: ExecutorKind, arguments: &Value) -> Result<Value, ToolError> {
     let region = require_region(arguments)?;
     let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
+    let score = parse_act_score(arguments, &region)?;
     let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
+    if let Some(score) = &score {
+        request = score.apply(request);
     }
     let mut stub = StubExecutor::new(kind);
     match stub.execute(&request) {
         Ok(_) => Err(ToolError::Browser(
             "unimplemented executor returned a receipt".into(),
         )),
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
-            Some(score) => Ok(refused_target(json!({"id": region.as_str()}), score)),
-            None => Err(ToolError::Browser(
-                "unscored act was refused for confidence".into(),
-            )),
+        Err(err) => match &score {
+            Some(score) => refusal(err, json!({"id": region.as_str()}), score, None),
+            None => Err(map_executor(err)),
         },
-        Err(err) => Err(map_executor(err)),
     }
 }
 
@@ -403,7 +477,7 @@ fn act_cua(arguments: &Value) -> Result<Value, ToolError> {
     }
     let region = require_region(arguments)?;
     let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
+    let score = parse_act_score(arguments, &region)?;
     let path = opt_str(arguments, "fixture")?.ok_or(ToolError::MissingFixture)?;
     let body = read_path(path)?;
     let mut executor = CuaExecutor::from_replay(&body).map_err(map_cua_script)?;
@@ -411,8 +485,8 @@ fn act_cua(arguments: &Value) -> Result<Value, ToolError> {
         return Err(ToolError::UnknownRegion(region.to_string()));
     }
     let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
+    if let Some(score) = &score {
+        request = score.apply(request);
     }
     let target = json!({
         "id": executor.target().region_id().as_str(),
@@ -428,20 +502,17 @@ fn act_cua(arguments: &Value) -> Result<Value, ToolError> {
                 true,
                 false,
                 empty_delta(),
-                confidence,
+                score.as_ref().map(|s| s.top),
                 None,
                 Some(receipt.kind().as_str()),
             );
             insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
             Ok(body)
         }
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
-            Some(score) => Ok(refused_target(target, score)),
-            None => Err(ToolError::Browser(
-                "unscored act was refused for confidence".into(),
-            )),
+        Err(err) => match &score {
+            Some(score) => refusal(err, target, score, None),
+            None => Err(map_executor(err)),
         },
-        Err(err) => Err(map_executor(err)),
     }
 }
 
@@ -463,11 +534,11 @@ fn map_cua_script(err: CuaError) -> ToolError {
     }
 }
 
-fn refused_act(manifold: &InteractionManifold, region: &RegionId, score: f64) -> Value {
-    refused_target(target_of(manifold, region), score)
+fn refused_target(target: Value, score: f64) -> Value {
+    refused_with(target, score, "low-confidence")
 }
 
-fn refused_target(target: Value, score: f64) -> Value {
+fn refused_with(target: Value, score: f64, fallback: &str) -> Value {
     let mut body = outcome(
         "act",
         target,
@@ -476,7 +547,7 @@ fn refused_target(target: Value, score: f64) -> Value {
         false,
         empty_delta(),
         Some(score),
-        Some("low-confidence"),
+        Some(fallback),
         None,
     );
     insert(&mut body, "mechanism", Value::Null);
@@ -486,11 +557,11 @@ fn refused_target(target: Value, score: f64) -> Value {
 fn press(
     origin: &Origin,
     region: &RegionId,
-    confidence: Option<f64>,
+    score: Option<&ActScore>,
 ) -> Result<ActionReceipt, ToolError> {
     let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
+    if let Some(score) = score {
+        request = score.apply(request);
     }
     match origin {
         Origin::Fixture(path) => {

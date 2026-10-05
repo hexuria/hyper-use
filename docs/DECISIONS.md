@@ -496,3 +496,36 @@ three totals, the 16-case proptest
 `extra_label_tokens_strictly_lower_the_weighted_total`, the CLI test
 `locate_send_prefers_the_exact_label`, and the regression pin
 `hgra_send_order_is_unchanged`. No second model of `WeightedMatcher::rank`.
+
+## Act ambiguity margin
+
+A high top total is not enough when a second candidate is almost as high. Act
+now takes an optional runner-up total from the same ranking and refuses with
+`ExecutorError::AmbiguousTarget` when the gap is below
+`MIN_ACT_MARGIN_MILLIS` (50). `ActConfidence` gains a `Ranked { top,
+runner_up }` variant beside `Inspected` and `Scored`; it stays an enum, not a
+score with an optional runner-up. `gate_confidence` is the single gate, and
+all four executors call it. The order is non-finite, then the 550 threshold,
+then the margin, so a low top is reported as low confidence even when it is
+also ambiguous. A runner-up above the top also refuses. The journal fallback is
+`FallbackReason::Ambiguous` ("ambiguous").
+
+MCP `act` takes `runner_up: {id, confidence}`, the same shape as locate
+`candidates[1]`. A `runner_up` without `confidence` is
+`RunnerUpNeedsConfidence`, so it cannot fall to the ungated inspected path.
+A runner-up naming the pressed region is `RunnerUpIsTarget`. The CLI flag is
+`--runner-up`. The fixture comparison passes the real runner-up, so it applies
+the product gate.
+
+Downside accepted: a caller that omits `runner_up` bypasses the margin. The
+MCP session in the next phase can derive it. 50 millis is not calibrated across
+matchers; the HGRA order on `send-buttons.manifold` is about 20 millis apart
+and is refused. This is not `RegionFlags::ambiguous`, which is a ranking
+penalty that the browser observer does not set.
+
+Verifiers: `ambiguous_ranked_act_does_not_click_and_refusal_is_typed` (empty
+transport log), `low_confidence_wins_over_ambiguity`,
+`inspected_act_ignores_the_margin`, the 16-case proptests
+`ranked_within_margin_does_not_submit` (Browser Use and CUA) and
+`ranked_outside_margin_passes_the_gate`, MCP and CLI act tests, and
+`below_margin_does_not_execute_and_does_not_call_transport`.

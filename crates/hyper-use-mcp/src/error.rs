@@ -27,6 +27,12 @@ pub enum ToolError {
     UnknownAction(String),
     UnsupportedAction(String),
     NonFiniteConfidence,
+    /// `runner_up` was given without `confidence`, which would make the act
+    /// look inspected and skip the gate.
+    RunnerUpNeedsConfidence,
+    /// `runner_up.id` is the region being pressed.
+    RunnerUpIsTarget,
+    BadRunnerUp(String),
     ExpectedTextMissing {
         expected: String,
     },
@@ -90,6 +96,9 @@ impl ToolError {
             Self::UnknownAction(_) => "UnknownAction",
             Self::UnsupportedAction(_) => "UnsupportedAction",
             Self::NonFiniteConfidence => "NonFiniteConfidence",
+            Self::RunnerUpNeedsConfidence => "RunnerUpNeedsConfidence",
+            Self::RunnerUpIsTarget => "RunnerUpIsTarget",
+            Self::BadRunnerUp(_) => "BadRunnerUp",
             Self::ExpectedTextMissing { .. } => "ExpectedTextMissing",
             Self::RegionStillPresent { .. } => "RegionStillPresent",
             Self::DimsRequireHgra => "DimsRequireHgra",
@@ -134,6 +143,7 @@ impl ToolError {
             Self::RegionStillPresent { id } => json!({"variant": "RegionStillPresent", "id": id}),
             Self::BadDims(dims) => json!({"variant": "BadDims", "dims": dims}),
             Self::BadConfidence(value) => json!({"variant": "BadConfidence", "value": value}),
+            Self::BadRunnerUp(message) => json!({"variant": "BadRunnerUp", "message": message}),
             Self::UnknownExecutor(name) => json!({"variant": "UnknownExecutor", "name": name}),
             Self::NotImplemented { executor } => {
                 json!({"variant": "NotImplemented", "executor": executor})
@@ -191,6 +201,9 @@ impl fmt::Display for ToolError {
                 write!(f, "browser session cannot perform `{action}`")
             }
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
+            Self::RunnerUpNeedsConfidence => f.write_str("runner_up requires confidence"),
+            Self::RunnerUpIsTarget => f.write_str("runner_up must name a different region"),
+            Self::BadRunnerUp(message) => write!(f, "bad runner_up: {message}"),
             Self::ExpectedTextMissing { expected } => {
                 write!(f, "expected text `{expected}` did not appear")
             }

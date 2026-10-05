@@ -630,3 +630,109 @@ fn above_threshold_press_still_uses_the_dom_click() {
     assert_eq!(pressed["mechanism"], "dom-semantic");
     assert!((pressed["confidence"].as_f64().unwrap() - 0.55).abs() < 1e-9);
 }
+
+#[test]
+fn act_refuses_an_ambiguous_ranked_target() {
+    // sign-in.cdp.json has no press steps: a press attempt would fail with
+    // NoScriptedResponse, so a successful refusal proves nothing was sent.
+    let refused = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cdp.json"),
+            "region": "n100",
+            "confidence": 1.0,
+            "runner_up": {"id": "n200", "confidence": 0.98}
+        }),
+    )
+    .unwrap();
+    assert_eq!(refused["executed"], false);
+    assert_eq!(refused["fallback"], "ambiguous");
+    assert_eq!(refused["mechanism"], Value::Null);
+    assert_eq!(refused["margin_millis"], 20);
+    assert_eq!(refused["runner_up"]["id"], "n200");
+    assert_eq!(refused["runner_up"]["label"], "Cancel");
+    assert_eq!(refused["target"]["id"], "n100");
+
+    let pressed = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 1.0,
+            "runner_up": {"id": "n200", "confidence": 0.5}
+        }),
+    )
+    .unwrap();
+    assert_eq!(pressed["executed"], true);
+    assert_eq!(pressed["mechanism"], "dom-semantic");
+}
+
+#[test]
+fn runner_up_without_confidence_is_exact() {
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "runner_up": {"id": "n200", "confidence": 0.98}
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::RunnerUpNeedsConfidence);
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "RunnerUpNeedsConfidence"})
+    );
+}
+
+#[test]
+fn runner_up_equal_to_region_is_exact() {
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 1.0,
+            "runner_up": {"id": "n100", "confidence": 0.2}
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::RunnerUpIsTarget);
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 1.0,
+            "runner_up": "n200"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::BadRunnerUp("runner_up must be an object".into())
+    );
+}
+
+#[test]
+fn browser_use_and_cua_refuse_an_ambiguous_ranked_target() {
+    for (executor, script) in [
+        ("browser-use", "sign-in.browser-use.json"),
+        ("cua", "sign-in.cua.json"),
+    ] {
+        let refused = call(
+            "act",
+            json!({
+                "fixture": fixture(script),
+                "region": "n100",
+                "executor": executor,
+                "confidence": 0.9,
+                "runner_up": {"id": "n200", "confidence": 0.88}
+            }),
+        )
+        .unwrap();
+        assert_eq!(refused["executed"], false, "{executor}");
+        assert_eq!(refused["fallback"], "ambiguous", "{executor}");
+        assert_eq!(refused["margin_millis"], 20, "{executor}");
+    }
+}

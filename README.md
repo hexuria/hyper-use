@@ -38,7 +38,8 @@ cargo run -p hyper-use-cli -- verify \
 ```
 
 `press` is the CLI verb for `Action::Click`. A scored confidence below 0.55
-refuses the act and does not click. `--executor browser-use` and `--executor cua`
+refuses the act and does not click. With `--runner-up`, a gap below 0.05
+between the top two candidates also refuses. `--executor browser-use` and `--executor cua`
 each send the region id, role, and label through a replay fixture. They do not
 navigate, they are not in the default policy order, and the CUA path is not a
 fusion benchmark. The default executor remains the CDP press. macOS still

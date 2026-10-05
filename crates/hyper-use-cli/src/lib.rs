@@ -40,6 +40,13 @@ pub enum CliError {
         confidence_millis: i32,
         minimum_millis: i32,
     },
+    AmbiguousTarget {
+        top_millis: i32,
+        runner_up_millis: i32,
+        margin_millis: i32,
+        minimum_margin_millis: i32,
+    },
+    RunnerUpNeedsConfidence,
     NonFiniteConfidence,
     DimsRequireHgra,
     MissingSource,
@@ -102,6 +109,16 @@ impl std::fmt::Display for CliError {
                 f,
                 "confidence {confidence_millis} is below the act minimum {minimum_millis}"
             ),
+            Self::AmbiguousTarget {
+                top_millis,
+                runner_up_millis,
+                margin_millis,
+                minimum_margin_millis,
+            } => write!(
+                f,
+                "top {top_millis} and runner-up {runner_up_millis} differ by {margin_millis} millis, below the act margin {minimum_margin_millis}"
+            ),
+            Self::RunnerUpNeedsConfidence => f.write_str("--runner-up requires --confidence"),
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
             Self::DimsRequireHgra => f.write_str("--dims is only valid with --matcher hgra"),
             Self::MissingSource => f.write_str("command requires --fixture <path> or --cdp [url]"),
@@ -147,7 +164,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>] [--executor browser|browser-use|macos|cua]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\nDefault executor is the CDP browser press. --executor browser-use and --executor cua each send region id, role, and label through a replay fixture. They are not in the default policy order, they do not navigate, and they are not a fusion benchmark. macos is not implemented.\n"
+    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1> [--runner-up <0-1>]] [--executor browser|browser-use|macos|cua]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\nDefault executor is the CDP browser press. --executor browser-use and --executor cua each send region id, role, and label through a replay fixture. They are not in the default policy order, they do not navigate, and they are not a fusion benchmark. macos is not implemented.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -303,6 +320,7 @@ pub(crate) fn flag_name(name: &str) -> &'static str {
         "matcher" => "--matcher",
         "cdp" => "--cdp",
         "confidence" => "--confidence",
+        "runner-up" => "--runner-up",
         "expect-text" => "--expect-text",
         "expect-absent" => "--expect-absent",
         "before" => "--before",
@@ -509,6 +527,63 @@ mod tests {
         let json = execute(&args(&["locate", "Sign in", "--fixture", &path, "--json"])).unwrap();
         assert!(json.contains("\"matcher\": \"weighted\""));
         assert!(json.find("\"id\": \"n100\"").unwrap() < json.find("\"id\": \"n200\"").unwrap());
+    }
+
+    #[test]
+    fn act_refuses_a_ranked_target_inside_the_margin() {
+        // sign-in.cdp.json has no press steps, so a press would fail.
+        let path = cdp_fixture("sign-in.cdp.json");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--confidence",
+            "1.0",
+            "--runner-up=0.98",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::AmbiguousTarget {
+                top_millis: 1000,
+                runner_up_millis: 980,
+                margin_millis: 20,
+                minimum_margin_millis: 50,
+            }
+        );
+        let press = cdp_fixture("sign-in-press.cdp.json");
+        let stdout = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &press,
+            "--confidence",
+            "1.0",
+            "--runner-up",
+            "0.5",
+        ]))
+        .unwrap();
+        assert_eq!(stdout, "n100\tpress\tdom-semantic\texecuted\n");
+    }
+
+    #[test]
+    fn runner_up_needs_confidence() {
+        let path = cdp_fixture("sign-in-press.cdp.json");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--runner-up",
+            "0.5",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CliError::RunnerUpNeedsConfidence);
+        assert_eq!(err.to_string(), "--runner-up requires --confidence");
     }
 
     #[test]

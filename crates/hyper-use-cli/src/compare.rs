@@ -250,7 +250,7 @@ pub fn fixture_compare_live(fixtures_dir: &Path) -> Result<FixtureReport, Compar
 fn build_case(spec: Spec, body: &str) -> Result<FixtureCase, CompareError> {
     let manifold = load_manifold(body)?;
     let query = locate_query(spec)?;
-    let top = top_match(spec.file, &query, &manifold)?;
+    let (top, runner_up) = top_match(spec.file, &query, &manifold)?;
     if !top.confidence().is_finite() {
         return Err(CompareError::NonFiniteConfidence);
     }
@@ -260,7 +260,12 @@ fn build_case(spec: Spec, body: &str) -> Result<FixtureCase, CompareError> {
                 fixture: spec.file.to_owned(),
             });
         }
-        Some(scored_press(body, top.id().as_str(), top.confidence())?)
+        Some(scored_press(
+            body,
+            top.id().as_str(),
+            top.confidence(),
+            runner_up,
+        )?)
     } else {
         None
     };
@@ -287,38 +292,49 @@ fn locate_query(spec: Spec) -> Result<LocateQuery, CompareError> {
     Ok(query)
 }
 
+/// The top match and the runner-up's total, if there is one.
 fn top_match(
     fixture: &str,
     query: &LocateQuery,
     manifold: &InteractionManifold,
-) -> Result<Match, CompareError> {
+) -> Result<(Match, Option<f64>), CompareError> {
     let ranked = WeightedMatcher::default()
         .rank(query, manifold)
         .map_err(|err| CompareError::Locate(err.to_string()))?;
-    ranked
+    let runner_up = ranked.get(1).map(Match::confidence);
+    let top = ranked
         .into_iter()
         .next()
         .ok_or_else(|| CompareError::EmptyRank {
             fixture: fixture.to_owned(),
-        })
+        })?;
+    Ok((top, runner_up))
 }
 
 /// Press through the replay executor. `true` only after a receipt.
-/// Below the act gate the transport log stays empty and this returns `false`.
+/// Below the act gate, or inside the act margin when a runner-up is given, the
+/// transport log stays empty and this returns `false`.
 pub(crate) fn scored_press(
     script: &str,
     region_id: &str,
     confidence: f64,
+    runner_up: Option<f64>,
 ) -> Result<bool, CompareError> {
     let id = RegionId::try_new(region_id)
         .map_err(|_| CompareError::UnknownRegion(region_id.to_owned()))?;
     let transport =
         ReplayTransport::parse(script).map_err(|err| CompareError::Browser(err.to_string()))?;
     let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-    let request = ActionRequest::new(id, hyper_use_core::Action::Click).scored(confidence);
+    let request = ActionRequest::new(id, hyper_use_core::Action::Click);
+    let request = match runner_up {
+        Some(second) => request.ranked(confidence, second),
+        None => request.scored(confidence),
+    };
     match executor.execute(&request) {
         Ok(_receipt) => Ok(true),
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => {
+        Err(
+            ExecutorError::ConfidenceBelowThreshold { .. } | ExecutorError::AmbiguousTarget { .. },
+        ) => {
             if !executor.session().transport().logged_methods().is_empty() {
                 return Err(CompareError::TransportCalledBelowThreshold);
             }
@@ -620,13 +636,20 @@ mod tests {
     #[test]
     fn below_threshold_does_not_execute_and_does_not_call_transport() {
         let script = include_str!("../../../fixtures/sign-in-press.cdp.json");
-        let executed = scored_press(script, "n100", 0.49).unwrap();
+        let executed = scored_press(script, "n100", 0.49, None).unwrap();
         assert!(!executed);
     }
 
     #[test]
+    fn below_margin_does_not_execute_and_does_not_call_transport() {
+        let script = include_str!("../../../fixtures/sign-in-press.cdp.json");
+        assert!(!scored_press(script, "n100", 1.0, Some(0.98)).unwrap());
+        assert!(scored_press(script, "n100", 1.0, Some(0.5)).unwrap());
+    }
+
+    #[test]
     fn transport_failure_is_not_recorded_as_executed() {
-        let err = scored_press(r#"{"calls":[]}"#, "n100", 0.9).unwrap_err();
+        let err = scored_press(r#"{"calls":[]}"#, "n100", 0.9, None).unwrap_err();
         assert_eq!(
             err,
             CompareError::Browser("no scripted CDP response for `Page.getLayoutMetrics`".into())
@@ -640,10 +663,10 @@ mod tests {
     #[test]
     fn non_finite_confidence_is_exact_and_bad_ids_do_not_parse_as_a_script_error() {
         let script = include_str!("../../../fixtures/sign-in-press.cdp.json");
-        let err = scored_press(script, "n100", f64::NAN).unwrap_err();
+        let err = scored_press(script, "n100", f64::NAN, None).unwrap_err();
         assert_eq!(err, CompareError::NonFiniteConfidence);
         assert_eq!(err.to_string(), "confidence must be finite");
-        let err = scored_press("{}", "bad id", 0.9).unwrap_err();
+        let err = scored_press("{}", "bad id", 0.9, None).unwrap_err();
         assert_eq!(err, CompareError::UnknownRegion("bad id".into()));
         assert_eq!(err.to_string(), "unknown region `bad id`");
     }

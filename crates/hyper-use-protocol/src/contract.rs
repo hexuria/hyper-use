@@ -19,6 +19,8 @@ pub enum FallbackReason {
     NotImplemented,
     /// The postcondition did not hold.
     VerifyFailed,
+    /// The top two candidates were too close. Nothing was clicked.
+    Ambiguous,
 }
 
 impl FallbackReason {
@@ -27,6 +29,7 @@ impl FallbackReason {
             Self::LowConfidence => "low-confidence",
             Self::NotImplemented => "not-implemented",
             Self::VerifyFailed => "verify-failed",
+            Self::Ambiguous => "ambiguous",
         }
     }
 }

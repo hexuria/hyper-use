@@ -52,6 +52,12 @@ that as a `ComputerResult` with `executed = false` and fallback
 `low-confidence`. hyper-use does not call CUA, and it does not call the
 Browser Use transport, to paper over that miss.
 
+When the host also passes the runner-up total (`--runner-up`, or MCP
+`runner_up: {id, confidence}` copied from locate `candidates[1]`), act refuses
+with `AmbiguousTarget` if the top and runner-up differ by less than 0.05
+(50 millis). The journal fallback is `ambiguous`. An inspected act (no
+confidence) is not gated.
+
 The default act backend is still the CDP browser press. `--executor browser-use`
 (or MCP `executor: "browser-use"`) and `--executor cua` (or MCP `executor: "cua"`)
 are opt-in. Each sends the already located region id, role, label, and click

@@ -19,6 +19,9 @@ pub enum Role {
     Slider,
     Tab,
     Heading,
+    /// A dialog or alert dialog. With [`RegionFlags::modal`] it blocks input
+    /// to every region outside it. See `hyper-use-guard`'s front layer.
+    Dialog,
 }
 
 impl Role {
@@ -36,6 +39,7 @@ impl Role {
             Self::Slider => "slider",
             Self::Tab => "tab",
             Self::Heading => "heading",
+            Self::Dialog => "dialog",
         }
     }
 
@@ -53,6 +57,7 @@ impl Role {
             "slider" => Self::Slider,
             "tab" => Self::Tab,
             "heading" => Self::Heading,
+            "dialog" | "alertdialog" | "alert_dialog" => Self::Dialog,
             _ => return None,
         })
     }
@@ -283,7 +288,10 @@ impl SourceMask {
 }
 
 /// Independent condition flags. These are not a lifecycle; a control may be
-/// disabled and offscreen at the same time. Each one is a locate penalty.
+/// disabled and offscreen at the same time. Each one is a locate penalty,
+/// except `modal`: it marks a [`Role::Dialog`] region as a modal layer
+/// (`aria-modal="true"` or the accessibility `modal` property) and is never a
+/// penalty on the dialog itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RegionFlags {
     disabled: bool,
@@ -293,6 +301,7 @@ pub struct RegionFlags {
     stale: bool,
     ambiguous: bool,
     detached: bool,
+    modal: bool,
 }
 
 impl RegionFlags {
@@ -305,6 +314,7 @@ impl RegionFlags {
             stale: false,
             ambiguous: false,
             detached: false,
+            modal: false,
         }
     }
 
@@ -329,6 +339,9 @@ impl RegionFlags {
     pub const fn detached(self) -> bool {
         self.detached
     }
+    pub const fn modal(self) -> bool {
+        self.modal
+    }
 
     pub fn set_disabled(&mut self, value: bool) {
         self.disabled = value;
@@ -351,6 +364,9 @@ impl RegionFlags {
     pub fn set_detached(&mut self, value: bool) {
         self.detached = value;
     }
+    pub fn set_modal(&mut self, value: bool) {
+        self.modal = value;
+    }
 
     pub fn parse_list(raw: &str) -> Result<Self, String> {
         let mut flags = Self::none();
@@ -366,6 +382,7 @@ impl RegionFlags {
                 "stale" => flags.stale = true,
                 "ambiguous" => flags.ambiguous = true,
                 "detached" => flags.detached = true,
+                "modal" => flags.modal = true,
                 other => return Err(format!("unknown flag `{other}`")),
             }
         }
@@ -394,6 +411,9 @@ impl RegionFlags {
         }
         if self.detached {
             bits |= 1 << 6;
+        }
+        if self.modal {
+            bits |= 1 << 7;
         }
         bits
     }

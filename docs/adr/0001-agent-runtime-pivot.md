@@ -1,0 +1,89 @@
+# ADR 0001: Hyper-Use is the Rust browser-agent runtime; PUA owns HOW
+
+- Status: accepted
+- Date: 2026-10-05 (Asia/Manila)
+- Branch: `feat/agent-runtime-pivot`
+- Supersedes: the "Hyper-Use is not an agent / does not click" product framing in
+  `docs/PRD.md` (pre-pivot) and the ActionTicket-only host-executor assumption in
+  `docs/DECISIONS.md` § ActionTicket (hosts may still intercept; the primary product
+  path is now an owned agent loop).
+
+## Context
+
+Uniform bench and live remasures showed Hyper-Use as a voluntary MCP preflight is
+not a firewall: `Allow` was not bound to the click (TOCTOU), and combo arms could
+"pass" via Browser Use fallback without pressing Hyper-Use. ActionTicket (#13)
+started the lease boundary. Separately, `browser-use/jev-ultrafast` (MIT) is a
+clean reference for a finite action-space agent loop. PUA (`hexuria/pua`, ADR
+0010) is a domain-agnostic decision engine: consumers own WHAT; PUA owns HOW.
+
+Uriah approved a deliberate pivot: Hyper-Use becomes the Rust-native browser
+agent/runtime covering the useful jev-ultrafast architecture, with stronger
+observation, ticketed execution, and verification. PUA is the default
+deterministic decision kernel. HGRA stays frozen under `experiments/`.
+
+## Decision
+
+1. **Hyper-Use owns the loop.** observe → ActionSpace → policy → guard →
+   ActionTicket → executor revalidate/consume → execute → observe → diff/verify →
+   history. Primary API is a Rust `Agent` (Phase 4). MCP is an optional adapter,
+   not the orchestration surface.
+2. **PUA owns HOW; Hyper-Use owns WHAT.** Pin `hexuria/pua` by git rev when
+   `PuaPolicy` lands (Phase 2). Do not put browser concepts into PUA. Do not
+   recreate a second float confidence gate for policy choice. Hard browser
+   invalidity (occluded, disabled, hidden, front-layer, stale ticket) is
+   Hyper-Use guard evidence, not a PUA score.
+3. **ActionTicket stays the enforcement boundary.** Issued on guard success;
+   one-shot; revalidated immediately before input; cannot substitute target or
+   action. Stale → discard prediction, re-observe, decide again.
+4. **TextResolver is separate.** `TYPE_TEXT` target selection ≠ string
+   generation. PUA must not invent arbitrary field text.
+5. **HGRA remains frozen** in `experiments/hgra/`. Weighted (and later PUA)
+   are the product decision path. No matcher tuning during this pivot.
+6. **RESULTS.md stays historical** until A/B/C/D (or B0/B1/B2 interceptor
+   ablation) runs on pinned main with the agent-owned loop. B0/B1 remain
+   relevant as the interceptor ablation until the agent fully owns execution.
+7. **Crate target (incremental, not theater):**
+   ```
+   hyper-use-core      (manifold + ActionSpace)     — reuse
+   hyper-use-browser  (observe + ticketed execute) — expand
+   hyper-use-policy   (PUA + escalation)           — new (Phase 2)
+   hyper-use-guard    (hard integrity + tickets)   — slim toward gates
+   hyper-use-agent    (loop)                       — new (Phase 4)
+   hyper-use-mcp      (adapter)                    — optional
+   hyper-use-cli      (run/observe/step)           — expand
+   experiments/hgra   — frozen
+   ```
+   Existing geometry / observe / resonance / protocol crates stay until their
+   responsibilities are proven redundant (Phase 8 cleanup). Do not delete in
+   Phase 0–1.
+
+## Mapping (reuse / new / delete later)
+
+| jev-ultrafast | Hyper-Use now | Direction |
+|---|---|---|
+| `agent.py` | *(missing)* | **new** `hyper-use-agent` |
+| `browser.py` + `snapshot.js` | `hyper-use-browser` DOM/AX fusion | **reuse/expand**; do not port JS wholesale |
+| `model.py` action_space | `ActionSpace` in core (Phase 1) | **new types from manifold** |
+| `model.py` choose | PUA policy (Phase 2) + optional escalation | **new**; pin PUA `fe3f1fd…` |
+| `model.py` field_text | `TextResolver` (Phase 5) | **new**; not PUA |
+| `questions.py` | consumer policy data in Hyper-Use | **new** evals/data |
+| `fresh()` / act guards | ActionTicket + `revalidate` | **reuse/expand** |
+| Browser.act | ticketed CDP executor | **expand**; no unguarded agent click |
+| history | agent journal | **new** with observe |
+
+**Already on main (keep):** InteractionManifold, DOM/AX fusion, identity,
+stacking, world context, ActionTicket issue/revalidate, verify_delta,
+WeightedMatcher (interim until PUA), MCP guard tools (adapter).
+
+**Delete only after proven redundant (Phase 8):** legacy `contract.rs`,
+deprecated `act` alias, duplicated float confidence gates once PUA decides,
+generic matcher path if unreachable.
+
+## Consequences
+
+- PRD supersedes "does not click / is not an agent".
+- Phase 1 lands ActionSpace only — no PUA pin in Cargo.toml yet.
+- Future PUA pin: `https://github.com/hexuria/pua` @ `fe3f1fd3818feb452fae1771ff2171b8598f86e6`
+  (record at pin time; bump when integrating).
+- B0/B1 harness remains valid ablation evidence for the interceptor path.

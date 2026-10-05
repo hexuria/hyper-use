@@ -1,6 +1,27 @@
 # Decisions
 
 
+## Agent-runtime pivot: Hyper-Use owns the loop; PUA owns HOW (2026-10-05)
+
+Status: accepted on `feat/agent-runtime-pivot`. Asia/Manila.
+ADR: [`docs/adr/0001-agent-runtime-pivot.md`](adr/0001-agent-runtime-pivot.md).
+
+**Decision.** Hyper-Use becomes the Rust-native browser-agent runtime covering
+the useful architecture of `browser-use/jev-ultrafast` (MIT reference, not a
+port). PUA (`hexuria/pua`) is the default deterministic finite decision kernel.
+ActionTicket + guard remain the integrity / stale-action boundary. TextResolver
+is separate from PUA. HGRA stays frozen. MCP is an adapter, not the core.
+
+**Phase 0–1 in this change.** Audit + ADR + PRD supersession + `ActionSpace` /
+`ObservedAction` / `ActionKind` built from `InteractionManifold`. No PUA Cargo
+pin yet. No `Agent` loop yet.
+
+**Supersedes.** "Hyper-Use is not an agent / does not click" as the *primary*
+product claim. Host interceptor (B0/B1) remains supported and measurable.
+
+**Discarded for this change.** Pinning PUA, `PuaPolicy`, full Agent, deleting
+resonance/contract/act, HGRA work, rewriting RESULTS.
+
 ## ActionTicket boundary + HGRA freeze (2026-10-05)
 
 Status: accepted on `feat/action-ticket`. Asia/Manila.

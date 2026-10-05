@@ -184,6 +184,18 @@
           }
         ]
       }
+    },
+    {
+      "method": "DOM.getNodeForLocation",
+      "result": {
+        "backendNodeId": 100
+      }
+    },
+    {
+      "method": "DOM.getNodeForLocation",
+      "result": {
+        "backendNodeId": 200
+      }
     }
   ]
 }

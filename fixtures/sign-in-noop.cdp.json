@@ -186,6 +186,18 @@
       }
     },
     {
+      "method": "DOM.getNodeForLocation",
+      "result": {
+        "backendNodeId": 100
+      }
+    },
+    {
+      "method": "DOM.getNodeForLocation",
+      "result": {
+        "backendNodeId": 200
+      }
+    },
+    {
       "method": "DOM.resolveNode",
       "params": {
         "nodeId": 10
@@ -393,6 +405,18 @@
             "title": "Sign in"
           }
         ]
+      }
+    },
+    {
+      "method": "DOM.getNodeForLocation",
+      "result": {
+        "backendNodeId": 100
+      }
+    },
+    {
+      "method": "DOM.getNodeForLocation",
+      "result": {
+        "backendNodeId": 200
       }
     }
   ]

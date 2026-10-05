@@ -49,16 +49,31 @@ pub(crate) fn parse_viewport(result_json: &str) -> Result<hyper_use_core::Rect, 
         .map_err(|err| BrowserError::BadViewport(err.to_string()))
 }
 
+/// Kept interactive elements plus a parent map of every element node.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DomDocument {
+    pub elements: Vec<DomElement>,
+    /// Every element backend id → its parent element backend id, when known.
+    /// Used by hit-test to decide whether the node under a region's center is
+    /// inside that region (the region owns the hit) or something else covers it.
+    pub parent_of: std::collections::BTreeMap<i64, i64>,
+}
+
+#[allow(dead_code)]
 pub(crate) fn dom_elements(document_json: &str) -> Result<Vec<DomElement>, BrowserError> {
+    Ok(dom_document(document_json)?.elements)
+}
+
+pub(crate) fn dom_document(document_json: &str) -> Result<DomDocument, BrowserError> {
     let value = parse_json(document_json)?;
     let root = value.get("root").ok_or_else(|| {
         BrowserError::Cdp(CdpError::BadJson {
             message: "DOM.getDocument result has no root".into(),
         })
     })?;
-    let mut out = Vec::new();
+    let mut out = DomDocument::default();
     let mut ancestors = Vec::new();
-    walk_dom(root, &mut ancestors, &mut out);
+    walk_dom(root, None, &mut ancestors, &mut out);
     Ok(out)
 }
 
@@ -147,6 +162,12 @@ pub(crate) fn content_rect(box_json: &str) -> Result<Option<Rect>, BrowserError>
     Ok(Some(rect))
 }
 
+/// `backendNodeId` from `DOM.getNodeForLocation`.
+pub(crate) fn location_backend(result_json: &str) -> Result<Option<i64>, BrowserError> {
+    let value = parse_json(result_json)?;
+    Ok(value.get("backendNodeId").and_then(Value::as_i64))
+}
+
 pub(crate) fn object_id(resolve_json: &str) -> Result<String, BrowserError> {
     let value = parse_json(resolve_json)?;
     value
@@ -163,26 +184,39 @@ pub(crate) fn call_threw(call_json: &str) -> Result<bool, BrowserError> {
     Ok(value.get("exceptionDetails").is_some())
 }
 
-/// `ancestors` holds the backend ids of kept elements above `node`, outermost
-/// first. Each element records them nearest first.
-fn walk_dom(node: &Value, ancestors: &mut Vec<i64>, out: &mut Vec<DomElement>) {
+/// `kept_ancestors` holds the backend ids of kept elements above `node`,
+/// outermost first. Each kept element records them nearest first.
+/// `parent_backend` is the nearest element ancestor (kept or not).
+fn walk_dom(
+    node: &Value,
+    parent_backend: Option<i64>,
+    kept_ancestors: &mut Vec<i64>,
+    out: &mut DomDocument,
+) {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(1);
-    let mut pushed = false;
+    let mut next_parent = parent_backend;
+    let mut pushed_kept = false;
     if node_type == 1 {
+        if let Some(backend) = node.get("backendNodeId").and_then(Value::as_i64) {
+            if let Some(parent) = parent_backend {
+                out.parent_of.insert(backend, parent);
+            }
+            next_parent = Some(backend);
+        }
         if let Some(mut element) = element_from(node) {
-            element.ancestors = ancestors.iter().rev().copied().collect();
-            ancestors.push(element.backend_node_id);
-            pushed = true;
-            out.push(element);
+            element.ancestors = kept_ancestors.iter().rev().copied().collect();
+            kept_ancestors.push(element.backend_node_id);
+            pushed_kept = true;
+            out.elements.push(element);
         }
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {
         for child in children {
-            walk_dom(child, ancestors, out);
+            walk_dom(child, next_parent, kept_ancestors, out);
         }
     }
-    if pushed {
-        ancestors.pop();
+    if pushed_kept {
+        kept_ancestors.pop();
     }
 }
 

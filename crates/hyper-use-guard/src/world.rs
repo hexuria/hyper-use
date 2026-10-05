@@ -28,12 +28,13 @@
 //! accessibility-only, its parent link is unknown, so "inside" falls back to
 //! `R`'s box lying fully inside `D`'s box.
 //!
-//! Known gaps (see docs/DECISIONS.md): no z-index or stacking-context read,
-//! so a non-dialog overlay (cookie banner, custom backdrop `div`) is not a
-//! front layer; a native `<dialog>` opened with `showModal()` without
-//! `aria-modal` is modal only if Chrome's accessibility tree says so; two
-//! sibling modals block each other's content, which refuses rather than
-//! guesses.
+//! Known gaps (see docs/DECISIONS.md): hit-test occlusion lives in
+//! `hyper-use-browser` observe (`DOM.getNodeForLocation`) and marks buried
+//! regions `occluded` before the guard runs, so cookie banners and custom
+//! backdrops refuse as `occluded` rather than as dialog `front-layer`; a
+//! native `<dialog>` opened with `showModal()` without `aria-modal` is modal
+//! only if Chrome's accessibility tree says so; two sibling modals block
+//! each other's content, which refuses rather than guesses.
 
 use hyper_use_core::{InteractionManifold, InteractionRegion, Rect, RegionId, Role, SourceMask};
 use hyper_use_resonance::{RegionState, Visibility};

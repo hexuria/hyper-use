@@ -290,6 +290,14 @@ mod phase2 {
         calls[3]["result"]["model"]["content"] = quad.clone();
         calls[5]["params"] = serde_json::json!({"backendNodeId": 900});
         calls[5]["result"]["model"]["content"] = quad;
+        // Stable ids stay n100/n200; replace the n100 hit backend in place.
+        for call in calls.iter_mut() {
+            if call["method"] == "DOM.getNodeForLocation"
+                && call["result"]["backendNodeId"].as_i64() == Some(100)
+            {
+                call["result"]["backendNodeId"] = 900.into();
+            }
+        }
         value.to_string()
     }
 
@@ -569,6 +577,20 @@ mod phase2 {
                 "result": {"model": {"content": [400, 360, 560, 360, 560, 392, 400, 392]}}
             }),
         );
+        // Email is clickable; hit-test order is n100, n200, n300.
+        let history_at = calls
+            .iter()
+            .position(|call| call["method"] == "Page.getNavigationHistory")
+            .unwrap();
+        let insert_at = history_at + 1;
+        // Existing fixture already has hits for 100 and 200 after history.
+        calls.insert(
+            insert_at + 2,
+            serde_json::json!({
+                "method": "DOM.getNodeForLocation",
+                "result": {"backendNodeId": 300}
+            }),
+        );
         value.to_string()
     }
 
@@ -602,8 +624,12 @@ mod phase2 {
     fn navigation_history_protocol_error_omits_url_and_title() {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
-        let history = value["calls"].as_array_mut().unwrap().last_mut().unwrap();
-        assert_eq!(history["method"], "Page.getNavigationHistory");
+        let history = value["calls"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|call| call["method"] == "Page.getNavigationHistory")
+            .unwrap();
         history.as_object_mut().unwrap().remove("result");
         history["error"] = serde_json::json!("Inspector not attached");
         let transport = ReplayTransport::parse(&value.to_string()).unwrap();
@@ -620,8 +646,18 @@ mod phase2 {
     fn missing_navigation_history_step_is_fatal() {
         let mut value: serde_json::Value =
             serde_json::from_str(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
-        let removed = value["calls"].as_array_mut().unwrap().pop().unwrap();
+        let calls = value["calls"].as_array_mut().unwrap();
+        let history_at = calls
+            .iter()
+            .position(|call| call["method"] == "Page.getNavigationHistory")
+            .unwrap();
+        let removed = calls.remove(history_at);
         assert_eq!(removed["method"], "Page.getNavigationHistory");
+        // Drop hit-tests that followed history so the next scripted method is
+        // not a leftover getNodeForLocation.
+        while history_at < calls.len() && calls[history_at]["method"] == "DOM.getNodeForLocation" {
+            calls.remove(history_at);
+        }
         let transport = ReplayTransport::parse(&value.to_string()).unwrap();
         let mut session = BrowserSession::new(transport);
         let err = session.observe().unwrap_err();

@@ -107,10 +107,14 @@ label-only gate gets wrong (the tests assert the old failure first).
 
 **Known gaps (honest).**
 
-- No z-index, stacking context, or hit-test (`DOM.getNodeForLocation`) read.
-  A non-dialog overlay (cookie banner, custom backdrop `div`, toast) is not a
-  front layer. Next step: hit-test the target center via CDP and compare the
-  returned node with the target's backend id.
+- Hit-test: observe calls `DOM.getNodeForLocation` at each clickable region's
+  center. When the node under the center is not the region or a descendant,
+  the region is marked `occluded` and the guard refuses with `occluded`.
+  That covers cookie banners, custom backdrops, and toasts that block the
+  center. Dialog `front-layer` remains the path for `Role::Dialog`. Deferrals:
+  no full z-index / stacking-context map; `pointer-events: none` overlays are
+  not distinguished beyond what Chrome's hit-test returns; world-changed still
+  compares dialog front layers, not every hit-test coverer.
 - A native `<dialog>` opened with `showModal()` without `aria-modal` is modal
   only if Chrome's AX tree reports `modal`.
 - Two sibling modals block each other's content: refuse, not guess.

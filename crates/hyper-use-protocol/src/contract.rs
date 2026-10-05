@@ -1,8 +1,8 @@
-//! JEV-facing task and result types.
+//! Legacy JEV-facing task and result types.
 //!
-//! An agent loop that already exists outside this repository owns goals,
-//! delegation, and the journal. hyper-use only accepts one locate or one act.
-//! There is no navigate intent and no method that plans a multi-step workflow.
+//! Prefer [`crate::GuardDecision`] for the action-firewall product. These types
+//! remain for transitional hosts. An agent loop outside this repository owns
+//! goals, delegation, and the journal. There is no navigate intent.
 
 use std::fmt;
 

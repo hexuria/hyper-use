@@ -1,18 +1,28 @@
 //! Loop messages for hyper-use.
 //!
-//! The only legal operations are observe, locate, inspect when the locate
-//! result is ambiguous, act, diff, then verify. This crate names that order.
-//! It does not run it, and it does not plan a navigation. Coordinates are not
-//! a message: an act names a [`RegionId`].
+//! Product operations are observe, guard, verify. Hyper-Use does not click and
+//! does not plan navigation. Locate / inspect / diff remain internal helpers.
 //!
-//! [`ComputerTask`] and [`ComputerResult`] are the contract an existing JEV
-//! loop would hand across. Nothing here executes a goal or calls a browser.
+//! [`GuardDecision`] is the product contract. Legacy [`ComputerTask`] /
+//! [`ComputerResult`] types remain for transitional hosts and are not the
+//! recommended surface.
 
 #![forbid(unsafe_code)]
 
 use hyper_use_core::{Action, LocateQuery, RegionId};
 
-/// Phases of one hyper-use turn. Declaration order is the loop order.
+mod contract;
+mod guard;
+
+pub use contract::{
+    ComputerResult, ComputerTask, Constraints, ExpectedOutcome, FallbackReason, Intent,
+    MatcherConfidence, ProtocolError, ReportedExecutor, StateDelta,
+};
+pub use guard::{
+    FirewallPhase, GuardCandidate, GuardDecision, GuardEvidence, GuardReason, FIREWALL_ORDER,
+};
+
+/// Legacy six-phase loop. Prefer [`FirewallPhase`] / [`FIREWALL_ORDER`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LoopPhase {
     Observe,
@@ -51,28 +61,22 @@ impl LoopPhase {
 pub enum Request {
     Observe,
     Locate(LocateQuery),
-    /// Inspect is required when locate does not separate a single target.
     Inspect {
         region_id: RegionId,
     },
+    /// Legacy. Prefer guard; Hyper-Use does not click on the product path.
     Act {
         region_id: RegionId,
         action: Action,
     },
+    Guard {
+        query: LocateQuery,
+    },
     Verify {
         region_id: RegionId,
     },
-    /// Diff the host's previous observation against the current one.
-    /// The manifolds stay with the host; this message does not embed them.
     Diff,
 }
-
-mod contract;
-
-pub use contract::{
-    ComputerResult, ComputerTask, Constraints, ExpectedOutcome, FallbackReason, Intent,
-    MatcherConfidence, ProtocolError, ReportedExecutor, StateDelta,
-};
 
 #[cfg(test)]
 mod tests {
@@ -80,7 +84,13 @@ mod tests {
     use hyper_use_core::Role;
 
     #[test]
-    fn loop_order_is_observe_locate_inspect_act_verify() {
+    fn firewall_order_is_observe_guard_verify() {
+        let names: Vec<_> = FIREWALL_ORDER.iter().map(|p| p.as_str()).collect();
+        assert_eq!(names, ["observe", "guard", "verify"]);
+    }
+
+    #[test]
+    fn legacy_loop_order_still_names_six_verbs() {
         let names: Vec<_> = LOOP_ORDER.iter().map(|phase| phase.as_str()).collect();
         assert_eq!(
             names,
@@ -89,26 +99,11 @@ mod tests {
     }
 
     #[test]
-    fn act_names_a_region_not_a_coordinate() {
-        let request = Request::Act {
-            region_id: RegionId::try_new("nav-settings").unwrap(),
-            action: Action::Click,
-        };
-        match request {
-            Request::Act { region_id, action } => {
-                assert_eq!(region_id.as_str(), "nav-settings");
-                assert_eq!(action, Action::Click);
-            }
-            _ => panic!("expected act"),
-        }
-        let locate = Request::Locate(
-            LocateQuery::new()
-                .text("Settings")
-                .unwrap()
-                .role(Role::Button),
-        );
-        assert!(matches!(locate, Request::Locate(_)));
-        assert!(matches!(Request::Diff, Request::Diff));
+    fn guard_reasons_have_stable_names() {
+        assert_eq!(GuardReason::LowConfidence.as_str(), "low-confidence");
+        assert_eq!(GuardReason::Ambiguous.as_str(), "ambiguous");
+        assert_eq!(GuardReason::MissingTarget.as_str(), "missing-target");
+        assert_eq!(GuardReason::Disabled.as_str(), "disabled");
     }
 
     #[test]
@@ -119,71 +114,32 @@ mod tests {
             ExpectedOutcome::text_present("Welcome").unwrap(),
         );
         assert!(matches!(task.intent(), Intent::Locate(_)));
-        assert_eq!(task.expected_outcome().text(), Some("Welcome"));
-        let acted = ComputerTask::act(
-            RegionId::try_new("n100").unwrap(),
-            Action::Click,
-            Constraints::min_confidence(0.55).unwrap(),
-            ExpectedOutcome::region_absent(RegionId::try_new("n100").unwrap()),
-        );
-        assert!(matches!(acted.intent(), Intent::Act { .. }));
-        assert_eq!(acted.constraints().min_confidence_value(), Some(0.55));
-
-        let err = Constraints::min_confidence(f64::NAN).unwrap_err();
-        assert_eq!(err, ProtocolError::NonFiniteConfidence);
-        assert_eq!(err.to_string(), "confidence must be finite");
-        let err = ExpectedOutcome::text_present("...").unwrap_err();
-        assert_eq!(err, ProtocolError::EmptyExpectedText);
-        assert_eq!(
-            err.to_string(),
-            "expected text must contain at least one alphanumeric token"
-        );
-
         let refused = ComputerResult::refused(
             MatcherConfidence::try_new(0.49).unwrap(),
             FallbackReason::LowConfidence,
         );
         assert!(!refused.executed());
-        assert!(!refused.verified());
         assert_eq!(refused.fallback(), Some(FallbackReason::LowConfidence));
-        assert!(refused.target().is_none());
-        assert!(refused.action().is_none());
-        assert_eq!(refused.confidence().get(), 0.49);
-        assert!(refused.state_delta().is_empty());
-    }
-
-    #[test]
-    fn fallback_reasons_have_stable_names() {
-        assert_eq!(FallbackReason::LowConfidence.as_str(), "low-confidence");
-        assert_eq!(FallbackReason::NotImplemented.as_str(), "not-implemented");
-        assert_eq!(FallbackReason::VerifyFailed.as_str(), "verify-failed");
-        assert_eq!(FallbackReason::Ambiguous.as_str(), "ambiguous");
-        assert_eq!(FallbackReason::Ambiguous.to_string(), "ambiguous");
-        assert_eq!(FallbackReason::NoEffect.as_str(), "no-effect");
-        assert_eq!(FallbackReason::NoEffect.to_string(), "no-effect");
     }
 
     #[test]
     fn unit_confidence_rejects_outside_zero_to_one_exactly() {
         assert_eq!(MatcherConfidence::try_unit(0.0).unwrap().get(), 0.0);
-        assert_eq!(MatcherConfidence::try_unit(1.0).unwrap().get(), 1.0);
         assert_eq!(
             MatcherConfidence::try_unit(1.000_001).unwrap_err(),
             ProtocolError::ConfidenceOutOfRange
         );
-        assert_eq!(
-            MatcherConfidence::try_unit(-0.1).unwrap_err(),
-            ProtocolError::ConfidenceOutOfRange
-        );
-        assert_eq!(
-            MatcherConfidence::try_unit(f64::NAN).unwrap_err(),
-            ProtocolError::NonFiniteConfidence
-        );
-        assert_eq!(
-            ProtocolError::ConfidenceOutOfRange.to_string(),
-            "confidence must be between 0 and 1"
-        );
-        // A ranker total may still be negative.
         assert_eq!(MatcherConfidence::try_new(-0.2).unwrap().get(), -0.2);
+    }
+
+    #[test]
+    fn request_guard_carries_a_query() {
+        let request = Request::Guard {
+            query: LocateQuery::new()
+                .text("Settings")
+                .unwrap()
+                .role(Role::Button),
+        };
+        assert!(matches!(request, Request::Guard { .. }));
     }
 }

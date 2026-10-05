@@ -36,6 +36,15 @@ actions, and verifies the resulting state change.
   Rust; until that lands, look-alike rows still need host-supplied context or
   escalation.
 
+
+## Deferred: contextual target resolution (follow-up)
+
+Port the row/card/dialog ancestor context logic from `bench/arms/combo.py`
+into the Rust resolver (`TargetIntent { label, role, context: Context { contains, container } }`)
+so look-alike buttons (Suspend × N rows) disambiguate without JEV. Intentionally
+not in this deletion/refocus PR so the cut stays reviewable. Track as the next
+commit on `refactor/action-firewall` or a follow-up PR.
+
 **Act / press status**
 
 `BrowserSession::press` and MCP/CLI `act` that click are going away from the

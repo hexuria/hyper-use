@@ -314,7 +314,7 @@ Tests or proofs updated: press_marks_the_observation_stale_and_observe_clears_it
 
 `crates/hyper-use-mcp/tests/mock_env.rs` drives one `Server` through `call_tool` over `cdp` endpoints opened by `Server::with_connector`, which hands back a logged `ReplayTransport` built with `ScriptBuilder`. `crates/hyper-use-cli/tests/mcp_stdio_mock.rs` drives the real `hyper-use mcp` child line by line. Neither starts Chrome, opens a socket, or needs a key.
 
-The mock environment owns: the six-verb caller flow and its JSON shapes; whether a press happened (CDP call log); session reuse, the stale flag, reconnect after a dropped session, and the LRU cap; the raw gate and margin refusals; ring diff and eviction; NoEffect and signals as data; unknown page state. It does not own real Chrome response shapes or timing, real page behaviour after a click, websocket failures, or whether an agent picks good queries. A live JEV + Claude drive (not started; needs explicit approval and a key) would own those, and it is not a benchmark of Browser Use or CUA.
+The mock environment owns: the six-verb caller flow and its JSON shapes; whether a press happened (CDP call log); session reuse, the stale flag, reconnect after a dropped session, and the LRU cap; the raw gate and margin refusals; ring diff and eviction; NoEffect and signals as data; unknown page state. It does not own real Chrome response shapes or timing, real page behaviour after a click, websocket failures, or whether an agent picks good queries. The manual JEV live drive (`examples/live-drive/`, opt-in, needs a key) owns those, and it is not a benchmark of Browser Use or CUA.
 
 ```
 Verification impact
@@ -335,3 +335,76 @@ Reason: the connector only changes how a transport is opened; the server is stil
 Affected invariants: Server::new still connects with WebSocketTransport; with_connector is the only seam; a mock tab is a ReplayTransport, so a missing step is NoScriptedResponse and fails the call rather than inventing a click.
 Tests or proofs updated: ten mock_env tests and an_mcp_client_drives_the_closed_loop_over_stdio. Reverting the stale-observation or unknown-page fix fails two of them. No second model of Chrome.
 ```
+
+## Text-miss cap
+
+When the query has text and a region's label shares none of its tokens, WeightedMatcher and HGRA clamp that region's total to `TEXT_MISS_CAP` (0.45), strictly below the 0.55 act gate. Before, a text miss collected 0.50 under V1 from unasked geometry and actionability, so 63 live candidates tied and an unnamed AX node won on id.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: a pure clamp on one score. No interleaving or state.
+Affected invariants: a region whose label shares no token with a non-empty text query never scores at or above 0.55 under either matcher and any weights; a label hit with the wrong role ranks above every text miss under V1; weighted eval-corpus results unchanged.
+Tests or proofs updated: 256-case a_nameless_region_never_reaches_the_act_gate_for_a_text_query, text_miss_is_not_rescued_by_a_role_hit, a_label_hit_with_the_wrong_role_outranks_a_nameless_region, the_cap_only_lowers_and_only_on_a_text_miss, eval_corpus_reports_both_matchers_without_a_winner (HGRA margins updated), t7 replica test. No second model.
+```
+
+## Region state
+
+MCP observe regions, inspect target, and locate candidates carry `state`: `availability` (enabled, disabled) and `visibility` (visible, occluded, offscreen, hidden; most limiting wins). Offscreen uses the locate penalty's own test.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[ ] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: a pure function of region flags, rect, and viewport, serialized into existing responses.
+Affected invariants: observe alone distinguishes a disabled control from an enabled twin; observe and locate agree on offscreen.
+Tests or proofs updated: flags_and_geometry_map_onto_the_ladder, the_most_limiting_visibility_wins, observe_alone_tells_the_disabled_save_from_the_enabled_one. No second model.
+```
+
+## Repeated locate query
+
+The MCP `Server` remembers the last 8 locate calls as (origin, page signature, normalized query). From the 2nd identical call, locate's `signals` carries `repeated_query` with top and runner-up ids and a `suggested_position` that separates each. Data only: no refusal, no retry, ranking unchanged.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[ ] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: a bounded in-memory window on the one blocking server loop. No interleaving, no persistence.
+Affected invariants: the signal appears only for the same origin, the same StateSignature, and the same normalized query within the last 8 locate calls; locate results are otherwise identical; the stateless call_tool never signals.
+Tests or proofs updated: four repeat.rs unit tests, separating_zone_names_a_zone_only_the_target_is_in, a_repeated_identical_locate_carries_repeated_query_and_still_ranks, t8 replica test. No second model.
+```
+

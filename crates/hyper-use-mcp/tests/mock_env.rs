@@ -647,3 +647,64 @@ fn session_lifecycle_failures_are_typed_and_drop_the_session() {
         }
     );
 }
+
+/// Reusing a middle session moves it to the newest end and keeps the others.
+#[test]
+fn reusing_a_session_moves_it_to_the_newest_end_and_keeps_the_rest() {
+    let (a, b) = ("ws://mock/lru-a", "ws://mock/lru-b");
+    let mock = MockChrome::default();
+    mock.tab(
+        a,
+        ScriptBuilder::new()
+            .observe(&sign_in_page())
+            .observe(&sign_in_page()),
+    );
+    mock.tab(b, ScriptBuilder::new().observe(&account_page()));
+    let mut server = mock.server();
+    call(&mut server, "observe", json!({"cdp": a}));
+    call(&mut server, "observe", json!({"cdp": b}));
+    assert_eq!(server.live_sessions(), [a.to_owned(), b.to_owned()]);
+    call(&mut server, "observe", json!({"cdp": a}));
+    assert_eq!(server.live_sessions(), [b.to_owned(), a.to_owned()]);
+    assert_eq!(mock.connects(), 2);
+}
+
+/// A loop is same-origin only: another tab showing the act's after state is
+/// not a loop on this tab.
+#[test]
+fn another_tab_with_the_same_state_is_not_a_loop() {
+    let (a, b) = ("ws://mock/loop-a", "ws://mock/loop-b");
+    let mock = MockChrome::default();
+    mock.tab(
+        a,
+        ScriptBuilder::new()
+            .observe(&sign_in_page()) // locate
+            .dom_click(10)
+            .observe(&account_page()), // act observe_after
+    );
+    mock.tab(b, ScriptBuilder::new().observe(&account_page()));
+    let mut server = mock.server();
+    let located = call(
+        &mut server,
+        "locate",
+        json!({"cdp": a, "text": "Sign in", "role": "button"}),
+    );
+    // Tab b already shows the page tab a is about to reach.
+    call(&mut server, "observe", json!({"cdp": b}));
+    let top = &located["candidates"][0];
+    let runner = &located["candidates"][1];
+    let acted = call(
+        &mut server,
+        "act",
+        json!({
+            "cdp": a,
+            "region": top["id"],
+            "confidence": top["confidence"],
+            "runner_up": {"id": runner["id"], "confidence": runner["confidence"]},
+        }),
+    );
+    assert_eq!(acted["executed"], true, "{acted}");
+    assert_eq!(acted["before_snapshot"], 1);
+    assert_eq!(acted["after_snapshot"], 3);
+    assert_eq!(acted["signals"], json!([]), "{acted}");
+}

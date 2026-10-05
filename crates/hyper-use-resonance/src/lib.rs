@@ -685,4 +685,99 @@ mod tests {
         assert!(weighted[0].confidence().is_finite());
         assert!(hgra[0].confidence().is_finite());
     }
+
+    /// Every HGRA score part pinned, so a changed weight, operator, or
+    /// accessor shows up. Two regions: one with a role miss, a dangling parent,
+    /// and an action miss; one on the wrong side with the asked action.
+    #[test]
+    fn hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum() {
+        let region =
+            |id: &str, x: f64, actions: Vec<Action>, sources, parent: Option<&str>, stability| {
+                InteractionRegion::try_new(RegionParts {
+                    id: RegionId::try_new(id).unwrap(),
+                    role: Role::Button,
+                    label: "Settings".into(),
+                    rect: Rect::try_new(x, 40.0, 80.0, 20.0).unwrap(),
+                    actions,
+                    parent: parent.map(|p| RegionId::try_new(p).unwrap()),
+                    sources,
+                    flags: RegionFlags::none(),
+                    temporal_stability: UnitInterval::try_new(stability).unwrap(),
+                })
+                .unwrap()
+            };
+        let both = SourceMask::DOM.union(SourceMask::ACCESSIBILITY);
+        let manifold = manifold(vec![
+            region("left", 16.0, vec![Action::Click], both, Some("gone"), 0.9),
+            region(
+                "right",
+                1300.0,
+                vec![Action::Click, Action::Type],
+                SourceMask::DOM,
+                None,
+                0.6,
+            ),
+        ]);
+        let query = LocateQuery::new()
+            .text("Settings")
+            .unwrap()
+            .role(Role::Link)
+            .position(Zone::Left)
+            .action(Action::Type);
+        let encoder = Encoder::new(Dims::D512);
+        let ranked = locate_with(&manifold, &query, &encoder, ResonanceModel::V1).unwrap();
+        let score = |id: &str| {
+            ranked
+                .iter()
+                .find(|candidate| candidate.id().as_str() == id)
+                .unwrap()
+                .score()
+                .clone()
+        };
+        let single = |query: LocateQuery, id: &str| {
+            locate_with(&manifold, &query, &encoder, ResonanceModel::V1)
+                .unwrap()
+                .into_iter()
+                .find(|candidate| candidate.id().as_str() == id)
+                .unwrap()
+                .score()
+                .hypervector()
+        };
+        let model = ResonanceModel::V1;
+        // (id, semantic, source, geometric, actionability, temporal, contextual)
+        for (id, semantic, source, geometric, actionability, temporal, contextual) in [
+            ("left", 0.5, 0.5, 1.0, 0.0, 0.9, 0.5),
+            ("right", 0.5, 0.25, 0.0, 1.0, 0.6, 1.0),
+        ] {
+            let parts = score(id);
+            assert_eq!(parts.semantic(), semantic, "{id}");
+            assert_eq!(parts.source_agreement(), source, "{id}");
+            assert_eq!(parts.geometric(), geometric, "{id}");
+            assert_eq!(parts.actionability(), actionability, "{id}");
+            assert!((parts.temporal_stability() - temporal).abs() < 1e-6, "{id}");
+            assert_eq!(parts.contextual_consistency(), contextual, "{id}");
+            assert_eq!(parts.penalty(), 0.0, "{id}");
+            let hv = parts.hypervector();
+            assert!((-1.0..=1.0).contains(&hv), "{id} {hv}");
+            // One probe per constraint; the hypervector term is their mean.
+            let mean = (single(LocateQuery::new().role(Role::Link), id)
+                + single(LocateQuery::new().text("Settings").unwrap(), id)
+                + single(LocateQuery::new().position(Zone::Left), id)
+                + single(LocateQuery::new().action(Action::Type), id))
+                / 4.0;
+            assert!((hv - mean).abs() < 1e-12, "{id} {hv} {mean}");
+            let expected = model.hypervector() * hv
+                + model.semantic() * semantic
+                + model.source_agreement() * source
+                + model.geometric() * geometric
+                + model.actionability() * actionability
+                + model.temporal_stability() * parts.temporal_stability()
+                + model.contextual_consistency() * contextual;
+            assert!(
+                (parts.total() - expected).abs() < 1e-12,
+                "{id} {} {expected}",
+                parts.total()
+            );
+        }
+    }
 }

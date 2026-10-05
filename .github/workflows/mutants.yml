@@ -1,0 +1,39 @@
+name: mutants
+# Mutation testing for the Agent + PUA + ticket safety boundary
+# (impeccable audit R6, baseline 87ffc2d). Not on PRs: it rebuilds per mutant.
+# Run locally: see docs/IMPECCABLE-AUDIT.md#mutation-testing.
+on:
+  schedule:
+    - cron: "0 18 * * *" # 02:00 Asia/Manila
+  workflow_dispatch:
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gate-ticket-executor
+            args: >-
+              -f crates/hyper-use-guard/src/gate.rs
+              -f crates/hyper-use-guard/src/ticket.rs
+              -f crates/hyper-use-agent/src/executor.rs
+          - name: world-of-target
+            args: >-
+              -f crates/hyper-use-guard/src/world.rs
+              --re 'of_target|neighborhood_of|nearby'
+    name: mutants (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      # Exit code 2 = missed mutants (a test gap), 3 = timeouts. Either fails the job.
+      - run: cargo mutants --no-shuffle --timeout 300 -j 2 -o mutants-out ${{ matrix.args }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.name }}
+          path: mutants-out/mutants.out

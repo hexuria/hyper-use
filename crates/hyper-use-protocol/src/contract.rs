@@ -48,12 +48,15 @@ impl fmt::Display for FallbackReason {
 pub enum ProtocolError {
     NonFiniteConfidence,
     EmptyExpectedText,
+    /// A caller-supplied confidence outside `[0, 1]`.
+    ConfidenceOutOfRange,
 }
 
 impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
+            Self::ConfidenceOutOfRange => f.write_str("confidence must be between 0 and 1"),
             Self::EmptyExpectedText => {
                 f.write_str("expected text must contain at least one alphanumeric token")
             }
@@ -74,6 +77,18 @@ impl MatcherConfidence {
             Ok(Self(value))
         } else {
             Err(ProtocolError::NonFiniteConfidence)
+        }
+    }
+
+    /// A confidence a caller hands to the act gate. It must be finite and in
+    /// `[0, 1]`. A ranker total can be negative ([`Self::try_new`] allows
+    /// that), but a caller value outside `[0, 1]` is not a locate result.
+    pub fn try_unit(value: f64) -> Result<Self, ProtocolError> {
+        let checked = Self::try_new(value)?;
+        if (0.0..=1.0).contains(&value) {
+            Ok(checked)
+        } else {
+            Err(ProtocolError::ConfidenceOutOfRange)
         }
     }
 

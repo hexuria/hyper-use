@@ -955,3 +955,63 @@ fn stateless_call_tool_is_unchanged() {
     let err = call("diff", json!({"before_snapshot": 1, "after_snapshot": 1})).unwrap_err();
     assert_eq!(err, ToolError::UnknownSnapshot(1));
 }
+
+#[test]
+fn caller_confidence_outside_zero_to_one_is_exact() {
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 1e7,
+            "runner_up": {"id": "n200", "confidence": 0.2}
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::ConfidenceOutOfRange("10000000.0".into()));
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "ConfidenceOutOfRange", "value": "10000000.0"})
+    );
+    assert_eq!(
+        err.to_string(),
+        "confidence `10000000.0` must be between 0 and 1"
+    );
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 0.9,
+            "runner_up": {"id": "n200", "confidence": -1e7}
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::ConfidenceOutOfRange("-10000000.0".into()));
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": "1.5"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::ConfidenceOutOfRange("1.5".into()));
+}
+
+#[test]
+fn raw_confidence_just_below_the_gate_does_not_press() {
+    let body = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-press.cdp.json"),
+            "region": "n100",
+            "confidence": 0.5496
+        }),
+    )
+    .unwrap();
+    assert_eq!(body["executed"], false);
+    assert_eq!(body["fallback"], "low-confidence");
+    assert_eq!(body["mechanism"], Value::Null);
+}

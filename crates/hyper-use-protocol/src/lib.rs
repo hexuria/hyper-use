@@ -162,4 +162,28 @@ mod tests {
         assert_eq!(FallbackReason::NoEffect.as_str(), "no-effect");
         assert_eq!(FallbackReason::NoEffect.to_string(), "no-effect");
     }
+
+    #[test]
+    fn unit_confidence_rejects_outside_zero_to_one_exactly() {
+        assert_eq!(MatcherConfidence::try_unit(0.0).unwrap().get(), 0.0);
+        assert_eq!(MatcherConfidence::try_unit(1.0).unwrap().get(), 1.0);
+        assert_eq!(
+            MatcherConfidence::try_unit(1.000_001).unwrap_err(),
+            ProtocolError::ConfidenceOutOfRange
+        );
+        assert_eq!(
+            MatcherConfidence::try_unit(-0.1).unwrap_err(),
+            ProtocolError::ConfidenceOutOfRange
+        );
+        assert_eq!(
+            MatcherConfidence::try_unit(f64::NAN).unwrap_err(),
+            ProtocolError::NonFiniteConfidence
+        );
+        assert_eq!(
+            ProtocolError::ConfidenceOutOfRange.to_string(),
+            "confidence must be between 0 and 1"
+        );
+        // A ranker total may still be negative.
+        assert_eq!(MatcherConfidence::try_new(-0.2).unwrap().get(), -0.2);
+    }
 }

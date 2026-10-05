@@ -31,7 +31,7 @@ use hyper_use_observe::{
     history::{SnapshotId, TemporalSignal},
     ManifoldDiff,
 };
-use hyper_use_protocol::{FallbackReason, StateDelta};
+use hyper_use_protocol::{FallbackReason, MatcherConfidence, ProtocolError, StateDelta};
 use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
 use serde_json::{json, Value};
 
@@ -570,14 +570,13 @@ fn parse_act_score(arguments: &Value, region: &RegionId) -> Result<Option<ActSco
             if &id == region {
                 return Err(ToolError::RunnerUpIsTarget);
             }
-            let confidence = object
+            let raw = object
                 .get("confidence")
-                .and_then(Value::as_f64)
                 .ok_or_else(|| ToolError::BadRunnerUp("confidence must be a number".into()))?;
-            if !confidence.is_finite() {
-                return Err(ToolError::NonFiniteConfidence);
-            }
-            Some((id, confidence))
+            let confidence = raw
+                .as_f64()
+                .ok_or_else(|| ToolError::BadRunnerUp("confidence must be a number".into()))?;
+            Some((id, unit_confidence(confidence, &raw.to_string())?))
         }
         Some(_) => return Err(ToolError::BadRunnerUp("runner_up must be an object".into())),
     };
@@ -1015,19 +1014,25 @@ fn parse_confidence(arguments: &Value) -> Result<Option<f64>, ToolError> {
             let value = number
                 .as_f64()
                 .ok_or_else(|| ToolError::BadConfidence(number.to_string()))?;
-            if !value.is_finite() {
-                return Err(ToolError::NonFiniteConfidence);
-            }
-            Ok(Some(value))
+            unit_confidence(value, &number.to_string()).map(Some)
         }
         Some(Value::String(text)) => {
             let value = f64::from_str(text).map_err(|_| ToolError::BadConfidence(text.clone()))?;
-            if !value.is_finite() {
-                return Err(ToolError::NonFiniteConfidence);
-            }
-            Ok(Some(value))
+            unit_confidence(value, text).map(Some)
         }
         Some(other) => Err(ToolError::BadConfidence(other.to_string())),
+    }
+}
+
+/// A caller confidence must be finite and in `[0, 1]`. `raw` is the text the
+/// caller sent, for the error.
+fn unit_confidence(value: f64, raw: &str) -> Result<f64, ToolError> {
+    match MatcherConfidence::try_unit(value) {
+        Ok(confidence) => Ok(confidence.get()),
+        Err(ProtocolError::ConfidenceOutOfRange) => {
+            Err(ToolError::ConfidenceOutOfRange(raw.to_owned()))
+        }
+        Err(_) => Err(ToolError::NonFiniteConfidence),
     }
 }
 

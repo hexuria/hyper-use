@@ -238,6 +238,62 @@ mod tests {
         assert_eq!(ids(&second), ["n900"]);
     }
 
+    #[test]
+    fn a_third_control_on_a_taken_fused_id_is_minted_with_suffix_three() {
+        let mut map = IdentityMap::default();
+        let (first, bindings) = snapshot(vec![button("n100", "Sign in", 400.0)]);
+        let (first, _) = map.assign(None, first, bindings).unwrap();
+        let (rerender, bindings) = snapshot(vec![button("n900", "Sign in", 402.0)]);
+        let (rerender, _) = map.assign(Some(&first), rerender, bindings).unwrap();
+        let (second, bindings) = snapshot(vec![
+            button("n900", "Sign in", 402.0),
+            button("n100", "Help", 1100.0),
+        ]);
+        let (second, _) = map.assign(Some(&rerender), second, bindings).unwrap();
+        assert_eq!(ids(&second), ["n100", "n100-2"]);
+        // Help re-renders onto n500 and inherits n100-2 by similarity.
+        let (third, bindings) = snapshot(vec![
+            button("n900", "Sign in", 402.0),
+            button("n500", "Help", 1100.0),
+        ]);
+        let (third, _) = map.assign(Some(&second), third, bindings).unwrap();
+        assert_eq!(ids(&third), ["n100", "n100-2"]);
+        // A new control takes backend 100 again. n100 and n100-2 are taken.
+        let (fourth, bindings) = snapshot(vec![
+            button("n900", "Sign in", 402.0),
+            button("n500", "Help", 1100.0),
+            button("n100", "Export", 700.0),
+        ]);
+        let (fourth, _) = map.assign(Some(&third), fourth, bindings).unwrap();
+        assert_eq!(ids(&fourth), ["n100", "n100-2", "n100-3"]);
+        assert_eq!(fourth.get_str("n100-3").unwrap().label(), "Export");
+    }
+
+    #[test]
+    fn a_kept_stable_id_is_not_replaced_by_a_similarity_pair() {
+        let mut map = IdentityMap::default();
+        let (first, bindings) = snapshot(vec![button("n100", "Sign in", 400.0)]);
+        map.assign(None, first, bindings).unwrap();
+        // A previous observation this map did not issue: its region x1 is
+        // similar to n100 but is not n100. Step 1 keeps n100; step 2 must
+        // not rename it to x1.
+        let (unrelated, _) = snapshot(vec![button("n1", "Sign in", 402.0)]);
+        let unrelated = InteractionManifold::try_new(
+            unrelated.viewport(),
+            vec![rename(
+                unrelated.get_str("n1").unwrap(),
+                RegionId::try_new("x1").unwrap(),
+                None,
+            )
+            .unwrap()],
+            0,
+        )
+        .unwrap();
+        let (fresh, bindings) = snapshot(vec![button("n100", "Sign in", 400.0)]);
+        let (fresh, _) = map.assign(Some(&unrelated), fresh, bindings).unwrap();
+        assert_eq!(ids(&fresh), ["n100"]);
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(16))]
         #[test]

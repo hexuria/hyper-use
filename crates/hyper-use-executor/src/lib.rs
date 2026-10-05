@@ -10,10 +10,10 @@
 //! Neither is in [`DEFAULT_POLICY_ORDER`]: a missing CDP session does not
 //! delegate to either. macOS still returns [`ExecutorError::NotImplemented`].
 //! A pixel CUA driver does not exist; [`hyper_use_cua::CuaStub`] says so.
-//! A scored confidence below [`MIN_ACT_CONFIDENCE_MILLIS`] returns
+//! A scored confidence below [`MIN_ACT_CONFIDENCE`] returns
 //! [`ExecutorError::ConfidenceBelowThreshold`] and does not click, and it does
 //! not call the Browser Use or CUA transport. A ranked confidence whose top
-//! and runner-up are closer than [`MIN_ACT_MARGIN_MILLIS`] returns
+//! and runner-up are closer than [`MIN_ACT_MARGIN`] returns
 //! [`ExecutorError::AmbiguousTarget`] and does not act either.
 //! [`ActConfidence::Inspected`] is the operator naming a region; the gate does
 //! not apply.
@@ -87,13 +87,26 @@ impl ExecutorKind {
     }
 }
 
-/// Act gate for a scored matcher total. 550 means 0.55. A weighted text miss
-/// tops out at 0.50 (geometry and actionability, semantic 0), so it is refused.
-/// This is not a probability and is not calibrated across matchers.
+/// Act gate for a scored matcher total. A raw total below 0.55 never clicks.
+/// A weighted text miss tops out at 0.50 (geometry and actionability, semantic
+/// 0), so it is refused. This is not a probability and is not calibrated
+/// across matchers.
+pub const MIN_ACT_CONFIDENCE: f64 = 0.55;
+
+/// Minimum raw gap between the top candidate and the runner-up of one ranking.
+/// A gap below 0.05 refuses as ambiguous. Not calibrated across matchers.
+pub const MIN_ACT_MARGIN: f64 = 0.05;
+
+/// Tolerance on the margin only. `0.6 - 0.55` is `0.04999999999999993` in
+/// `f64` because neither decimal is exact in binary, and the rule means that
+/// gap to pass. `1e-9` is far below any matcher's resolution. The threshold
+/// has no tolerance: `0.55` compares exactly with itself.
+pub const MARGIN_EPSILON: f64 = 1e-9;
+
+/// [`MIN_ACT_CONFIDENCE`] in millis, for messages only.
 pub const MIN_ACT_CONFIDENCE_MILLIS: i32 = 550;
 
-/// Minimum gap between the top candidate and the runner-up, in millis of the
-/// same matcher's total. 50 means 0.05. Not calibrated across matchers.
+/// [`MIN_ACT_MARGIN`] in millis, for messages only.
 pub const MIN_ACT_MARGIN_MILLIS: i32 = 50;
 
 /// Where the confidence came from. These variants cannot be combined.
@@ -102,11 +115,11 @@ pub const MIN_ACT_MARGIN_MILLIS: i32 = 50;
 pub enum ActConfidence {
     /// The operator named the region. The confidence gate does not apply.
     Inspected,
-    /// A matcher total. Compared with [`MIN_ACT_CONFIDENCE_MILLIS`].
+    /// A matcher total. Compared with [`MIN_ACT_CONFIDENCE`].
     Scored(f64),
     /// The top total and the runner-up total from one ranking. The top is
-    /// compared with [`MIN_ACT_CONFIDENCE_MILLIS`], and the gap with
-    /// [`MIN_ACT_MARGIN_MILLIS`].
+    /// compared with [`MIN_ACT_CONFIDENCE`], and the gap with
+    /// [`MIN_ACT_MARGIN`].
     Ranked { top: f64, runner_up: f64 },
 }
 
@@ -213,13 +226,14 @@ pub enum ExecutorError {
     NoneAvailable,
     /// The act path named a backend that was not available.
     Unavailable(ExecutorKind),
-    /// Matcher total is below [`MIN_ACT_CONFIDENCE_MILLIS`]. No click was sent.
+    /// Matcher total is below [`MIN_ACT_CONFIDENCE`]. No click was sent.
+    /// The millis fields are display only.
     ConfidenceBelowThreshold {
         confidence_millis: i32,
         minimum_millis: i32,
     },
     /// The top and runner-up totals differ by less than
-    /// [`MIN_ACT_MARGIN_MILLIS`]. No click was sent.
+    /// [`MIN_ACT_MARGIN`]. No click was sent. The millis fields are display only.
     AmbiguousTarget {
         top_millis: i32,
         runner_up_millis: i32,
@@ -480,15 +494,23 @@ impl<T: CuaTransport> ActionExecutor for CuaExecutor<T> {
     }
 }
 
-/// Refuse a scored act that cannot clear the threshold. Does not click.
+/// Display value in millis. Saturating, so it never panics. Not a gate input.
+fn display_millis(value: f64) -> i32 {
+    (value * 1000.0).round() as i32
+}
+
+/// Refuse a scored act below [`MIN_ACT_CONFIDENCE`]. Does not click.
+///
+/// The comparison is on the raw value: `0.5496` is refused even though it
+/// displays as 550 millis. `confidence_millis` in the error is display only and
+/// is capped at one below the minimum so the message never shows the minimum.
 pub fn gate_scored_confidence(confidence: f64) -> Result<(), ExecutorError> {
     if !confidence.is_finite() {
         return Err(ExecutorError::NonFiniteConfidence);
     }
-    let confidence_millis = (confidence * 1000.0).round() as i32;
-    if confidence_millis < MIN_ACT_CONFIDENCE_MILLIS {
+    if confidence < MIN_ACT_CONFIDENCE {
         return Err(ExecutorError::ConfidenceBelowThreshold {
-            confidence_millis,
+            confidence_millis: display_millis(confidence).min(MIN_ACT_CONFIDENCE_MILLIS - 1),
             minimum_millis: MIN_ACT_CONFIDENCE_MILLIS,
         });
     }
@@ -498,23 +520,32 @@ pub fn gate_scored_confidence(confidence: f64) -> Result<(), ExecutorError> {
 /// Refuse a ranked act whose top is low or whose runner-up is too close.
 /// The threshold is checked first, so a low top is `ConfidenceBelowThreshold`
 /// even when it is also ambiguous. A runner-up above the top also refuses.
+///
+/// The margin is `top - runner_up` in `f64`, compared with
+/// [`MIN_ACT_MARGIN`] less [`MARGIN_EPSILON`]. No integer subtraction, so no
+/// overflow. The millis fields of [`ExecutorError::AmbiguousTarget`] are
+/// display only.
 pub fn gate_ranked_confidence(top: f64, runner_up: f64) -> Result<(), ExecutorError> {
     if !runner_up.is_finite() {
         return Err(ExecutorError::NonFiniteConfidence);
     }
     gate_scored_confidence(top)?;
-    let top_millis = (top * 1000.0).round() as i32;
-    let runner_up_millis = (runner_up * 1000.0).round() as i32;
-    let margin_millis = top_millis - runner_up_millis;
-    if margin_millis < MIN_ACT_MARGIN_MILLIS {
+    let margin = top - runner_up;
+    if !margin.is_finite() || margin < MIN_ACT_MARGIN - MARGIN_EPSILON {
         return Err(ExecutorError::AmbiguousTarget {
-            top_millis,
-            runner_up_millis,
-            margin_millis,
+            top_millis: display_millis(top),
+            runner_up_millis: display_millis(runner_up),
+            margin_millis: margin_millis(top, runner_up).min(MIN_ACT_MARGIN_MILLIS - 1),
             minimum_margin_millis: MIN_ACT_MARGIN_MILLIS,
         });
     }
     Ok(())
+}
+
+/// `top - runner_up` in millis for display. Computed in `f64`, then rounded
+/// and saturated. It never panics. The gate does not read it.
+pub fn margin_millis(top: f64, runner_up: f64) -> i32 {
+    display_millis(top - runner_up)
 }
 
 /// The single act gate. `Inspected` is not gated.
@@ -1273,6 +1304,158 @@ mod tests {
                 f64::from(runner) / 1000.0,
             );
             proptest::prop_assert_eq!(result, Ok(()));
+        }
+    }
+
+    #[test]
+    fn raw_confidence_below_the_threshold_never_clicks_even_when_it_displays_as_550() {
+        let err = gate_scored_confidence(0.5496).unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: 549,
+                minimum_millis: 550,
+            }
+        );
+        assert_eq!(
+            err.refusal_result().unwrap().confidence().get(),
+            0.549,
+            "refusal confidence is the display millis over 1000"
+        );
+        assert!(gate_scored_confidence(MIN_ACT_CONFIDENCE).is_ok());
+        assert!(gate_scored_confidence(0.549_999_999).is_err());
+    }
+
+    #[test]
+    fn raw_margin_below_the_minimum_refuses_even_when_it_displays_as_50() {
+        // 0.6005 - 0.5514 = 0.0491. The old millis gate rounded this to 50.
+        assert_eq!(
+            gate_ranked_confidence(0.6005, 0.5514).unwrap_err(),
+            ExecutorError::AmbiguousTarget {
+                top_millis: 601,
+                runner_up_millis: 551,
+                margin_millis: 49,
+                minimum_margin_millis: 50,
+            }
+        );
+        // An exact decimal gap of 0.05 passes; f64 gives 0.04999999999999993.
+        assert!(gate_ranked_confidence(0.6, 0.55).is_ok());
+        assert!(gate_ranked_confidence(0.6, 0.550_01).is_err());
+    }
+
+    #[test]
+    fn extreme_finite_confidences_do_not_panic() {
+        // The old i32 subtraction overflowed here in a debug build: both
+        // values saturated to i32::MAX and i32::MIN. The raw gap is 2e7.
+        assert_eq!(gate_ranked_confidence(1e7, -1e7), Ok(()));
+        // The raw gap overflows f64 to infinity. A non-finite gap refuses.
+        let err = gate_ranked_confidence(f64::MAX, -f64::MAX).unwrap_err();
+        assert!(
+            matches!(err, ExecutorError::AmbiguousTarget { .. }),
+            "{err:?}"
+        );
+        assert!(gate_ranked_confidence(1e7, 0.0).is_ok());
+        assert_eq!(margin_millis(f64::MAX, -f64::MAX), i32::MAX);
+        assert_eq!(margin_millis(-f64::MAX, f64::MAX), i32::MIN);
+        let err = gate_scored_confidence(-1e300).unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::ConfidenceBelowThreshold {
+                confidence_millis: i32::MIN,
+                minimum_millis: 550,
+            }
+        );
+    }
+
+    #[test]
+    fn default_act_selection_never_picks_browser_use_or_cua() {
+        assert_eq!(
+            select_act_executor(None, &[ExecutorKind::BrowserUse, ExecutorKind::Cua]),
+            Err(ExecutorError::NoneAvailable)
+        );
+        assert_eq!(
+            select_act_executor(None, &[ExecutorKind::Cua, ExecutorKind::Browser]),
+            Ok(ExecutorKind::Browser)
+        );
+    }
+
+    #[test]
+    fn executor_kind_parse_and_executed_via_display_are_exact() {
+        assert_eq!(ExecutorKind::parse("macos"), Some(ExecutorKind::Macos));
+        assert_eq!(ExecutorKind::parse("browser"), Some(ExecutorKind::Browser));
+        assert_eq!(ExecutorKind::parse("cua"), Some(ExecutorKind::Cua));
+        assert_eq!(
+            ExecutorKind::parse("browser-use"),
+            Some(ExecutorKind::BrowserUse)
+        );
+        assert_eq!(ExecutorKind::parse("Macos"), None);
+        assert_eq!(ExecutedVia::CuaSemantic.to_string(), "cua-semantic");
+        assert_eq!(
+            ExecutedVia::BrowserUseSemantic.to_string(),
+            "browser-use-semantic"
+        );
+        assert_eq!(
+            ExecutedVia::Browser(ActMechanism::Coordinate).to_string(),
+            ActMechanism::Coordinate.as_str()
+        );
+    }
+
+    #[test]
+    fn executor_browser_error_is_the_exact_wrapped_error() {
+        let mut executor = BrowserExecutor::new(BrowserSession::new(
+            hyper_use_browser::ReplayTransport::parse(include_str!(
+                "../../../fixtures/sign-in-press.cdp.json"
+            ))
+            .unwrap(),
+        ));
+        let err = executor
+            .execute(&ActionRequest::new(
+                RegionId::try_new("nope").unwrap(),
+                Action::Click,
+            ))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ExecutorError::Browser(BrowserError::UnknownRegion("nope".into()))
+        );
+        assert_eq!(
+            err.to_string(),
+            BrowserError::UnknownRegion("nope".into()).to_string()
+        );
+    }
+
+    fn gate_input() -> impl proptest::strategy::Strategy<Value = f64> {
+        use proptest::prelude::*;
+        prop_oneof![-1e300f64..1e300, -2.0f64..2.0, 0.0f64..1.0, 0.54f64..0.56,]
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+        #[test]
+        fn gate_follows_the_raw_rule_and_never_panics(top in gate_input(), runner_up in gate_input()) {
+            let scored = gate_scored_confidence(top);
+            if top < MIN_ACT_CONFIDENCE {
+                proptest::prop_assert!(
+                    matches!(scored, Err(ExecutorError::ConfidenceBelowThreshold { .. })),
+                    "{top} {scored:?}"
+                );
+            } else {
+                proptest::prop_assert_eq!(scored, Ok(()));
+            }
+            let ranked = gate_ranked_confidence(top, runner_up);
+            if top < MIN_ACT_CONFIDENCE {
+                let is_low = matches!(ranked, Err(ExecutorError::ConfidenceBelowThreshold { .. }));
+                proptest::prop_assert!(is_low);
+            } else if top - runner_up < MIN_ACT_MARGIN - MARGIN_EPSILON {
+                let is_ambiguous = matches!(ranked, Err(ExecutorError::AmbiguousTarget { .. }));
+                proptest::prop_assert!(is_ambiguous);
+            } else {
+                proptest::prop_assert_eq!(&ranked, &Ok(()));
+            }
+            if let Err(err) = &ranked {
+                let _ = err.to_string();
+                let _ = err.refusal_result();
+            }
         }
     }
 }

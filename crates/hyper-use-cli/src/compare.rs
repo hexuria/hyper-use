@@ -812,11 +812,7 @@ fn corpus_hit(
 
 /// The product act gate. A missing runner-up checks only the 0.55 threshold.
 fn gate_report(top: f64, runner_up: Option<f64>) -> (Option<i32>, bool) {
-    let margin_millis = runner_up.map(|second| {
-        let top_millis = (top * 1000.0).round() as i32;
-        let second_millis = (second * 1000.0).round() as i32;
-        top_millis - second_millis
-    });
+    let margin_millis = runner_up.map(|second| hyper_use_executor::margin_millis(top, second));
     let refused = match runner_up {
         Some(second) => gate_ranked_confidence(top, second).is_err(),
         None => gate_scored_confidence(top).is_err(),
@@ -891,8 +887,7 @@ mod tests {
             .iter()
             .find(|case| case.fixture() == "sign-in-press.cdp.json")
             .unwrap();
-        let millis = (press.confidence() * 1000.0).round() as i32;
-        if millis >= hyper_use_executor::MIN_ACT_CONFIDENCE_MILLIS {
+        if press.confidence() >= hyper_use_executor::MIN_ACT_CONFIDENCE {
             assert_eq!(press.executed(), Some(true));
         } else {
             assert_eq!(press.executed(), Some(false));

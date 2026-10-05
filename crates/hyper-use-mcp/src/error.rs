@@ -59,6 +59,9 @@ pub enum ToolError {
     DimsRequireHgra,
     BadDims(String),
     BadConfidence(String),
+    /// A caller-supplied `confidence` or `runner_up.confidence` outside
+    /// `[0, 1]`. The value is the JSON text the caller sent.
+    ConfidenceOutOfRange(String),
     MissingRegion,
     MissingExpect,
     BothExpectations,
@@ -128,6 +131,7 @@ impl ToolError {
             Self::DimsRequireHgra => "DimsRequireHgra",
             Self::BadDims(_) => "BadDims",
             Self::BadConfidence(_) => "BadConfidence",
+            Self::ConfidenceOutOfRange(_) => "ConfidenceOutOfRange",
             Self::MissingRegion => "MissingRegion",
             Self::MissingExpect => "MissingExpect",
             Self::BothExpectations => "BothExpectations",
@@ -167,6 +171,9 @@ impl ToolError {
             Self::RegionStillPresent { id } => json!({"variant": "RegionStillPresent", "id": id}),
             Self::BadDims(dims) => json!({"variant": "BadDims", "dims": dims}),
             Self::BadConfidence(value) => json!({"variant": "BadConfidence", "value": value}),
+            Self::ConfidenceOutOfRange(value) => {
+                json!({"variant": "ConfidenceOutOfRange", "value": value})
+            }
             Self::BadRunnerUp(message) => json!({"variant": "BadRunnerUp", "message": message}),
             Self::TargetNotTop { region, top } => {
                 json!({"variant": "TargetNotTop", "region": region, "top": top})
@@ -260,6 +267,9 @@ impl fmt::Display for ToolError {
             Self::DimsRequireHgra => f.write_str("dims is only valid with matcher hgra"),
             Self::BadDims(dims) => write!(f, "unsupported dims `{dims}`"),
             Self::BadConfidence(value) => write!(f, "bad confidence `{value}`"),
+            Self::ConfidenceOutOfRange(value) => {
+                write!(f, "confidence `{value}` must be between 0 and 1")
+            }
             Self::MissingRegion => f.write_str("act and inspect require region"),
             Self::MissingExpect => f.write_str("verify requires expect_text or expect_absent"),
             Self::BothExpectations => {

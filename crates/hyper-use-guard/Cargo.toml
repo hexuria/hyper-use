@@ -14,3 +14,8 @@ hyper-use-resonance = { path = "../hyper-use-resonance" }
 
 [dev-dependencies]
 proptest = "1.11"
+
+[features]
+default = []
+# Experimental: compile HGRA matcher tests.
+hgra = ["hyper-use-resonance/hgra"]

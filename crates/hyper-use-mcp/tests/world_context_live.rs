@@ -85,7 +85,6 @@ fn find_ids_by_label(session: &BrowserSession<WebSocketTransport>, label: &str) 
         .collect()
 }
 
-
 /// Rank+decide with the matcher selected by `HYPER_USE_MATCHER` (default weighted).
 /// Set `HYPER_USE_MATCHER=hgra` and build with `--features hgra` for forced-HGRA remasure.
 fn decide(

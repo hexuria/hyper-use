@@ -18,7 +18,8 @@ use hyper_use_browser::{
     ReplayTransport, VerifyError,
 };
 use hyper_use_core::{
-    parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
+    parse_fixture, Action, InteractionManifold, InteractionRegion, LocateQuery, RegionId, Role,
+    Zone,
 };
 use hyper_use_executor::{
     gate_confidence, select_act_executor, ActConfidence, ActionExecutor, ActionRequest,
@@ -32,7 +33,9 @@ use hyper_use_observe::{
     ManifoldDiff,
 };
 use hyper_use_protocol::{FallbackReason, MatcherConfidence, ProtocolError, StateDelta};
-use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
+use hyper_use_resonance::{
+    HgraMatcher, Match, RegionMatcher, RegionState, ResonanceModel, WeightedMatcher,
+};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
@@ -105,6 +108,7 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
                 "id": region.id().as_str(),
                 "role": region.role().as_str(),
                 "label": region.label(),
+                "state": state_json(&manifold, region),
             })
         })
         .collect();
@@ -196,6 +200,7 @@ fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
         "id": found.id().as_str(),
         "role": found.role().as_str(),
         "label": found.label(),
+        "state": state_json(&manifold, found),
         "x": found.rect().x(),
         "y": found.rect().y(),
         "width": found.rect().width(),
@@ -1168,11 +1173,21 @@ fn candidates_of(manifold: &InteractionManifold, ranked: &[Match]) -> Value {
                 "id": candidate.id().as_str(),
                 "role": region.map(|region| region.role().as_str()).unwrap_or("unknown"),
                 "label": region.map(|region| region.label()).unwrap_or(""),
+                "state": region.map_or(Value::Null, |region| state_json(manifold, region)),
                 "confidence": candidate.confidence(),
             })
         })
         .collect();
     Value::Array(rows)
+}
+
+/// `{"availability": "enabled"|"disabled", "visibility": "visible"|"occluded"|"offscreen"|"hidden"}`.
+fn state_json(manifold: &InteractionManifold, region: &InteractionRegion) -> Value {
+    let state = RegionState::of(manifold.viewport(), region);
+    json!({
+        "availability": state.availability().as_str(),
+        "visibility": state.visibility().as_str(),
+    })
 }
 
 fn id_strings(ids: &[RegionId]) -> Vec<&str> {

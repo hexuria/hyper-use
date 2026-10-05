@@ -1165,3 +1165,61 @@ fn stale_before_is_not_reused_after_a_press_without_observe_after() {
         "Welcome"
     );
 }
+
+#[test]
+fn observe_alone_tells_the_disabled_save_from_the_enabled_one() {
+    let observed = call(
+        "observe",
+        json!({"fixture": fixture("settings-saves.manifold")}),
+    )
+    .unwrap();
+    let rows: Vec<(&str, &str, &str, &str, &str)> = observed["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|region| {
+            (
+                region["id"].as_str().unwrap(),
+                region["role"].as_str().unwrap(),
+                region["label"].as_str().unwrap(),
+                region["state"]["availability"].as_str().unwrap(),
+                region["state"]["visibility"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("a-save-vacation", "button", "Save", "disabled", "visible"),
+            ("b-save-footer", "button", "Save", "enabled", "offscreen"),
+            ("z-save-signature", "button", "Save", "enabled", "visible"),
+        ]
+    );
+
+    let inspected = call(
+        "inspect",
+        json!({"fixture": fixture("settings-saves.manifold"), "region": "a-save-vacation"}),
+    )
+    .unwrap();
+    assert_eq!(
+        inspected["target"]["state"],
+        json!({"availability": "disabled", "visibility": "visible"})
+    );
+
+    let located = call(
+        "locate",
+        json!({"fixture": fixture("settings-saves.manifold"), "text": "Save", "role": "button"}),
+    )
+    .unwrap();
+    let candidates = located["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["id"], "z-save-signature");
+    assert_eq!(
+        candidates[0]["state"],
+        json!({"availability": "enabled", "visibility": "visible"})
+    );
+    let disabled = candidates
+        .iter()
+        .find(|row| row["id"] == "a-save-vacation")
+        .unwrap();
+    assert_eq!(disabled["state"]["availability"], "disabled");
+}

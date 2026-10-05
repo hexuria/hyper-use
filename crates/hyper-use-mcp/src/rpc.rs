@@ -143,7 +143,7 @@ fn tools_list() -> Value {
 fn tool_spec(name: &str) -> Value {
     let (description, properties, required) = match name {
         "observe" => (
-            "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, label, and a snapshot id for diff. Does not click and does not choose the next capability.",
+            "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, label, state (availability enabled or disabled; visibility visible, occluded, offscreen, or hidden), and a snapshot id for diff. Does not click and does not choose the next capability.",
             source_props(),
             Vec::<&str>::new(),
         ),
@@ -153,7 +153,7 @@ fn tool_spec(name: &str) -> Value {
             Vec::new(),
         ),
         "inspect" => (
-            "Return one region by id, including its rectangle. The rectangle is descriptive. Do not click those coordinates. Act on the region id.",
+            "Return one region by id, including its state and rectangle. The rectangle is descriptive. Do not click those coordinates. Act on the region id.",
             {
                 let mut props = source_props();
                 props.insert("region".into(), json!({"type": "string"}));

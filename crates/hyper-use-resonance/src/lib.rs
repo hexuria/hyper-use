@@ -31,6 +31,7 @@ mod error;
 mod matcher;
 mod model;
 mod signature;
+mod state;
 
 pub use matcher::{
     default_matcher, HgraMatcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher,
@@ -46,6 +47,7 @@ use hyper_use_hyper::{cosine, Dims, Encoder};
 pub use error::ResonanceError;
 pub use hyper_use_hyper::BipolarVector;
 pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
+pub use state::{Availability, RegionState, Visibility};
 
 use signature::{query_probes, region_signature as compose_signature, Memory};
 

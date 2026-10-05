@@ -168,6 +168,38 @@ pub(crate) fn location_backend(result_json: &str) -> Result<Option<i64>, Browser
     Ok(value.get("backendNodeId").and_then(Value::as_i64))
 }
 
+/// Name/value pairs from `CSS.getComputedStyleForNode`.
+pub(crate) fn computed_style_pairs(
+    result_json: &str,
+) -> Result<Vec<(String, String)>, BrowserError> {
+    let value = parse_json(result_json)?;
+    let entries = value
+        .get("computedStyle")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            BrowserError::Cdp(CdpError::BadJson {
+                message: "CSS.getComputedStyleForNode result has no computedStyle".into(),
+            })
+        })?;
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let val = entry
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if !name.is_empty() {
+            out.push((name, val));
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn object_id(resolve_json: &str) -> Result<String, BrowserError> {
     let value = parse_json(resolve_json)?;
     value

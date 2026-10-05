@@ -360,3 +360,110 @@ fn hit_test_refuses_a_click_under_a_custom_backdrop() {
     assert_eq!(accept_click["decision"], "allow", "{accept_click}");
     assert_eq!(presses(&log), 0);
 }
+
+/// A fixed high-z toast covers Save. Hit-test is left clear (no cover()), so
+/// only the stacking map can mark Save occluded.
+#[test]
+fn stacking_map_refuses_under_high_z_toast_without_hit_override() {
+    let save = DomSpec::button(10, 100, "Save", (1200.0, 780.0, 100.0, 36.0));
+    let toast = DomSpec::button(20, 200, "Dismiss", (1180.0, 760.0, 160.0, 80.0));
+    let mut page = PageSpec::new(
+        vec![save, toast],
+        vec![
+            AxSpec::new(100, "button", "Save", (1200.0, 780.0, 100.0, 36.0)),
+            AxSpec::new(200, "button", "Dismiss", (1180.0, 760.0, 160.0, 80.0)),
+        ],
+        "http://127.0.0.1/docs",
+        "Docs",
+    );
+    page.width = 1440.0;
+    page.height = 900.0;
+    page = page.style(
+        20,
+        vec![
+            ("z-index", "9999"),
+            ("position", "fixed"),
+            ("opacity", "1"),
+            ("transform", "none"),
+            ("filter", "none"),
+            ("isolation", "auto"),
+            ("mix-blend-mode", "normal"),
+            ("will-change", "auto"),
+            ("pointer-events", "auto"),
+        ],
+    );
+    let script = ScriptBuilder::new()
+        .observe(&page)
+        .observe(&page)
+        .observe(&page);
+    let (mut server, log) = server(script);
+    let observed = call(&mut server, "observe", json!({"cdp": TAB}));
+    assert_eq!(
+        region(&observed, "n100")["state"]["visibility"],
+        "occluded",
+        "{observed}"
+    );
+    assert_eq!(
+        region(&observed, "n200")["state"]["visibility"],
+        "visible",
+        "{observed}"
+    );
+    let buried = call(
+        &mut server,
+        "guard",
+        json!({"cdp": TAB, "target": "Save", "role": "button"}),
+    );
+    assert_eq!(buried["decision"], "refuse", "{buried}");
+    assert_eq!(buried["reason"], "occluded", "{buried}");
+    let dismiss = call(
+        &mut server,
+        "guard",
+        json!({"cdp": TAB, "target": "Dismiss", "role": "button"}),
+    );
+    assert_eq!(dismiss["decision"], "allow", "{dismiss}");
+    assert_eq!(presses(&log), 0);
+}
+
+#[test]
+fn seen_snapshot_escalates_when_occlusion_appears() {
+    let save = DomSpec::button(10, 100, "Save", (1200.0, 780.0, 100.0, 36.0));
+    let accept = DomSpec::button(20, 200, "Accept all", (1200.0, 40.0, 120.0, 36.0));
+    let clear = {
+        let mut page = PageSpec::new(
+            vec![save.clone(), accept.clone()],
+            vec![
+                AxSpec::new(100, "button", "Save", (1200.0, 780.0, 100.0, 36.0)),
+                AxSpec::new(200, "button", "Accept all", (1200.0, 40.0, 120.0, 36.0)),
+            ],
+            "http://127.0.0.1/docs",
+            "Docs",
+        );
+        page.width = 1440.0;
+        page.height = 900.0;
+        page
+    };
+    let covered = clear.clone().cover(100, 200);
+    // observe clear, then re-observe covered twice for two guards... actually:
+    // flow: observe clear -> snapshot; observe covered -> guard with seen.
+    let script = ScriptBuilder::new()
+        .observe(&clear)
+        .observe(&covered)
+        .observe(&covered);
+    let (mut server, log) = server(script);
+    let first = call(&mut server, "observe", json!({"cdp": TAB}));
+    let seen = first["snapshot"].clone();
+    assert_eq!(region(&first, "n100")["state"]["visibility"], "visible");
+    let decision = call(
+        &mut server,
+        "guard",
+        json!({
+            "cdp": TAB,
+            "target": "Accept all",
+            "role": "button",
+            "seen_snapshot": seen,
+        }),
+    );
+    assert_eq!(decision["decision"], "escalate", "{decision}");
+    assert_eq!(decision["reason"], "world-changed", "{decision}");
+    assert_eq!(presses(&log), 0);
+}

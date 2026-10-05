@@ -12,9 +12,9 @@
 //!   regions carry the occluded penalty, so the dialog's own control wins;
 //! - **context** (`LocateQuery::within` / `LocateQuery::near`): ancestry and
 //!   the focused region scope twin labels;
-//! - **world change** ([`GuardRequest::seen_layer`]): when the open dialogs
-//!   differ from the observation the host decided on, the guard escalates
-//!   with [`GuardReason::WorldChanged`].
+//! - **world change** ([`GuardRequest::seen_world`]): when focus, open dialogs,
+//!   the clickable id set, or the occluded set differ from the observation the
+//!   host decided on, the guard escalates with [`GuardReason::WorldChanged`].
 
 #![forbid(unsafe_code)]
 
@@ -27,7 +27,7 @@ use hyper_use_protocol::MatcherConfidence;
 use hyper_use_resonance::{default_matcher, Match, RegionMatcher, RegionState, TEXT_MISS_CAP};
 
 pub use hyper_use_protocol::{GuardCandidate, GuardDecision, GuardEvidence, GuardReason};
-pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry};
+pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
 
 /// Raw confidence below this never allows. Not a probability.
 pub const MIN_ALLOW_CONFIDENCE: f64 = 0.55;
@@ -50,8 +50,10 @@ pub struct GuardRequest {
     query: LocateQuery,
     /// Optional host-proposed region id. When set, it must be the top match.
     proposed: Option<RegionId>,
-    /// Front layer of the observation the host decided on, if it said.
-    seen_layer: Option<FrontLayer>,
+    /// Focused region of the *current* observation (from PageState).
+    focused: Option<RegionId>,
+    /// World of the observation the host decided on, if it said.
+    seen_world: Option<WorldSnapshot>,
 }
 
 impl GuardRequest {
@@ -60,7 +62,8 @@ impl GuardRequest {
             action: Action::Click,
             query,
             proposed: None,
-            seen_layer: None,
+            focused: None,
+            seen_world: None,
         }
     }
 
@@ -69,15 +72,25 @@ impl GuardRequest {
         self
     }
 
-    /// The front layer the host saw when it chose this action. When it
-    /// differs from the current one, the guard escalates `world-changed`.
-    pub fn seen_layer(mut self, layer: FrontLayer) -> Self {
-        self.seen_layer = Some(layer);
+    /// Focused region id of the observation being guarded (now).
+    pub fn focused(mut self, id: Option<RegionId>) -> Self {
+        self.focused = id;
         self
     }
 
-    pub fn seen_layer_ref(&self) -> Option<&FrontLayer> {
-        self.seen_layer.as_ref()
+    /// World snapshot the host saw when it chose this action. When it
+    /// differs from the current world, the guard escalates `world-changed`.
+    pub fn seen_world(mut self, world: WorldSnapshot) -> Self {
+        self.seen_world = Some(world);
+        self
+    }
+
+    pub fn seen_world_ref(&self) -> Option<&WorldSnapshot> {
+        self.seen_world.as_ref()
+    }
+
+    pub fn focused_id(&self) -> Option<&RegionId> {
+        self.focused.as_ref()
     }
 
     pub fn action(&self) -> Action {
@@ -151,8 +164,9 @@ pub fn guard_with<M: RegionMatcher>(
     // Ranking on the raw observation tells whether the best label match is
     // one the front layer buried.
     let raw_ranked = matcher.rank(request.query(), manifold)?;
-    if let Some(seen) = request.seen_layer_ref() {
-        if *seen != FrontLayer::of(manifold) {
+    if let Some(seen) = request.seen_world_ref() {
+        let now = WorldSnapshot::of(manifold, request.focused_id().cloned());
+        if seen != &now {
             return Ok(GuardDecision::Escalate {
                 reason: GuardReason::WorldChanged,
                 candidates: candidates_of(&effective, &ranked),

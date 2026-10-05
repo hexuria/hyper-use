@@ -72,11 +72,17 @@ retries; those stay with the host (Browser Use, a vision model, JEV).
    - the raw best match is blocked and a weaker match only took the top
      because of the penalty (no rerouting a click into a dialog the host may
      not have seen; `does_not_reroute_a_buried_best_match_into_the_dialog`).
-4. **World change** (`GuardRequest::seen_layer`, MCP `seen_snapshot`). When
-   the set of open dialogs differs from the observation the host decided on,
-   the guard escalates `GuardReason::WorldChanged`, even for a target inside
-   the new dialog. This is the "vision model saw the page, then a modal
-   opened" case.
+4. **World change** (`GuardRequest::seen_world`, MCP `seen_snapshot`). When
+   any of these differ from the observation the host decided on, the guard
+   escalates `GuardReason::WorldChanged`, even for a target that would
+   otherwise allow:
+   - focused region id;
+   - open dialog front layer;
+   - the set of clickable region ids;
+   - the set of regions already marked `occluded` by observe (hit-test or
+     stacking).
+   This is the "vision model saw the page, then a modal / cookie banner /
+   focus move / new control appeared" case.
 
 Observe now reports `parent` per region, `focused`, `front_layer`, and a
 blocked region's visibility as `occluded`; inspect reports `blocked_by`;
@@ -107,23 +113,29 @@ label-only gate gets wrong (the tests assert the old failure first).
   (`front-layer`) so the host dismisses the dialog first; world change is the
   escalate case because the host must re-observe.
 
-**Known gaps (honest).**
+**Known gaps (honest) — what CDP still cannot tell us.**
 
-- Hit-test: observe calls `DOM.getNodeForLocation` at each clickable region's
-  center. When the node under the center is not the region or a descendant,
-  the region is marked `occluded` and the guard refuses with `occluded`.
-  That covers cookie banners, custom backdrops, and toasts that block the
-  center. Dialog `front-layer` remains the path for `Role::Dialog`. Deferrals:
-  no full z-index / stacking-context map; `pointer-events: none` overlays are
-  not distinguished beyond what Chrome's hit-test returns; world-changed still
-  compares dialog front layers, not every hit-test coverer.
+- Stacking map (`CSS.getComputedStyleForNode` + paint-key among kept regions)
+  approximates CSS Appendix E from each node's **own** style. It does **not**
+  rebuild the full ancestor stacking-context chain through non-kept nodes, so
+  two regions in different nested contexts can compare wrong. Document order
+  among kept DOM elements is the tiebreak, not the full paint tree.
+- Hit-test (`DOM.getNodeForLocation` at each clickable center) covers unlabeled
+  overlays and non-kept nodes. Together with the stacking map, cookie banners,
+  custom backdrops, and high-z toasts refuse as `occluded`. Dialog
+  `front-layer` remains the path for `Role::Dialog`.
+- Still invisible to both paths: `clip-path` / mask, canvas / WebGL, cross-origin
+  iframe contents, closed shadow trees (`DOM.getDocument` uses `pierce: false`),
+  and mid-animation frames. `pointer-events: none` coverers do not bury victims
+  in the stacking map; hit-test already skips them the same way Chrome does.
 - A native `<dialog>` opened with `showModal()` without `aria-modal` is modal
   only if Chrome's AX tree reports `modal`.
 - Two sibling modals block each other's content: refuse, not guess.
 - An AX-only dialog cannot tell a DOM control under its box from one inside
   it; box containment treats it as content (`acme_mail` compose sheet).
-- World change compares only the front layer, not every region; a re-render
-  that swaps rows under the same dialogs is not escalated.
+- World change compares focus, front layer, clickable ids, and the occluded
+  set. It does **not** hash every label/rect; a same-id re-render that only
+  moves geometry under unchanged focus/dialogs/occlusion is not escalated.
 - HGRA is still experimental; no live run with `matcher: "hgra"` yet. Fixture
   remasure: `cargo test -p hyper-use-resonance --features hgra --test hgra_remeasure`
   and the twin-row vector tests (`hgra_query_vector_encodes_within_as_parent_channel`,
@@ -131,13 +143,17 @@ label-only gate gets wrong (the tests assert the old failure first).
 - Live Chrome smoke for this gate: `examples/world-context/smoke.sh` (modal
   confirm, twin Suspend + focus, cookie backdrop hit-test). Hit-test coords
   must be integer CSS pixels (`DOM.getNodeForLocation` rejects floats).
+  Stacking-map occlusion is covered by CDP replay tests; live Chrome smoke for
+  pure z-index (no hit-test miss) is still optional.
 
 **Verifiers.** `crates/hyper-use-guard/tests/world_context.rs` (twin Suspend
-rows: ambiguous without context, allow with `within`/`near`; modal confirm:
-buried click refused, dialog twin allowed, world-changed escalation),
-`crates/hyper-use-mcp/tests/world_context.rs` (CDP replay: `aria-modal` and
-AX `modal` both refuse; `near: "focus"` from the AX tree; `seen_snapshot`),
-`hyper-use-guard/src/world.rs` unit tests, `context.rs` unit tests,
+rows; modal confirm; world-changed on dialog / focus / occluded / clickable
+set; stacking-shaped occluded refuse), `crates/hyper-use-browser` stacking
+unit tests (`higher_z_index_overlay_buries_the_button_under_its_center`,
+`pointer_events_none_does_not_bury`), `crates/hyper-use-mcp/tests/world_context.rs`
+(CDP replay: modal, focus, hit-test cookie, stacking map without hit override,
+`seen_snapshot` on occlusion growth), `hyper-use-guard/src/world.rs` unit
+tests, `context.rs` unit tests,
 `guard_with_compose_open_blocks_nothing_outside_the_compose_box`. Fixtures:
 `fixtures/twin-suspend-rows.manifold`, `fixtures/modal-confirm.manifold`,
 `fixtures/modal-confirm-closed.manifold`.

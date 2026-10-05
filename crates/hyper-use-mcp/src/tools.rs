@@ -15,7 +15,8 @@ use hyper_use_core::{
     Zone,
 };
 use hyper_use_guard::{
-    blocker, guard_with, with_front_layer, FrontLayer, GuardRequest, MIN_ALLOW_CONFIDENCE,
+    blocker, guard_with, with_front_layer, FrontLayer, GuardRequest, WorldSnapshot,
+    MIN_ALLOW_CONFIDENCE,
 };
 use hyper_use_observe::{diff, history::SnapshotId, ManifoldDiff};
 use hyper_use_protocol::{GuardDecision, StateDelta};
@@ -321,8 +322,8 @@ fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError
     if matcher_name != "weighted" {
         return Err(ToolError::UnknownMatcher(matcher_name.to_owned()));
     }
-    // The observation the host decided on. Its front layer is compared with
-    // the one observed now.
+    // The observation the host decided on. Its world snapshot (focus, dialogs,
+    // clickable ids, occluded set) is compared with the world observed now.
     let seen = match opt_snapshot(arguments, "seen_snapshot")? {
         Some(id) => {
             let seen = server.snapshot(id)?;
@@ -333,18 +334,21 @@ fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError
                     origin_key(&origin)
                 )));
             }
-            Some(FrontLayer::of(&seen.manifold))
+            Some(WorldSnapshot::of(
+                &seen.manifold,
+                seen.page.focused().cloned(),
+            ))
         }
         None => None,
     };
     let (snapshot, manifold, page) = observe_origin(server, &origin)?;
     let query = with_near(base_query, near.as_ref(), &page);
-    let mut request = GuardRequest::click(query.clone());
+    let mut request = GuardRequest::click(query.clone()).focused(page.focused().cloned());
     if let Some(id) = proposed {
         request = request.proposed(id);
     }
     if let Some(seen) = seen {
-        request = request.seen_layer(seen);
+        request = request.seen_world(seen);
     }
     let decision = guard_with(&manifold, &request, &WeightedMatcher::default())
         .map_err(|err| ToolError::Ranker(err.to_string()))?;

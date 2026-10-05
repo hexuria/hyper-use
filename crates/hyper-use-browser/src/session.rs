@@ -20,11 +20,14 @@
 //! "Could not compute box model." for `display:none`). Any other failure of
 //! that call is fatal.
 //!
-//! After fusion, observe hit-tests each clickable region's center with
-//! `DOM.getNodeForLocation`. When the node under the center is not the region
-//! or a descendant of it (cookie banner, custom backdrop, toast), the region
-//! is marked `occluded`. Dialog front-layer logic in `hyper-use-guard` still
-//! applies on top of that.
+//! After fusion, observe builds a stacking map from each kept node's computed
+//! style (`CSS.getComputedStyleForNode`) and marks clickable regions whose
+//! center sits under a higher-painting kept region. It then hit-tests each
+//! clickable center with `DOM.getNodeForLocation`. When the node under the
+//! center is not the region or a descendant of it (cookie banner, custom
+//! backdrop, toast outside the kept set), the region is marked `occluded`.
+//! Dialog front-layer logic in `hyper-use-guard` still applies on top of that.
+//! Old CDP fixtures without `CSS.enable` skip the stacking pass.
 
 use std::collections::BTreeMap;
 
@@ -131,6 +134,15 @@ impl<T: CdpTransport> BrowserSession<T> {
                 .assign(self.manifold.as_ref(), fused, fused_bindings)?;
         let focused = focused_region(&ax_nodes, &bindings);
         let page = self.read_page(focused)?;
+        // Document order among kept DOM elements (walk order). Used as the
+        // paint-order tiebreak when z-index ties.
+        let mut dom_order = BTreeMap::new();
+        for (index, element) in dom.elements.iter().enumerate() {
+            dom_order.insert(element.backend_node_id, index as u32);
+        }
+        // Stacking runs before hit-test. Fixtures that never scripted CSS
+        // skip it (`NoScriptedResponse` on CSS.enable) and keep hit-test only.
+        self.apply_stacking_occlusion(&mut manifold, &bindings, &dom_order)?;
         // Hit-tests run after history so scripted CDP fixtures can append
         // `DOM.getNodeForLocation` after `Page.getNavigationHistory`.
         self.apply_hit_test_occlusion(&mut manifold, &bindings, &dom.parent_of)?;
@@ -139,6 +151,55 @@ impl<T: CdpTransport> BrowserSession<T> {
         self.manifold = Some(manifold);
         self.stale = false;
         Ok(self.manifold.as_ref().expect("observation just stored"))
+    }
+
+    /// Mark clickable regions buried under a higher-painting kept region.
+    ///
+    /// Uses `CSS.enable` + `CSS.getComputedStyleForNode`. When the next
+    /// scripted CDP step is not `CSS.enable` (older fixtures), this returns
+    /// without changing the manifold so hit-test still runs.
+    fn apply_stacking_occlusion(
+        &mut self,
+        manifold: &mut InteractionManifold,
+        bindings: &BTreeMap<RegionId, NodeBinding>,
+        dom_order: &BTreeMap<i64, u32>,
+    ) -> Result<(), BrowserError> {
+        match self.call("CSS.enable", &json!({}).to_string()) {
+            Ok(_) => {}
+            Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. })) => return Ok(()),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(()),
+            Err(other) => return Err(other),
+        }
+        let mut styles = BTreeMap::new();
+        // Stable RegionId order so ScriptBuilder can emit matching CSS calls.
+        let targets: Vec<(RegionId, i64, Option<i64>)> = manifold
+            .regions()
+            .filter_map(|region| {
+                let binding = bindings.get(region.id())?;
+                let node_id = binding.dom_node_id?;
+                Some((region.id().clone(), node_id, binding.backend_node_id))
+            })
+            .collect();
+        for (id, node_id, backend) in targets {
+            let params = json!({"nodeId": node_id}).to_string();
+            let body = match self.call("CSS.getComputedStyleForNode", &params) {
+                Ok(body) => body,
+                Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
+                Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. })) => {
+                    // Partial scripts: stop stacking; already-fetched styles still apply.
+                    break;
+                }
+                Err(other) => return Err(other),
+            };
+            let pairs = extract::computed_style_pairs(&body)?;
+            let style = crate::stacking::style_from_computed(&pairs);
+            let order = backend
+                .and_then(|b| dom_order.get(&b).copied())
+                .unwrap_or(u32::MAX);
+            styles.insert(id, (style, order));
+        }
+        crate::stacking::apply_stacking_occlusion(manifold, &styles);
+        Ok(())
     }
 
     /// Mark clickable regions whose center is covered by another node.

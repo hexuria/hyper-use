@@ -24,7 +24,8 @@ mod state;
 #[cfg(feature = "hgra")]
 pub use matcher::HgraMatcher;
 pub use matcher::{
-    default_matcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher, WeightedModel,
+    default_matcher, weighted_semantic, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher,
+    WeightedModel,
 };
 
 use hyper_use_core::{token_recall, InteractionRegion, LocateQuery, Rect};

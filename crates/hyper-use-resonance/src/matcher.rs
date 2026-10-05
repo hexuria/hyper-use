@@ -294,7 +294,12 @@ fn log_top(matcher: &str, ranked: &[Match]) {
 ///
 /// Shared with HGRA (`semantic_score` in the crate root), so both matchers
 /// score text precision and role the same way.
-pub(crate) fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
+/// Label/role agreement in \[0, 1\] for a query against one region.
+///
+/// Shared by Weighted and HGRA. The guard uses this to refuse when a buried
+/// control matches the query better than the ranked top (so an occlusion
+/// penalty cannot quietly reroute a click onto a weaker dialog label).
+pub fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
     let mut present = Vec::new();
     if let Some(text) = query.text_ref() {
         present.push(weighted_text(text, region.label()));

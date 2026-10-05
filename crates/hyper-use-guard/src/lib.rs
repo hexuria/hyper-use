@@ -10,6 +10,9 @@
 //! - **front layer** ([`world`]): a target behind an open dialog is refused
 //!   with [`GuardReason::FrontLayer`], and ranking runs on a copy where such
 //!   regions carry the occluded penalty, so the dialog's own control wins;
+//!   when a buried/occluded region still matches the query label better than
+//!   that top (common once hit-test already set `occluded`), refuse rather
+//!   than allowing the weaker dialog label;
 //! - **context** (`LocateQuery::within` / `LocateQuery::near`): ancestry and
 //!   the focused region scope twin labels;
 //! - **world change** ([`GuardRequest::seen_world`]): when focus, open dialogs,
@@ -24,7 +27,9 @@ use std::fmt;
 
 use hyper_use_core::{Action, InteractionManifold, InteractionRegion, LocateQuery, RegionId};
 use hyper_use_protocol::MatcherConfidence;
-use hyper_use_resonance::{default_matcher, Match, RegionMatcher, RegionState, TEXT_MISS_CAP};
+use hyper_use_resonance::{
+    default_matcher, weighted_semantic, Match, RegionMatcher, RegionState, TEXT_MISS_CAP,
+};
 
 pub use hyper_use_protocol::{GuardCandidate, GuardDecision, GuardEvidence, GuardReason};
 pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
@@ -232,6 +237,27 @@ fn decide(
         .iter()
         .any(|m| m.confidence() > top_conf + MARGIN_EPSILON)
     {
+        return Ok(GuardDecision::Refuse {
+            reason: GuardReason::FrontLayer,
+            candidates,
+        });
+    }
+
+    // Hit-test often marks the buried control occluded on the raw manifold
+    // already, so the confidence reroute above never fires: both ranks apply
+    // the same occluded penalty. Still refuse when any buried/occluded region
+    // matches the query's label better than the effective top (HGRA + dialog
+    // "Delete" vs buried "Delete project").
+    let top_region_for_semantic = raw.get(top.id()).expect("ranked id comes from manifold");
+    let top_semantic = weighted_semantic(request.query(), top_region_for_semantic);
+    let buried_better_label = raw.regions().any(|region| {
+        if region.id() == top.id() {
+            return false;
+        }
+        let buried = region.flags().occluded() || blocker(raw, region).is_some();
+        buried && weighted_semantic(request.query(), region) > top_semantic + MARGIN_EPSILON
+    });
+    if buried_better_label {
         return Ok(GuardDecision::Refuse {
             reason: GuardReason::FrontLayer,
             candidates,
@@ -473,6 +499,67 @@ mod tests {
                 ..
             } => {}
             other => panic!("expected refuse front-layer, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "hgra")]
+    #[test]
+    fn hgra_refuses_weaker_dialog_label_when_buried_exact_is_already_occluded() {
+        use hyper_use_resonance::HgraMatcher;
+        let m = hyper_use_core::parse_fixture(
+            "viewport w=1440 h=900\n\
+             region id=page-delete role=button label=\"Delete project\" x=1200 y=780 w=160 h=36 actions=click sources=dom flags=occluded\n\
+             region id=dlg role=dialog label=\"Delete project?\" x=520 y=300 w=400 h=240 actions=focus sources=dom flags=modal\n\
+             region id=dlg-delete role=button label=\"Delete\" x=720 y=480 w=100 h=36 actions=click parent=dlg sources=dom\n",
+        )
+        .unwrap();
+        let req = GuardRequest::click(
+            LocateQuery::new()
+                .text("Delete project")
+                .unwrap()
+                .role(Role::Button),
+        );
+        let ranked = HgraMatcher::default()
+            .rank(req.query(), &with_front_layer(&m))
+            .unwrap();
+        assert_eq!(
+            ranked[0].id().as_str(),
+            "dlg-delete",
+            "precondition: HGRA still tops the short dialog label"
+        );
+        match guard_with(&m, &req, &HgraMatcher::default()).unwrap() {
+            GuardDecision::Refuse {
+                reason: GuardReason::FrontLayer | GuardReason::Occluded,
+                ..
+            } => {}
+            other => panic!("expected refuse front-layer or occluded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refuses_weaker_dialog_label_when_buried_exact_is_already_occluded() {
+        // Live modal shape: observe hit-test already marked the page button
+        // occluded, dialog button is a shorter label. HGRA ranks the dialog
+        // top; without the label rule the confidence reroute is a no-op.
+        let m = hyper_use_core::parse_fixture(
+            "viewport w=1440 h=900\n\
+             region id=page-delete role=button label=\"Delete project\" x=1200 y=780 w=160 h=36 actions=click sources=dom flags=occluded\n\
+             region id=dlg role=dialog label=\"Delete project?\" x=520 y=300 w=400 h=240 actions=focus sources=dom flags=modal\n\
+             region id=dlg-delete role=button label=\"Delete\" x=720 y=480 w=100 h=36 actions=click parent=dlg sources=dom\n",
+        )
+        .unwrap();
+        let req = GuardRequest::click(
+            LocateQuery::new()
+                .text("Delete project")
+                .unwrap()
+                .role(Role::Button),
+        );
+        match guard(&m, &req).unwrap() {
+            GuardDecision::Refuse {
+                reason: GuardReason::FrontLayer | GuardReason::Occluded,
+                ..
+            } => {}
+            other => panic!("expected refuse front-layer or occluded, got {other:?}"),
         }
     }
 

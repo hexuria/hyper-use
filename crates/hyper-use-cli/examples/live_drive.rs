@@ -461,6 +461,52 @@ fn quoted(text: &str) -> Vec<String> {
 
 /// `(zone, candidate id)` pairs from a `repeated_query` signal on the last
 /// locate, for the candidates that have a separating zone.
+/// Position zone that produced the last low-confidence refuse, if any.
+fn low_confidence_position(
+    last_guard: Option<&Value>,
+    last_guard_args: Option<&Value>,
+) -> Option<String> {
+    let guard = last_guard?;
+    let reason = guard["reason"]
+        .as_str()
+        .or_else(|| guard["fallback"].as_str())?;
+    if reason != "low-confidence" {
+        return None;
+    }
+    last_guard_args?
+        .get("position")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+}
+
+fn position_options(
+    zones: &[&str],
+    suggested: &[(String, String)],
+    failed_pos: Option<&str>,
+) -> Vec<(String, String)> {
+    zones
+        .iter()
+        .map(|z| {
+            let mut about = match suggested.iter().find(|(zone, _)| zone == z) {
+                Some((_, id)) => format!("position {z} (repeated_query suggests it to pick {id})"),
+                None => format!("position {z}"),
+            };
+            if *z == "none" {
+                if let Some(bad) = failed_pos {
+                    about = format!(
+                        "none (last guard refused low-confidence with position {bad}; clear the zone)"
+                    );
+                } else {
+                    about = "none (omit zone constraint; safest default)".into();
+                }
+            } else if failed_pos == Some(*z) {
+                about = format!("{about} (this zone just refused as low-confidence)");
+            }
+            (z.to_string(), about)
+        })
+        .collect()
+}
+
 fn repeated_query_hints(last_locate: Option<&Value>) -> Vec<(String, String)> {
     let Some(signals) = last_locate.and_then(|located| located["signals"].as_array()) else {
         return Vec::new();
@@ -556,6 +602,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let mut last_locate: Option<Value> = None;
     let mut last_snapshot: Option<u64> = None;
     let mut last_guard: Option<Value> = None;
+    let mut last_guard_args: Option<Value> = None;
     let mut last_diff_pair: Option<(u64, u64)> = None;
     let mut history: Vec<Value> = Vec::new();
     let (mut tool_calls, mut jev_calls) = (0usize, 0usize);
@@ -573,6 +620,8 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 "after Allow this harness clicks the allowed region via CDP; after Refuse do not click — change the query and try again",
                 "verify checks that a quoted string is present on the page after a click",
                 "locate signals repeated_query means this exact query already ran on this unchanged page and will return the same ranking; use a suggested_position it names, or change the text or role",
+                "position is optional: choose none unless you know the target's zone; a wrong zone (for example top on a bottom compose-sheet control) drops confidence and can refuse as low-confidence even when the label ranks first",
+                "when the last guard refused low-confidence and the query had a position, retry with position none before changing the text",
                 "each region has a state: availability enabled or disabled, visibility visible, occluded, offscreen, or hidden",
                 "thread toolbar Archive and quick-reply Send exist only when the thread view is open; do not guard inbox row links or occluded twins to open a thread — this task already starts on the right view when needed",
                 "when two Send buttons are visible (Compose and quick reply), prefer the Compose sheet Send unless the task names the quick reply box",
@@ -732,21 +781,12 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 // the candidate each suggested position would favour. Option
                 // order does not change.
                 let suggested = repeated_query_hints(last_locate.as_ref());
+                let failed_pos =
+                    low_confidence_position(last_guard.as_ref(), last_guard_args.as_ref());
                 if let Some(zone) = ask_arg(
                     "position",
-                    "Where on the page is the target?",
-                    zones
-                        .iter()
-                        .map(|z| {
-                            let about = match suggested.iter().find(|(zone, _)| zone == z) {
-                                Some((_, id)) => format!(
-                                    "position {z} (repeated_query suggests it to pick {id})"
-                                ),
-                                None => format!("position {z}"),
-                            };
-                            (z.to_string(), about)
-                        })
-                        .collect(),
+                    "Where on the page is the target? Prefer none unless sure.",
+                    position_options(&zones, &suggested, failed_pos.as_deref()),
                 ) {
                     if zone != "none" {
                         arguments["position"] = json!(zone);
@@ -792,21 +832,12 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 }
                 let zones = ["none", "left", "right", "top", "bottom", "center"];
                 let suggested = repeated_query_hints(last_locate.as_ref());
+                let failed_pos =
+                    low_confidence_position(last_guard.as_ref(), last_guard_args.as_ref());
                 if let Some(zone) = ask_arg(
                     "position",
-                    "Where on the page is the click target?",
-                    zones
-                        .iter()
-                        .map(|z| {
-                            let about = match suggested.iter().find(|(zone, _)| zone == z) {
-                                Some((_, id)) => format!(
-                                    "position {z} (repeated_query suggests it to pick {id})"
-                                ),
-                                None => format!("position {z}"),
-                            };
-                            (z.to_string(), about)
-                        })
-                        .collect(),
+                    "Where on the page is the click target? Prefer none unless sure.",
+                    position_options(&zones, &suggested, failed_pos.as_deref()),
                 ) {
                     if zone != "none" {
                         arguments["position"] = json!(zone);

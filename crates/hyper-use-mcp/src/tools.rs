@@ -93,7 +93,6 @@ fn world_json(manifold: &InteractionManifold, page: &PageState) -> (Value, Value
     (focused, Value::Array(layer))
 }
 
-
 /// Explicit `matcher` arg wins; else `HYPER_USE_MATCHER`; else weighted.
 fn resolve_matcher_name(arguments: &Value) -> Result<String, ToolError> {
     if let Some(name) = opt_str(arguments, "matcher")? {

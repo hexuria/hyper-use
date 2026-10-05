@@ -22,11 +22,14 @@ pub const TOOL_OBSERVE: &str = "observe";
 pub const TOOL_LOCATE: &str = "locate";
 pub const TOOL_INSPECT: &str = "inspect";
 pub const TOOL_GUARD: &str = "guard";
-/// Deprecated alias of [`TOOL_GUARD`]. Never clicks.
+/// Deprecated alias of [`TOOL_GUARD`]. Never clicks. Kept only because the
+/// historical bench arms (A5/A6, `bench/arms/`) call it over MCP; see ADR 0003.
+#[deprecated(since = "0.1.0", note = "use TOOL_GUARD; `act` never clicks")]
 pub const TOOL_ACT: &str = "act";
 pub const TOOL_DIFF: &str = "diff";
 pub const TOOL_VERIFY: &str = "verify";
 
+#[allow(deprecated)]
 pub const TOOLS: [&str; 7] = [
     TOOL_OBSERVE,
     TOOL_LOCATE,

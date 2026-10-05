@@ -3,8 +3,12 @@ use hyper_use_core::InteractionManifold;
 use hyper_use_observe::diff;
 
 use crate::outcome::VerificationKind;
+use crate::runtime::FieldValue;
 
 /// Classify post-action observation into a verification kind.
+///
+/// URL change → navigation; manifold delta → state-changed; title / focus
+/// only → state-changed; nothing → no-effect.
 pub fn classify_delta(
     before_manifold: &InteractionManifold,
     after_manifold: &InteractionManifold,
@@ -23,4 +27,15 @@ pub fn classify_delta(
         return VerificationKind::NoEffect;
     }
     VerificationKind::StateChanged
+}
+
+/// TYPE_TEXT / SELECT postcondition from the field's value read back after
+/// input. `None` when the runtime could not read it (fall back to the diff).
+pub fn classify_value(expected: &str, value: Option<&FieldValue>) -> Option<VerificationKind> {
+    let value = value?;
+    Some(if value.matches(expected) {
+        VerificationKind::Success
+    } else {
+        VerificationKind::WrongEffect
+    })
 }

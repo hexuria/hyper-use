@@ -1,0 +1,384 @@
+//! Offline adversarial e2e for the owned loop (MockBrowser).
+//!
+//! Every test runs goal → observe → PUA → gate → ticket → executor → verify
+//! and asserts what was (not) dispatched to the page.
+
+use hyper_use_agent::{
+    AgentBuilder, AgentError, AgentOutcome, AgentState, BrowserRuntime, Input, MockBrowser,
+    VerificationKind,
+};
+use hyper_use_browser::{PageState, ScrollDirection};
+use hyper_use_core::{
+    parse_fixture, ActionId, ActionKind, ActionSpace, InteractionManifold, RegionId,
+};
+use hyper_use_policy::{
+    AgentGoal, BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, PuaPolicy,
+};
+
+fn m(src: &str) -> InteractionManifold {
+    parse_fixture(src).unwrap()
+}
+
+fn id(raw: &str) -> RegionId {
+    RegionId::try_new(raw).unwrap()
+}
+
+const SEARCH: &str = r#"
+    viewport w=800 h=600
+    region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+    region id=go role=button label="Go" x=320 y=10 w=60 h=24 actions=click sources=dom,accessibility
+"#;
+
+const CABIN: &str = r#"
+    viewport w=800 h=600
+    region id=cabin role=generic label="Cabin class" x=10 y=10 w=200 h=24 actions=click,select,focus sources=dom,accessibility
+    region id=find role=button label="Find flights" x=10 y=50 w=120 h=24 actions=click sources=dom,accessibility
+"#;
+
+#[test]
+fn type_text_executes_resolved_text_verifies_then_done() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(5)
+        .build(r#"Type "rust ownership" into Search"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[0].verification, VerificationKind::Success);
+    assert_eq!(
+        agent.browser_mut().input_log(),
+        &[(id("q"), Input::Type("rust ownership".into()))]
+    );
+}
+
+#[test]
+fn select_option_executes_and_verifies() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(CABIN)), PuaPolicy::default())
+        .max_steps(5)
+        .build(r#"Select "Business" in Cabin class"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps()[0].kind, ActionKind::Select);
+    assert_eq!(outcome.steps()[0].verification, VerificationKind::Success);
+    assert_eq!(
+        agent.browser_mut().input_log(),
+        &[(id("cabin"), Input::Select("Business".into()))]
+    );
+}
+
+#[test]
+fn type_text_without_resolvable_value_never_types() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(3)
+        .build("type into Search");
+    let outcome = agent.run();
+    assert!(
+        matches!(outcome, AgentOutcome::Failed { .. }),
+        "{outcome:?}"
+    );
+    assert!(agent.browser_mut().input_log().is_empty());
+}
+
+#[test]
+fn wrong_effect_is_detected_and_bounded() {
+    let mut browser = MockBrowser::new(m(SEARCH));
+    browser.override_value("rus"); // page mangles input (e.g. maxlength)
+    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+        .max_steps(10)
+        .build(r#"Type "rust" into Search"#);
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Blocked { steps, reason } => {
+            assert_eq!(steps.len(), 3, "{reason}");
+            assert!(steps
+                .iter()
+                .all(|s| s.verification == VerificationKind::WrongEffect));
+        }
+        other => panic!("expected bounded Blocked, got {other:?}"),
+    }
+    assert_eq!(agent.browser_mut().input_log().len(), 3);
+}
+
+#[test]
+fn page_change_during_text_resolution_is_stale_and_types_nothing() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(3)
+        .build(r#"Type "rust" into Search"#);
+    let predicted = agent.predict().unwrap().expect("type prediction").clone();
+    assert_eq!(predicted.payload.as_deref(), Some("rust"));
+    // Field rerendered (new label) while the resolver was "thinking".
+    agent
+        .browser_mut()
+        .schedule_swap(0, m(&SEARCH.replace("\"Search\"", "\"Search users\"")));
+    let err = agent.act().unwrap_err();
+    assert!(matches!(err, AgentError::Stale(_)), "{err}");
+    assert_eq!(agent.state(), AgentState::Ready);
+    assert!(agent.browser_mut().input_log().is_empty());
+    assert_eq!(agent.stale_discards(), 1);
+}
+
+const PROJECT: &str = r#"
+    viewport w=1440 h=900
+    region id=page-delete role=button label="Delete project" x=1200 y=780 w=160 h=36 actions=click sources=dom,accessibility
+    region id=page-cancel role=button label="Cancel" x=1060 y=780 w=100 h=36 actions=click sources=dom,accessibility
+"#;
+
+const PROJECT_MODAL: &str = r#"
+    viewport w=1440 h=900
+    region id=page-delete role=button label="Delete project" x=1200 y=780 w=160 h=36 actions=click sources=dom,accessibility
+    region id=page-cancel role=button label="Cancel" x=1060 y=780 w=100 h=36 actions=click sources=dom,accessibility
+    region id=confirm role=dialog label="Delete project?" x=520 y=300 w=400 h=240 actions=focus sources=dom,accessibility flags=modal
+    region id=confirm-cancel role=button label="Cancel" x=560 y=480 w=100 h=36 actions=click parent=confirm sources=dom,accessibility
+    region id=confirm-delete role=button label="Delete" x=780 y=480 w=100 h=36 actions=click parent=confirm sources=dom,accessibility
+"#;
+
+#[test]
+fn modal_appearing_after_prediction_discards_and_never_clicks_background() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(PROJECT)), PuaPolicy::default())
+        .max_steps(3)
+        .build("Delete project");
+    let p = agent.predict().unwrap().expect("prediction").clone();
+    assert_eq!(p.decision.action_id.as_str(), "CLICK:page-delete");
+    agent.browser_mut().replace_manifold(m(PROJECT_MODAL));
+    let err = agent.act().unwrap_err();
+    assert!(matches!(err, AgentError::Stale(_)), "{err}");
+    // Keep running on the modal page: background is never offered or pressed.
+    let _ = agent.run();
+    assert!(agent
+        .browser_mut()
+        .press_log()
+        .iter()
+        .all(|(target, _)| target.as_str() != "page-delete" && target.as_str() != "page-cancel"));
+}
+
+#[test]
+fn background_behind_open_modal_is_not_in_action_space() {
+    let space = hyper_use_agent::Agent::<MockBrowser, PuaPolicy>::action_space(&m(PROJECT_MODAL));
+    assert!(space.get_str("CLICK:page-delete").is_none());
+    assert!(space.get_str("CLICK:page-cancel").is_none());
+    assert!(space.get_str("CLICK:confirm-delete").is_some());
+    // Raw ActionSpace (no front layer) would have offered it.
+    assert!(ActionSpace::from_manifold(&m(PROJECT_MODAL))
+        .get_str("CLICK:page-delete")
+        .is_some());
+}
+
+#[test]
+fn covered_disabled_hidden_offscreen_targets_never_execute() {
+    let page = m(r#"
+        viewport w=800 h=600
+        region id=a role=button label="Save" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility flags=occluded
+        region id=b role=button label="Save" x=10 y=50 w=80 h=24 actions=click sources=dom,accessibility flags=disabled
+        region id=c role=button label="Save" x=10 y=90 w=80 h=24 actions=click sources=dom,accessibility flags=hidden
+        region id=d role=button label="Save" x=10 y=900 w=80 h=24 actions=click sources=dom,accessibility flags=offscreen
+        region id=x role=button label="Help" x=10 y=130 w=80 h=24 actions=click sources=dom,accessibility
+    "#);
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), PuaPolicy::default())
+        .max_steps(3)
+        .build("Save");
+    let _ = agent.run();
+    assert!(agent
+        .browser_mut()
+        .press_log()
+        .iter()
+        .all(|(t, _)| !["a", "b", "c", "d"].contains(&t.as_str())));
+}
+
+#[test]
+fn twin_labels_in_different_rows_abstain_without_pressing() {
+    let page = m(r#"
+        viewport w=800 h=600
+        region id=row1 role=generic label="Invoice 1001" x=0 y=0 w=800 h=40 actions=focus sources=dom
+        region id=del1 role=button label="Delete" x=700 y=8 w=60 h=24 actions=click parent=row1 sources=dom,accessibility
+        region id=row2 role=generic label="Invoice 1002" x=0 y=40 w=800 h=40 actions=focus sources=dom
+        region id=del2 role=button label="Delete" x=700 y=48 w=60 h=24 actions=click parent=row2 sources=dom,accessibility
+    "#);
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), PuaPolicy::default())
+        .max_steps(3)
+        .build("Delete");
+    let outcome = agent.run();
+    assert!(
+        matches!(outcome, AgentOutcome::Abstained { .. }),
+        "{outcome:?}"
+    );
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+#[test]
+fn rerender_replacing_node_between_predict_and_act_is_stale() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(3)
+        .build("Go");
+    agent.predict().unwrap().expect("prediction");
+    // Same label, new node id (framework re-mounted the button).
+    agent
+        .browser_mut()
+        .replace_manifold(m(&SEARCH.replace("id=go ", "id=go2 ")));
+    let err = agent.act().unwrap_err();
+    assert!(matches!(err, AgentError::Stale(_)), "{err}");
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+#[test]
+fn focus_change_between_predict_and_act_is_stale() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(3)
+        .build("Go");
+    agent.predict().unwrap().expect("prediction");
+    agent.browser_mut().set_focused(Some(id("q")));
+    let err = agent.act().unwrap_err();
+    assert!(matches!(err, AgentError::Stale(_)), "{err}");
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+#[test]
+fn page_rejecting_input_is_reported_not_retried_with_same_ticket() {
+    let mut browser = MockBrowser::new(m(SEARCH));
+    browser.reject_next("readonly");
+    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+        .max_steps(3)
+        .build(r#"Type "x" into Search"#);
+    agent.predict().unwrap();
+    let err = agent.act().unwrap_err();
+    assert!(matches!(err, AgentError::InputRejected(_)), "{err}");
+    assert!(agent.browser_mut().input_log().is_empty());
+}
+
+#[test]
+fn scroll_and_wait_are_page_primitives_without_tickets() {
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(3)
+        .build("scroll down");
+    let p = agent.predict().unwrap().expect("scroll").clone();
+    assert_eq!(p.decision.kind, ActionKind::ScrollDown);
+    let rec = agent.act().unwrap();
+    assert_eq!(rec.kind, ActionKind::ScrollDown);
+    assert_eq!(rec.verification, VerificationKind::NoEffect);
+    assert_eq!(agent.browser_mut().scroll_log(), &[ScrollDirection::Down]);
+    assert!(agent.browser_mut().press_log().is_empty());
+
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(3)
+        .build("wait");
+    agent.predict().unwrap();
+    let rec = agent.act().unwrap();
+    assert_eq!(rec.kind, ActionKind::Wait);
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+/// Remote-shaped policy that returns an off-menu target.
+struct OffMenu(&'static str, ActionKind);
+
+impl BrowserPolicy for OffMenu {
+    fn decide(
+        &mut self,
+        _space: &ActionSpace,
+        _goal: &AgentGoal,
+        _history: &[HistoryEntry],
+    ) -> Result<PolicyOutcome, PolicyError> {
+        Ok(PolicyOutcome::Choice(PolicyDecision {
+            action_id: ActionId::try_new(self.0).unwrap(),
+            kind: self.1,
+            target_label: "x".into(),
+            confidence_millis: 1000,
+            operation_ranked: Vec::new(),
+            target_ranked: Vec::new(),
+        }))
+    }
+}
+
+#[test]
+fn off_menu_policy_choice_is_a_hard_error_and_never_executes() {
+    for (raw, kind) in [
+        ("CLICK:ghost", ActionKind::Click),
+        ("#go > button", ActionKind::Click),
+        ("CLICK:go", ActionKind::TypeText), // kind/action mismatch
+    ] {
+        let Ok(_) = ActionId::try_new(raw) else {
+            continue;
+        };
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), OffMenu(raw, kind))
+            .max_steps(3)
+            .build("whatever");
+        let outcome = agent.run();
+        match outcome {
+            AgentOutcome::Failed { error, .. } => assert!(error.contains("policy"), "{error}"),
+            other => panic!("{raw}: expected Failed, got {other:?}"),
+        }
+        assert!(agent.browser_mut().press_log().is_empty(), "{raw}");
+    }
+}
+
+/// Runtime whose world flips on every observation (never settles).
+struct Flicker {
+    a: MockBrowser,
+    b: MockBrowser,
+    n: u32,
+    dispatched: u32,
+}
+
+impl BrowserRuntime for Flicker {
+    fn observe(&mut self) -> Result<&InteractionManifold, AgentError> {
+        self.n += 1;
+        if self.n % 2 == 1 {
+            self.a.observe()
+        } else {
+            self.b.observe()
+        }
+    }
+    fn focused(&self) -> Option<RegionId> {
+        None
+    }
+    fn page(&self) -> Option<&PageState> {
+        None
+    }
+    fn dispatch(&mut self, _target: &RegionId, _input: &Input) -> Result<(), AgentError> {
+        self.dispatched += 1;
+        Ok(())
+    }
+    fn scroll(&mut self, _direction: ScrollDirection) -> Result<(), AgentError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn never_settling_page_hits_stale_bound_without_input() {
+    let flicker = Flicker {
+        a: MockBrowser::new(m(SEARCH)),
+        b: MockBrowser::new(m(&format!(
+            "{SEARCH}\n    region id=toast role=button label=\"Dismiss\" x=600 y=500 w=80 h=24 actions=click sources=dom,accessibility\n"
+        ))),
+        n: 0,
+        dispatched: 0,
+    };
+    let mut agent = AgentBuilder::new(flicker, PuaPolicy::default())
+        .max_steps(20)
+        .max_consecutive_stale(4)
+        .build("Go");
+    let outcome = agent.run();
+    match outcome {
+        AgentOutcome::Failed { error, .. } => assert!(error.contains("stale"), "{error}"),
+        other => panic!("expected stale bound, got {other:?}"),
+    }
+    assert_eq!(agent.browser_mut().dispatched, 0);
+    assert_eq!(agent.stale_discards(), 4);
+}
+
+#[test]
+fn repeated_no_effect_click_is_bounded() {
+    // Clicking changes nothing; policy would repeat. Bound → Blocked.
+    let page = m(r#"
+        viewport w=800 h=600
+        region id=go role=button label="Refresh" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+    "#);
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), PuaPolicy::default())
+        .max_steps(10)
+        .build("Refresh");
+    let outcome = agent.run();
+    assert!(
+        matches!(outcome, AgentOutcome::Blocked { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(agent.browser_mut().press_log().len(), 3);
+}

@@ -1,6 +1,6 @@
 # ADR 0002: PUA policy pin + owned Agent loop
 
-- Status: accepted
+- Status: accepted (guard/executor consequences superseded in part by ADR 0003)
 - Date: 2026-10-05 (Asia/Manila)
 - Branch: `feat/agent-pua-runtime`
 - Relates: ADR 0001

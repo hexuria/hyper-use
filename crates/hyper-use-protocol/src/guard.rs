@@ -2,8 +2,8 @@
 //!
 //! Hyper-Use does not click. A host proposes a target; the runtime returns a
 //! [`GuardDecision`]-shaped payload. After the host acts, verify reports the
-//! postcondition. JEV `ComputerTask` types in [`crate::contract`] are legacy
-//! and are not the product surface.
+//! postcondition. The owned agent loop (`hyper-use-agent`) uses the hard gate
+//! and tickets directly.
 
 use std::fmt;
 
@@ -31,6 +31,8 @@ pub enum GuardReason {
     /// The front layer (open dialogs) differs from the observation the host
     /// decided on. The host must observe again before it acts.
     WorldChanged,
+    /// The target does not claim the requested action (e.g. TYPE on a button).
+    UnsupportedAction,
 }
 
 impl GuardReason {
@@ -48,6 +50,7 @@ impl GuardReason {
             Self::WrongEffect => "wrong-effect",
             Self::FrontLayer => "front-layer",
             Self::WorldChanged => "world-changed",
+            Self::UnsupportedAction => "unsupported-action",
         }
     }
 }

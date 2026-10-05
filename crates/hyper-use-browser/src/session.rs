@@ -45,6 +45,30 @@ use crate::verify::{self, Expectation};
 
 pub const DOM_CLICK_FUNCTION: &str = "function(){this.click()}";
 
+/// Set the value of an editable element the way a user edit would, then fire
+/// `input` + `change`. Throws (and so changes nothing) when the element is
+/// disabled, readonly, or not editable. The text arrives as a CDP call
+/// argument, never spliced into the function source.
+pub const DOM_TYPE_FUNCTION: &str = "function(v){if(this.disabled)throw new Error('disabled');if(this.readOnly)throw new Error('readonly');if(typeof v!=='string')throw new Error('text must be a string');this.focus();if(this.isContentEditable){this.textContent=v;}else{var d=null;for(var p=Object.getPrototypeOf(this);p&&!d;p=Object.getPrototypeOf(p)){d=Object.getOwnPropertyDescriptor(p,'value');}if(!d||!d.set)throw new Error('not editable');d.set.call(this,v);}this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));return true;}";
+
+/// Choose exactly one `<option>` of a `<select>` by value, label, or trimmed
+/// text (exact first, then case-insensitive). Zero or several matches throw,
+/// so nothing is selected. Fires `input` + `change`.
+pub const DOM_SELECT_FUNCTION: &str = "function(v){if(this.disabled)throw new Error('disabled');if(this.tagName!=='SELECT')throw new Error('not a select');var o=Array.prototype.slice.call(this.options);var m=o.filter(function(x){return x.value===v||x.label===v||x.text.trim()===v;});if(m.length===0){var l=String(v).trim().toLowerCase();m=o.filter(function(x){return x.value.toLowerCase()===l||x.label.trim().toLowerCase()===l||x.text.trim().toLowerCase()===l;});}if(m.length!==1)throw new Error('option matches: '+m.length);if(m[0].disabled)throw new Error('option disabled');this.value=m[0].value;this.dispatchEvent(new Event('input',{bubbles:true}));this.dispatchEvent(new Event('change',{bubbles:true}));return m[0].value;}";
+
+/// Read `[value, selectedOptionText]` of a field; `null` for non-fields.
+pub const DOM_READ_VALUE_FUNCTION: &str = "function(){var t='';if(this.tagName==='SELECT'&&this.selectedIndex>=0){t=this.options[this.selectedIndex].text.trim();}if(this.isContentEditable){return [this.textContent,t];}if(this.value===undefined||this.value===null){return null;}return [String(this.value),t];}";
+
+/// Page scroll direction for [`BrowserSession::scroll`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+}
+
+/// Fraction of the viewport height one page scroll moves.
+pub const SCROLL_VIEWPORT_FRACTION: f64 = 0.8;
+
 pub struct BrowserSession<T: CdpTransport> {
     transport: T,
     manifold: Option<InteractionManifold>,
@@ -293,6 +317,189 @@ impl<T: CdpTransport> BrowserSession<T> {
         Ok(ActMechanism::Coordinate)
     }
 
+    /// Set `text` as the value of the observed editable region `id`.
+    ///
+    /// Low-level input used by the agent executor **after** ticket
+    /// revalidation (`hyper-use-agent`). There is no coordinate tier: when
+    /// the observed node cannot be resolved, or the page rejects the edit
+    /// (disabled / readonly / not editable), nothing is typed and an error
+    /// returns. Fail closed rather than typing into whatever has focus.
+    #[doc(hidden)]
+    pub fn type_text(&mut self, id: &RegionId, text: &str) -> Result<ActMechanism, BrowserError> {
+        let binding = self.binding_for(id)?;
+        self.stale = true;
+        self.semantic_input(&binding, DOM_TYPE_FUNCTION, text)?;
+        Ok(ActMechanism::DomSemantic)
+    }
+
+    /// Select exactly one option of the observed `<select>` region `id`.
+    ///
+    /// Same boundary and fail-closed rules as [`Self::type_text`]. Zero or
+    /// several matching options select nothing.
+    #[doc(hidden)]
+    pub fn select_option(
+        &mut self,
+        id: &RegionId,
+        option: &str,
+    ) -> Result<ActMechanism, BrowserError> {
+        let binding = self.binding_for(id)?;
+        self.stale = true;
+        self.semantic_input(&binding, DOM_SELECT_FUNCTION, option)?;
+        Ok(ActMechanism::DomSemantic)
+    }
+
+    /// Scroll the page by [`SCROLL_VIEWPORT_FRACTION`] of the viewport with a
+    /// trusted wheel event at the viewport center. Page-level primitive: no
+    /// target, no model-supplied coordinates.
+    pub fn scroll(&mut self, direction: ScrollDirection) -> Result<(), BrowserError> {
+        let viewport = self
+            .manifold
+            .as_ref()
+            .ok_or(BrowserError::NotObserved)?
+            .viewport();
+        let height = viewport.height();
+        let delta = (height * SCROLL_VIEWPORT_FRACTION).round();
+        let delta_y = match direction {
+            ScrollDirection::Up => -delta,
+            ScrollDirection::Down => delta,
+        };
+        self.stale = true;
+        let params = json!({
+            "type": "mouseWheel",
+            "x": (viewport.width() / 2.0).round(),
+            "y": (height / 2.0).round(),
+            "deltaX": 0,
+            "deltaY": delta_y
+        })
+        .to_string();
+        self.call("Input.dispatchMouseEvent", &params)?;
+        Ok(())
+    }
+
+    /// Navigate the page. The stored observation becomes stale. Callers
+    /// observe again before deciding (the agent loop always does).
+    pub fn navigate(&mut self, url: &str) -> Result<(), BrowserError> {
+        self.stale = true;
+        let body = self.call("Page.navigate", &json!({"url": url}).to_string())?;
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(err) = value.get("errorText").and_then(serde_json::Value::as_str) {
+                return Err(BrowserError::Navigation(err.to_owned()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Ask the page for `document.readyState`. `None` when CDP cannot answer.
+    pub fn ready_state(&mut self) -> Result<Option<String>, BrowserError> {
+        let params =
+            json!({"expression": "document.readyState", "returnByValue": true}).to_string();
+        let body = match self.call("Runtime.evaluate", &params) {
+            Ok(body) => body,
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(None),
+            Err(other) => return Err(other),
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        Ok(value
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned))
+    }
+
+    /// Read the observed field's `(value, selected option text)` without
+    /// changing the page. `None` when the node has no value (not a field).
+    /// Used to verify TYPE_TEXT / SELECT postconditions.
+    pub fn field_value(&mut self, id: &RegionId) -> Result<Option<(String, String)>, BrowserError> {
+        let binding = self.binding_for(id)?;
+        let node = match (binding.dom_node_id, binding.backend_node_id) {
+            (Some(node_id), _) => json!({"nodeId": node_id}),
+            (None, Some(backend)) => json!({"backendNodeId": backend}),
+            (None, None) => return Err(BrowserError::TargetUnresolved),
+        };
+        let resolved = self.call("DOM.resolveNode", &node.to_string())?;
+        let object_id = extract::object_id(&resolved)?;
+        let params = json!({
+            "functionDeclaration": DOM_READ_VALUE_FUNCTION,
+            "objectId": object_id,
+            "returnByValue": true
+        })
+        .to_string();
+        let body = self.call("Runtime.callFunctionOn", &params)?;
+        if extract::call_threw(&body)? {
+            return Ok(None);
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        let Some(pair) = value
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Ok(None);
+        };
+        let get = |i: usize| {
+            pair.get(i)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Ok(Some((get(0), get(1))))
+    }
+
+    fn binding_for(&self, id: &RegionId) -> Result<NodeBinding, BrowserError> {
+        if self.manifold.is_none() {
+            return Err(BrowserError::NotObserved);
+        }
+        self.bindings
+            .get(id)
+            .cloned()
+            .ok_or_else(|| BrowserError::UnknownRegion(id.to_string()))
+    }
+
+    /// Resolve the bound node (node id, then backend id) and call `function`
+    /// with one string argument. A thrown function is a page refusal and
+    /// stops immediately; only an unresolvable node moves to the next tier.
+    fn semantic_input(
+        &mut self,
+        binding: &NodeBinding,
+        function: &str,
+        value: &str,
+    ) -> Result<(), BrowserError> {
+        let mut tiers = Vec::new();
+        if let Some(node_id) = binding.dom_node_id {
+            tiers.push(json!({"nodeId": node_id}));
+        }
+        if let Some(backend) = binding.backend_node_id {
+            tiers.push(json!({"backendNodeId": backend}));
+        }
+        for node in tiers {
+            let resolved = match self.call("DOM.resolveNode", &node.to_string()) {
+                Ok(body) => body,
+                Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
+                Err(other) => return Err(other),
+            };
+            let object_id = extract::object_id(&resolved)?;
+            let params = json!({
+                "functionDeclaration": function,
+                "objectId": object_id,
+                "arguments": [{"value": value}],
+                "returnByValue": true
+            })
+            .to_string();
+            let body = self.call("Runtime.callFunctionOn", &params)?;
+            if extract::call_threw(&body)? {
+                return Err(BrowserError::InputRejected(thrown_message(&body)));
+            }
+            return Ok(());
+        }
+        Err(BrowserError::TargetUnresolved)
+    }
+
     pub fn verify(&self, expectation: &Expectation) -> Result<(), BrowserError> {
         let manifold = self.manifold.as_ref().ok_or(BrowserError::NotObserved)?;
         verify::verify(manifold, expectation).map_err(BrowserError::Verify)
@@ -361,6 +568,25 @@ impl<T: CdpTransport> BrowserSession<T> {
             .call(method, params_json)
             .map_err(BrowserError::from)
     }
+}
+
+/// Best-effort message of a thrown `Runtime.callFunctionOn`.
+fn thrown_message(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return "page threw".to_owned();
+    };
+    let details = value.get("exceptionDetails");
+    details
+        .and_then(|d| d.get("exception"))
+        .and_then(|e| e.get("description"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            details
+                .and_then(|d| d.get("text"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(|m| m.lines().next().unwrap_or(m).to_owned())
+        .unwrap_or_else(|| "page threw".to_owned())
 }
 
 fn owns_hit(hit: i64, target: i64, parent_of: &BTreeMap<i64, i64>) -> bool {

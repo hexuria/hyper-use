@@ -1,0 +1,95 @@
+//! Live Chrome smoke for the owned loop. Ignored by default (not in CI).
+//!
+//! ```text
+//! chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/hu-smoke
+//! HYPER_USE_CDP=http://127.0.0.1:9222 cargo test -p hyper-use-agent --test live_smoke -- --ignored --nocapture
+//! ```
+//!
+//! Navigates the first page target to an inline `data:` page (no server) and
+//! runs TYPE_TEXT → SELECT → CLICK → SCROLL goals through observe → PUA →
+//! gate → ticket → executor → verify, then checks the page DOM result.
+
+use hyper_use_agent::{AgentBuilder, AgentOutcome, BrowserRuntime, VerificationKind};
+use hyper_use_browser::{BrowserSession, WebSocketTransport};
+use hyper_use_core::ActionKind;
+use hyper_use_policy::PuaPolicy;
+
+const PAGE: &str = "<!doctype html><title>HU live smoke</title><h1>Flight search</h1>\
+<input id=q aria-label=Search style=width:300px>\
+<select id=cabin aria-label='Cabin class'><option value=economy>Economy</option><option value=business>Business</option></select>\
+<button id=go onclick=\"document.getElementById('out').textContent='Searched '+q.value+' in '+cabin.value\">Go</button>\
+<p id=out></p><div style=height:3000px></div><button>Bottom</button>";
+
+fn data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in PAGE.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+fn step(
+    session: BrowserSession<WebSocketTransport>,
+    goal: &str,
+    kind: ActionKind,
+    verification: VerificationKind,
+) -> BrowserSession<WebSocketTransport> {
+    let mut agent = AgentBuilder::new(session, PuaPolicy::default())
+        .max_steps(4)
+        .build(goal);
+    let outcome = agent.run();
+    eprintln!("{goal}: {outcome:?}");
+    assert!(
+        matches!(outcome, AgentOutcome::Done { .. }),
+        "{goal}: {outcome:?}"
+    );
+    let first = &outcome.steps()[0];
+    assert_eq!(first.kind, kind, "{goal}");
+    assert_eq!(first.verification, verification, "{goal}");
+    agent.into_browser()
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (HYPER_USE_CDP)"]
+fn owned_loop_drives_type_select_click_scroll_on_live_chrome() {
+    let endpoint =
+        std::env::var("HYPER_USE_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&data_url()).unwrap();
+    session.settle();
+
+    let session = step(
+        session,
+        r#"Type "rust ownership" into Search"#,
+        ActionKind::TypeText,
+        VerificationKind::Success,
+    );
+    let session = step(
+        session,
+        r#"Select "Business" in Cabin class"#,
+        ActionKind::Select,
+        VerificationKind::Success,
+    );
+    let mut session = step(
+        session,
+        "Click Go",
+        ActionKind::Click,
+        VerificationKind::StateChanged,
+    );
+    let m = BrowserRuntime::observe(&mut session).unwrap().clone();
+    assert!(
+        m.regions()
+            .any(|r| r.label() == "Searched rust ownership in business"),
+        "page result missing"
+    );
+    let _ = step(
+        session,
+        "scroll down",
+        ActionKind::ScrollDown,
+        VerificationKind::StateChanged,
+    );
+}

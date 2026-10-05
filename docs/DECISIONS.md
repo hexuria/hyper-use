@@ -122,8 +122,10 @@ label-only gate gets wrong (the tests assert the old failure first).
   it; box containment treats it as content (`acme_mail` compose sheet).
 - World change compares only the front layer, not every region; a re-render
   that swaps rows under the same dialogs is not escalated.
-- HGRA is still experimental; no live run with `matcher: "hgra"` and no live
-  run of this gate yet. Everything here is fixture/replay evidence.
+- HGRA is still experimental; no live run with `matcher: "hgra"` yet.
+- Live Chrome smoke for this gate: `examples/world-context/smoke.sh` (modal
+  confirm, twin Suspend + focus, cookie backdrop hit-test). Hit-test coords
+  must be integer CSS pixels (`DOM.getNodeForLocation` rejects floats).
 
 **Verifiers.** `crates/hyper-use-guard/tests/world_context.rs` (twin Suspend
 rows: ambiguous without context, allow with `within`/`near`; modal confirm:

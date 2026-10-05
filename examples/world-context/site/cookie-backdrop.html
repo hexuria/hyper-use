@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Docs</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; }
+  main { padding: 48px; min-height: 100vh; }
+  .save { position: fixed; right: 40px; bottom: 40px; padding: 10px 16px; z-index: 1; }
+  .backdrop {
+    position: fixed; inset: 0; background: rgba(15,23,42,.55);
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 40px;
+    z-index: 100; pointer-events: auto;
+  }
+  .banner {
+    background: #fff; padding: 16px 20px; border-radius: 12px; width: min(720px, 90vw);
+    display: flex; gap: 16px; align-items: center;
+    box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Docs</h1>
+  <p>Page content under a cookie banner.</p>
+</main>
+<button type="button" class="save" id="save">Save</button>
+<div class="backdrop" role="presentation" id="backdrop" aria-label="Cookie consent">
+  <div class="banner">
+    <p style="flex:1;margin:0">We use cookies.</p>
+    <button type="button" id="accept">Accept all</button>
+  </div>
+</div>
+</body>
+</html>

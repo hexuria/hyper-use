@@ -168,7 +168,7 @@ impl<T: CdpTransport> BrowserSession<T> {
             .collect();
         let mut buried = Vec::new();
         for (id, backend, x, y) in targets {
-            let params = json!({"x": x, "y": y}).to_string();
+            let params = json!({"x": x.round() as i64, "y": y.round() as i64}).to_string();
             let body = match self.call("DOM.getNodeForLocation", &params) {
                 Ok(body) => body,
                 Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,

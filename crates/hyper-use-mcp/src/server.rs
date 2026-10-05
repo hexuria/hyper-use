@@ -5,10 +5,15 @@
 //! interleaving. A failed live call drops that session. There is no retry and
 //! no reconnect loop; the next call opens a fresh socket. Fixture origins do
 //! not keep a transport between calls. Nothing is written to disk.
+//!
+//! A [`CdpConnector`] opens the transport for a `cdp` endpoint. The default
+//! is [`WebSocketTransport::connect`]. Tests pass a connector that returns a
+//! [`hyper_use_browser::ReplayTransport`], so the live-session paths (reuse,
+//! stale observation, eviction, a dropped session) run without Chrome.
 
 use std::collections::BTreeMap;
 
-use hyper_use_browser::{BrowserSession, PageState, WebSocketTransport};
+use hyper_use_browser::{BrowserSession, CdpError, CdpTransport, PageState, WebSocketTransport};
 use hyper_use_core::InteractionManifold;
 use hyper_use_observe::history::{
     detect, HistoryError, SignedSnapshot, SnapshotId, SnapshotRing, StateSignature, TemporalSignal,
@@ -26,8 +31,14 @@ pub(crate) struct Snapshot {
     pub(crate) page: PageState,
 }
 
+/// Opens the CDP transport for one endpoint.
+pub type CdpConnector = Box<dyn FnMut(&str) -> Result<Box<dyn CdpTransport>, CdpError>>;
+
+type LiveSession = BrowserSession<Box<dyn CdpTransport>>;
+
 pub struct Server {
-    sessions: BTreeMap<String, BrowserSession<WebSocketTransport>>,
+    connector: CdpConnector,
+    sessions: BTreeMap<String, LiveSession>,
     session_order: Vec<String>,
     history: SnapshotRing<Snapshot>,
 }
@@ -43,8 +54,21 @@ impl SignedSnapshot for Snapshot {
 }
 
 impl Server {
+    /// A server whose `cdp` endpoints are live websockets.
     pub fn new() -> Self {
+        Self::with_connector(|url| {
+            WebSocketTransport::connect(url)
+                .map(|transport| Box::new(transport) as Box<dyn CdpTransport>)
+        })
+    }
+
+    /// A server whose `cdp` endpoints are opened by `connector`. Used by the
+    /// mock environment tests; the stdio binary uses [`Server::new`].
+    pub fn with_connector(
+        connector: impl FnMut(&str) -> Result<Box<dyn CdpTransport>, CdpError> + 'static,
+    ) -> Self {
         Self {
+            connector: Box::new(connector),
             sessions: BTreeMap::new(),
             session_order: Vec::new(),
             history: SnapshotRing::default(),
@@ -106,21 +130,22 @@ impl Server {
     }
 
     /// The kept session for `url`, or a fresh connection.
-    pub(crate) fn take_session(
-        &mut self,
-        url: &str,
-    ) -> Result<BrowserSession<WebSocketTransport>, ToolError> {
+    pub(crate) fn take_session(&mut self, url: &str) -> Result<LiveSession, ToolError> {
         if let Some(session) = self.sessions.remove(url) {
             self.session_order.retain(|key| key != url);
             return Ok(session);
         }
-        let transport =
-            WebSocketTransport::connect(url).map_err(|err| ToolError::Browser(err.to_string()))?;
+        let transport = (self.connector)(url).map_err(|err| ToolError::Browser(err.to_string()))?;
         Ok(BrowserSession::new(transport))
     }
 
+    /// Endpoints with a kept live session, oldest first.
+    pub fn live_sessions(&self) -> &[String] {
+        &self.session_order
+    }
+
     /// Keep `session` for the next call on `url`.
-    pub(crate) fn keep_session(&mut self, url: &str, session: BrowserSession<WebSocketTransport>) {
+    pub(crate) fn keep_session(&mut self, url: &str, session: LiveSession) {
         if self.sessions.len() >= MAX_LIVE_SESSIONS && !self.sessions.contains_key(url) {
             let oldest = self.session_order.remove(0);
             self.sessions.remove(&oldest);

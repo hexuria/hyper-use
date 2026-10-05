@@ -21,7 +21,7 @@ mod tools;
 
 pub use error::ToolError;
 pub use rpc::{handle_line, serve_stdio};
-pub use server::{Server, MAX_LIVE_SESSIONS};
+pub use server::{CdpConnector, Server, MAX_LIVE_SESSIONS};
 pub use tools::call_tool;
 
 /// `observe`

@@ -34,6 +34,12 @@ impl DomSpec {
             children: Vec::new(),
         }
     }
+
+    /// The same element with another kept tag (`A`, `INPUT`, `NAV`, `H1`).
+    pub fn with_tag(mut self, tag: &'static str) -> Self {
+        self.tag = tag;
+        self
+    }
 }
 
 /// One accessibility node. `rect` is read with getBoxModel by backend id.
@@ -55,6 +61,61 @@ impl AxSpec {
             rect: Some(rect),
             focused: false,
         }
+    }
+
+    /// Mark this node as the focused one.
+    pub fn focused(mut self) -> Self {
+        self.focused = true;
+        self
+    }
+}
+
+/// One control seen by both DOM and accessibility, as Chrome reports a real
+/// button or link: one DOM element and one AX node with the same backend id
+/// and the same box.
+#[derive(Clone, Debug)]
+pub struct Control {
+    pub node_id: i64,
+    pub backend: i64,
+    pub tag: &'static str,
+    pub role: &'static str,
+    pub label: String,
+    pub rect: (f64, f64, f64, f64),
+    pub focused: bool,
+}
+
+impl Control {
+    pub fn button(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self {
+            node_id,
+            backend,
+            tag: "BUTTON",
+            role: "button",
+            label: label.to_owned(),
+            rect,
+            focused: false,
+        }
+    }
+
+    pub fn link(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self {
+            tag: "A",
+            role: "link",
+            ..Self::button(node_id, backend, label, rect)
+        }
+    }
+
+    pub fn text_field(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self {
+            tag: "INPUT",
+            role: "textbox",
+            ..Self::button(node_id, backend, label, rect)
+        }
+    }
+
+    pub fn focused(mut self) -> Self {
+        self.focused = true;
+        self
     }
 }
 
@@ -82,6 +143,40 @@ pub struct PageSpec {
 }
 
 impl PageSpec {
+    /// A page of controls that both DOM and accessibility report.
+    pub fn of(controls: &[Control], url: &str, title: &str) -> Self {
+        let dom = controls
+            .iter()
+            .map(|control| {
+                DomSpec::button(
+                    control.node_id,
+                    control.backend,
+                    &control.label,
+                    control.rect,
+                )
+                .with_tag(control.tag)
+            })
+            .collect();
+        let ax = controls
+            .iter()
+            .map(|control| {
+                let node = AxSpec::new(control.backend, control.role, &control.label, control.rect);
+                if control.focused {
+                    node.focused()
+                } else {
+                    node
+                }
+            })
+            .collect();
+        Self::new(dom, ax, url, title)
+    }
+
+    /// Replace the history step.
+    pub fn with_history(mut self, history: HistorySpec) -> Self {
+        self.history = history;
+        self
+    }
+
     pub fn new(dom: Vec<DomSpec>, ax: Vec<AxSpec>, url: &str, title: &str) -> Self {
         Self {
             width: 1280.0,
@@ -177,6 +272,15 @@ impl ScriptBuilder {
         self.calls
             .push(result("Input.dispatchMouseEvent", json!({})));
         self
+    }
+
+    /// Number of scripted CDP calls so far.
+    pub fn len(&self) -> usize {
+        self.calls.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty()
     }
 
     pub fn to_json(&self) -> String {

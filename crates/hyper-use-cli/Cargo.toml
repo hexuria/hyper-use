@@ -16,6 +16,10 @@ hyper-use-executor = { path = "../hyper-use-executor" }
 hyper-use-observe = { path = "../hyper-use-observe" }
 hyper-use-mcp = { path = "../hyper-use-mcp" }
 
+[dev-dependencies]
+# Parse JSON-RPC replies in the stdio mock-environment test.
+serde_json = "1"
+
 [lib]
 name = "hyper_use_cli"
 path = "src/lib.rs"

@@ -129,17 +129,30 @@ def cdp_eval(cdp_http: str, server: str, expression: str):
 
 
 CONTAINER_JS = """(() => {
-  const els = document.elementsFromPoint(%f, %f);
-  const pick = els.find(e => e.matches && e.matches('button,a,input,select,textarea,summary,label,[role],[tabindex]')) || els[0];
+  const X = %f, Y = %f;
+  const SEL = 'button,a,input,select,textarea,summary,label,[role],[tabindex]';
+  const STRUCT = 'li,tr,[role=row],[role=listitem],[role=gridcell],article,[role=dialog],dialog,fieldset';
+  // Descend through open shadow roots: document.elementsFromPoint retargets shadow content to its host.
+  let root = document, pick = null;
+  for (let i = 0; i < 8; i++) {
+    const els = root.elementsFromPoint(X, Y).filter(e => root === document || root.contains(e));
+    if (!els.length) break;
+    pick = els.find(e => e.matches(SEL)) || els[0];
+    const host = els.find(e => e.shadowRoot && e.shadowRoot !== root);
+    if (host && (host === els[0] || !els[0].matches(SEL))) { root = host.shadowRoot; continue; }
+    break;
+  }
   if (!pick) return '';
+  const up = n => n.parentElement || (n.parentNode && n.parentNode.host) || null;
   const own = (pick.innerText || pick.getAttribute('aria-label') || '').trim();
-  const s = pick.closest('li,tr,[role=row],[role=listitem],[role=gridcell],article,[role=dialog],dialog,fieldset');
+  let s = null;
+  for (let c = pick; c; c = up(c)) { if (c.matches && c.matches(STRUCT)) { s = c; break; } }
   let t = s ? (s.innerText || '') : '';
   if (!t.trim() || t.length > 400) {
     t = '';
-    for (let c = pick.parentElement; c && c !== document.body; c = c.parentElement) {
+    for (let c = up(pick); c && c !== document.body; c = up(c)) {
       const x = (c.innerText || '').trim();
-      if (x.length > own.length + 2) { t = x; break; }
+      if (x.length > own.length + 24) { t = x; break; }  // past sibling-button strips to the card/section text
     }
   }
   return t.replace(/\\s+/g, ' ').trim().slice(0, 220);

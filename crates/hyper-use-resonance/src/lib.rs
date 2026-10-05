@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+mod context;
 mod error;
 mod matcher;
 mod model;
@@ -33,6 +34,7 @@ use hyper_use_geometry::{is_fully_offscreen, normalize, zones};
 #[cfg(feature = "hgra")]
 use hyper_use_hyper::{cosine, Dims, Encoder};
 
+pub use context::ContextScope;
 pub use error::ResonanceError;
 #[cfg(feature = "hgra")]
 pub use hyper_use_hyper::BipolarVector;
@@ -169,11 +171,12 @@ pub fn locate_with(
 ) -> Result<Vec<RankedCandidate>, ResonanceError> {
     let mut memory = Memory::new(encoder);
     let query_hv = query_vector(query, &mut memory)?;
+    let scope = ContextScope::resolve(query, manifold);
     let mut ranked = Vec::with_capacity(manifold.len());
     for region in manifold.regions() {
         let signature = compose_signature(manifold, region, &mut memory)?;
         let hypervector = query_similarity(query_hv.as_ref(), &signature)?;
-        let score = score_parts(manifold, region, query, hypervector, model);
+        let score = score_parts(manifold, region, query, &scope, hypervector, model);
         debug_assert!(score.total.is_finite());
         ranked.push(RankedCandidate {
             rank: 0,
@@ -242,10 +245,13 @@ fn score_parts(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
     query: &LocateQuery,
+    scope: &ContextScope,
     hypervector: f64,
     model: ResonanceModel,
 ) -> ResonanceScore {
-    let semantic = semantic_score(query, region);
+    // World context (within / near) folds into semantic by minimum, the same
+    // way as in the weighted matcher. The hypervector does not encode it.
+    let semantic = semantic_score(query, region).min(scope.score(manifold, region));
     let source_agreement = f64::from(region.sources().count()) / f64::from(SourceMask::KNOWN_COUNT);
     let geometric = geometric_score(manifold.viewport(), region.rect(), query);
     let actionability = actionability_score(region, query);
@@ -761,10 +767,14 @@ mod tests {
             assert_eq!(candidate.score().hypervector(), hv);
             let mean = probe_mean_similarity(&probes, &signature).unwrap();
             let id = candidate.id().as_str();
-            bundled_total.insert(id, score_parts(&manifold, region, &query, hv, model).total);
+            let scope = ContextScope::resolve(&query, &manifold);
+            bundled_total.insert(
+                id,
+                score_parts(&manifold, region, &query, &scope, hv, model).total,
+            );
             mean_total.insert(
                 id,
-                score_parts(&manifold, region, &query, mean, model).total,
+                score_parts(&manifold, region, &query, &scope, mean, model).total,
             );
         }
         let bundled_margin = bundled_total["z-send"] - bundled_total["a-feedback"];

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use hyper_use_mcp::{call_tool, handle_line, ToolError, TOOLS};
+use hyper_use_mcp::{call_tool, handle_line, Server, ToolError, TOOLS};
 use serde_json::{json, Value};
 
 fn fixture(name: &str) -> String {
@@ -735,4 +735,192 @@ fn browser_use_and_cua_refuse_an_ambiguous_ranked_target() {
         assert_eq!(refused["fallback"], "ambiguous", "{executor}");
         assert_eq!(refused["margin_millis"], 20, "{executor}");
     }
+}
+
+#[test]
+fn act_closed_loop_reports_delta_and_verifies_welcome() {
+    let body = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-loop.cdp.json"),
+            "region": "n100",
+            "expect_text": "Welcome"
+        }),
+    )
+    .unwrap();
+    assert_eq!(body["executed"], true);
+    assert_eq!(body["verified"], true);
+    assert_eq!(body["fallback"], Value::Null);
+    assert_eq!(body["mechanism"], "dom-semantic");
+    assert_eq!(
+        body["state_delta"],
+        json!({"added": ["n300"], "removed": ["n100", "n200"], "changed": []})
+    );
+    assert_eq!(body["before_snapshot"], 1);
+    assert_eq!(body["after_snapshot"], 2);
+}
+
+#[test]
+fn act_closed_loop_verify_failure_is_executed_true_verified_false() {
+    let body = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-noop.cdp.json"),
+            "region": "n100",
+            "expect_absent": "n100"
+        }),
+    )
+    .unwrap();
+    assert_eq!(body["executed"], true);
+    assert_eq!(body["verified"], false);
+    assert_eq!(body["fallback"], "verify-failed");
+    assert_eq!(
+        body["verify_error"],
+        json!({"variant": "RegionStillPresent", "id": "n100"})
+    );
+    assert_eq!(
+        body["state_delta"],
+        json!({"added": [], "removed": [], "changed": []})
+    );
+}
+
+#[test]
+fn act_without_expectation_on_a_fixture_does_not_observe_after() {
+    let body = call(
+        "act",
+        json!({"fixture": fixture("sign-in-press.cdp.json"), "region": "n100"}),
+    )
+    .unwrap();
+    assert_eq!(body["executed"], true);
+    assert_eq!(body["before_snapshot"], 1);
+    assert_eq!(body["after_snapshot"], Value::Null);
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-loop.cdp.json"),
+            "region": "n100",
+            "expect_text": "Welcome",
+            "observe_after": false
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::ExpectNeedsObserveAfter);
+}
+
+#[test]
+fn act_with_locate_fields_derives_the_ranked_gate() {
+    let body = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-loop.cdp.json"),
+            "region": "n100",
+            "text": "Sign in",
+            "expect_text": "Welcome"
+        }),
+    )
+    .unwrap();
+    assert_eq!(body["executed"], true);
+    assert_eq!(body["verified"], true);
+    assert_eq!(body["confidence"], 1.0);
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-loop.cdp.json"),
+            "region": "n200",
+            "text": "Sign in"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        ToolError::TargetNotTop {
+            region: "n200".into(),
+            top: "n100".into()
+        }
+    );
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-loop.cdp.json"),
+            "region": "n100",
+            "text": "Sign in",
+            "confidence": 1.0
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::ConfidenceWithQuery);
+}
+
+#[test]
+fn diff_by_snapshot_ids_matches_diff_by_paths() {
+    let mut server = Server::new();
+    let before = server
+        .call_tool("observe", &json!({"fixture": fixture("sign-in.cdp.json")}))
+        .unwrap();
+    let after = server
+        .call_tool("observe", &json!({"fixture": fixture("welcome.cdp.json")}))
+        .unwrap();
+    assert_eq!(before["snapshot"], 1);
+    assert_eq!(after["snapshot"], 2);
+    let by_id = server
+        .call_tool("diff", &json!({"before_snapshot": 1, "after_snapshot": 2}))
+        .unwrap();
+    let by_path = server
+        .call_tool(
+            "diff",
+            &json!({
+                "before": fixture("sign-in.cdp.json"),
+                "after": fixture("welcome.cdp.json")
+            }),
+        )
+        .unwrap();
+    assert_eq!(by_id["state_delta"], by_path["state_delta"]);
+    assert_eq!(by_id["state_delta"]["added"], json!(["n300"]));
+
+    let err = server
+        .call_tool(
+            "diff",
+            &json!({"before_snapshot": 1, "after": fixture("welcome.cdp.json")}),
+        )
+        .unwrap_err();
+    assert_eq!(err, ToolError::MixedDiffSources);
+    let err = server
+        .call_tool("diff", &json!({"before_snapshot": 1}))
+        .unwrap_err();
+    assert_eq!(err, ToolError::MissingAfter);
+    let err = server
+        .call_tool("diff", &json!({"before_snapshot": 1, "after_snapshot": 9}))
+        .unwrap_err();
+    assert_eq!(err, ToolError::UnknownSnapshot(9));
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "UnknownSnapshot", "id": 9})
+    );
+}
+
+#[test]
+fn evicted_snapshot_is_exact() {
+    let mut server = Server::new();
+    for _ in 0..17 {
+        server
+            .call_tool("observe", &json!({"fixture": fixture("sign-in.cdp.json")}))
+            .unwrap();
+    }
+    let err = server
+        .call_tool("diff", &json!({"before_snapshot": 1, "after_snapshot": 17}))
+        .unwrap_err();
+    assert_eq!(err, ToolError::SnapshotEvicted { id: 1, oldest: 2 });
+    assert_eq!(err.to_string(), "snapshot 1 was evicted; oldest kept is 2");
+}
+
+#[test]
+fn stateless_call_tool_is_unchanged() {
+    // The free function uses a fresh server, so every call is snapshot 1.
+    let first = call("observe", json!({"fixture": fixture("sign-in.cdp.json")})).unwrap();
+    let second = call("observe", json!({"fixture": fixture("sign-in.cdp.json")})).unwrap();
+    assert_eq!(first["snapshot"], 1);
+    assert_eq!(second["snapshot"], 1);
+    let err = call("diff", json!({"before_snapshot": 1, "after_snapshot": 1})).unwrap_err();
+    assert_eq!(err, ToolError::UnknownSnapshot(1));
 }

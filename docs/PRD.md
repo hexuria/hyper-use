@@ -43,7 +43,8 @@ Observe builds an interaction manifold for one viewport. Locate ranks regions
 for a structured query. Inspect is required when more than one candidate is
 still plausible. Act names a region id. The press preference on a browser
 session is a DOM semantic click by node id, then by backend node id, then a
-coordinate click. A focus is not a click, so there is no focus tier. Diff is id-based. Verify checks expected text or that a
+coordinate click. A focus is not a click, so there is no focus tier. On the MCP server, act can observe again after the press, diff,
+and verify in the same call. Diff is id-based. Verify checks expected text or that a
 region disappeared.
 
 If the matcher confidence used for the act is below 0.55 (550 millis), act

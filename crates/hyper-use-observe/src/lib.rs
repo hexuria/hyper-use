@@ -10,9 +10,14 @@
 //! role, label Jaccard, and center distance. It does not allocate a hypervector;
 //! pass a cosine callback from the resonance crate when you want that metric.
 //!
-//! Phase 1 does not observe a live browser or the macOS accessibility tree.
+//! [`history::SnapshotRing`] keeps a bounded number of recent snapshots in
+//! memory so a host can diff by snapshot id.
+//!
+//! This crate does not observe a live browser or the macOS accessibility tree.
 
 #![forbid(unsafe_code)]
+
+pub mod history;
 
 use hyper_use_core::{token_jaccard, InteractionManifold, InteractionRegion, RegionId};
 

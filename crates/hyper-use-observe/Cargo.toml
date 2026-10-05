@@ -9,3 +9,6 @@ description = "Temporal matching and manifold diff for hyper-use"
 
 [dependencies]
 hyper-use-core = { path = "../hyper-use-core" }
+
+[dev-dependencies]
+proptest = "1.7"

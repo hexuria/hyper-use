@@ -310,6 +310,11 @@ impl<T: CdpTransport> BrowserExecutor<T> {
     pub fn session(&self) -> &BrowserSession<T> {
         &self.session
     }
+
+    /// Give the session back, with its latest observation and bindings.
+    pub fn into_session(self) -> BrowserSession<T> {
+        self.session
+    }
 }
 
 impl<T: CdpTransport> ActionExecutor for BrowserExecutor<T> {

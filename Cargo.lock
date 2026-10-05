@@ -531,6 +531,7 @@ name = "hyper-use-observe"
 version = "0.1.0"
 dependencies = [
  "hyper-use-core",
+ "proptest",
 ]
 
 [[package]]

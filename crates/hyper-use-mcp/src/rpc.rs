@@ -9,7 +9,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
-use crate::tools::call_tool;
+use crate::server::Server;
 use crate::TOOLS;
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -19,9 +19,10 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 pub fn serve_stdio() -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
+    let mut server = Server::new();
     for line in stdin.lock().lines() {
         let line = line?;
-        if let Some(response) = handle_line(&line) {
+        if let Some(response) = server.handle_line(&line) {
             stdout.write_all(response.as_bytes())?;
             stdout.write_all(b"\n")?;
             stdout.flush()?;
@@ -30,8 +31,13 @@ pub fn serve_stdio() -> io::Result<()> {
     Ok(())
 }
 
-/// One inbound line. `None` means the client must not be answered.
+/// One inbound line against a fresh [`Server`]. `None` means the client must
+/// not be answered. Use [`Server::handle_line`] to keep state between lines.
 pub fn handle_line(line: &str) -> Option<String> {
+    Server::new().handle_line(line)
+}
+
+pub(crate) fn handle_line_with(server: &mut Server, line: &str) -> Option<String> {
     let line = line.trim();
     if line.is_empty() {
         return None;
@@ -55,10 +61,10 @@ pub fn handle_line(line: &str) -> Option<String> {
             json!({"variant": "InvalidRequest"}),
         ));
     }
-    dispatch_object(&value)
+    dispatch_object(server, &value)
 }
 
-fn dispatch_object(value: &Value) -> Option<String> {
+fn dispatch_object(server: &mut Server, value: &Value) -> Option<String> {
     let id = value.get("id").cloned();
     if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Some(rpc_error(
@@ -81,7 +87,7 @@ fn dispatch_object(value: &Value) -> Option<String> {
     Some(match method {
         "initialize" => rpc_ok(id, initialize_result()),
         "tools/list" => rpc_ok(id, tools_list()),
-        "tools/call" => match tools_call(&params) {
+        "tools/call" => match tools_call(server, &params) {
             Ok(result) => rpc_ok(id, result),
             Err(err) => rpc_error(id, -32602, &err.to_string(), err.to_value()),
         },
@@ -95,7 +101,7 @@ fn dispatch_object(value: &Value) -> Option<String> {
     })
 }
 
-fn tools_call(params: &Value) -> Result<Value, ToolError> {
+fn tools_call(server: &mut Server, params: &Value) -> Result<Value, ToolError> {
     if !params.is_object() && !params.is_null() {
         return Err(ToolError::InvalidArguments(
             "tools/call params must be an object".into(),
@@ -106,7 +112,7 @@ fn tools_call(params: &Value) -> Result<Value, ToolError> {
         .and_then(Value::as_str)
         .ok_or(ToolError::MissingToolName)?;
     let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-    match call_tool(name, &arguments) {
+    match server.call_tool(name, &arguments) {
         Ok(body) => Ok(tool_result(body.to_string(), false)),
         Err(err) => Ok(tool_result(err.to_json_string(), true)),
     }
@@ -137,7 +143,7 @@ fn tools_list() -> Value {
 fn tool_spec(name: &str) -> Value {
     let (description, properties, required) = match name {
         "observe" => (
-            "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, and label. Does not click and does not choose the next capability.",
+            "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, label, and a snapshot id for diff. Does not click and does not choose the next capability.",
             source_props(),
             Vec::<&str>::new(),
         ),
@@ -156,7 +162,7 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "act" => (
-            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use and executor cua each hand the located region id, role, and label to a replay transport. Neither is in the default policy order, neither changes the page, and neither is a fusion benchmark. A confidence below 0.55 returns executed false and does not click. Pass the locate top confidence as confidence and candidates[1] as runner_up; a gap below 0.05 returns executed false with fallback ambiguous. Omit confidence only when the region was already inspected. Does not take x or y.",
+            "Press one region id. The default executor is the CDP browser press, which prefers a DOM click over coordinates. executor browser-use and executor cua each hand the located region id, role, and label to a replay transport. Neither is in the default policy order, neither changes the page, and neither is a fusion benchmark. A confidence below 0.55 returns executed false and does not click. Pass the locate top confidence as confidence and candidates[1] as runner_up; a gap below 0.05 returns executed false with fallback ambiguous. Omit confidence only when the region was already inspected. Or pass the locate text, role, and position instead of confidence: act ranks its own observation, derives confidence and runner_up, and refuses with TargetNotTop if region is not first. With expect_text or expect_absent, or on a cdp session, act observes again and returns state_delta, verified, before_snapshot, and after_snapshot. Does not take x or y.",
             {
                 let mut props = source_props();
                 props.insert("region".into(), json!({"type": "string"}));
@@ -177,6 +183,19 @@ fn tool_spec(name: &str) -> Value {
                         "description": "The second locate candidate. Requires confidence."
                     }),
                 );
+                props.insert("text".into(), json!({"type": "string"}));
+                props.insert("role".into(), json!({"type": "string"}));
+                props.insert("position".into(), json!({"type": "string"}));
+                props.insert(
+                    "matcher".into(),
+                    json!({"type": "string", "enum": ["weighted", "hgra"]}),
+                );
+                props.insert("expect_text".into(), json!({"type": "string"}));
+                props.insert("expect_absent".into(), json!({"type": "string"}));
+                props.insert(
+                    "observe_after".into(),
+                    json!({"type": "boolean", "description": "Observe after the press and diff. Defaults to true with an expectation or a cdp session."}),
+                );
                 props.insert(
                     "executor".into(),
                     json!({
@@ -190,14 +209,16 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "diff" => (
-            "Id-level difference of two observations. Returns state_delta added, removed, and changed. Does not click.",
+            "Id-level difference of two observations, given as before/after fixture paths or as before_snapshot/after_snapshot ids returned by earlier calls on this server. Returns state_delta added, removed, and changed. Does not click.",
             {
                 let mut props = serde_json::Map::new();
                 props.insert("before".into(), json!({"type": "string"}));
                 props.insert("after".into(), json!({"type": "string"}));
+                props.insert("before_snapshot".into(), json!({"type": "integer"}));
+                props.insert("after_snapshot".into(), json!({"type": "integer"}));
                 props
             },
-            vec!["before", "after"],
+            Vec::new(),
         ),
         "verify" => (
             "Check one postcondition: expect_text appeared, or expect_absent is gone. Does not click and does not plan how to get there.",

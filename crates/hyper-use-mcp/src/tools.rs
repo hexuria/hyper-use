@@ -1,30 +1,35 @@
 //! The six tools. Each one is a single computer-capability call.
 //!
-//! `call_tool` rejects a goal, a navigate payload, and raw coordinates before
+//! `dispatch` rejects a goal, a navigate payload, and raw coordinates before
 //! it reads a fixture. A scored act below the executor gate returns
 //! `executed: false` and does not call `press`.
+//!
+//! Every observation is recorded in the server's snapshot ring and its id is
+//! returned as `snapshot`. `act` observes before, presses, and (when asked, or
+//! on a live session) observes after, diffs, and verifies in the same call.
 
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
 use hyper_use_browser::{
-    verify, BrowserSession, Expectation, ReplayTransport, VerifyError, WebSocketTransport,
+    verify, BrowserSession, CdpTransport, Expectation, ReplayTransport, VerifyError,
 };
 use hyper_use_core::{
     parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
 };
 use hyper_use_executor::{
-    gate_confidence, select_act_executor, ActConfidence, ActionExecutor, ActionReceipt,
-    ActionRequest, BrowserExecutor, BrowserUseError, BrowserUseExecutor, CuaError, CuaExecutor,
-    ExecutorError, ExecutorKind, StubExecutor,
+    gate_confidence, select_act_executor, ActConfidence, ActionExecutor, ActionRequest,
+    BrowserExecutor, BrowserUseError, BrowserUseExecutor, CuaError, CuaExecutor, ExecutorError,
+    ExecutorKind, StubExecutor,
 };
 use hyper_use_hyper::Dims;
-use hyper_use_observe::diff;
+use hyper_use_observe::{diff, history::SnapshotId, ManifoldDiff};
 use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
+use crate::server::Server;
 
 const PRODUCT: &str = "hyper-use";
 
@@ -33,7 +38,16 @@ enum Origin {
     Cdp(String),
 }
 
+/// Run one tool against a fresh [`Server`]. Keeps no state between calls.
 pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, ToolError> {
+    Server::new().call_tool(name, arguments)
+}
+
+pub(crate) fn dispatch(
+    server: &mut Server,
+    name: &str,
+    arguments: &Value,
+) -> Result<Value, ToolError> {
     let owned;
     let arguments = match arguments {
         Value::Null => {
@@ -61,18 +75,18 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, ToolError> {
     }
     match name {
         "navigate" => Err(ToolError::GoalNotAccepted),
-        "observe" => observe(arguments),
-        "locate" => locate(arguments),
-        "inspect" => inspect(arguments),
-        "act" => act(arguments),
-        "diff" => diff_tool(arguments),
-        "verify" => verify_tool(arguments),
+        "observe" => observe(server, arguments),
+        "locate" => locate(server, arguments),
+        "inspect" => inspect(server, arguments),
+        "act" => act(server, arguments),
+        "diff" => diff_tool(server, arguments),
+        "verify" => verify_tool(server, arguments),
         other => Err(ToolError::UnknownTool(other.to_owned())),
     }
 }
 
-fn observe(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
     let regions: Vec<Value> = manifold
         .regions()
         .map(|region| {
@@ -95,11 +109,12 @@ fn observe(arguments: &Value) -> Result<Value, ToolError> {
         None,
     );
     insert(&mut body, "regions", Value::Array(regions));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
     Ok(body)
 }
 
-fn locate(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
     let query = build_query(arguments)?;
     let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
@@ -128,6 +143,7 @@ fn locate(arguments: &Value) -> Result<Value, ToolError> {
     insert(&mut body, "matcher", json!(matcher_name));
     insert(&mut body, "benchmark", json!(false));
     insert(&mut body, "candidates", candidates_of(&manifold, &ranked));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
     Ok(body)
 }
 
@@ -159,8 +175,8 @@ fn rank(
     }
 }
 
-fn inspect(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
     let region = require_region(arguments)?;
     let found = manifold
         .get(&region)
@@ -175,7 +191,7 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
         "height": found.rect().height(),
     });
     // Same omission as locate. Inspect reads one region and does not press.
-    Ok(without_act_flags(outcome(
+    let mut body = without_act_flags(outcome(
         "inspect",
         target,
         None,
@@ -185,10 +201,12 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
         None,
         None,
         None,
-    )))
+    ));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
+    Ok(body)
 }
 
-fn act(arguments: &Value) -> Result<Value, ToolError> {
+fn act(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     let requested = parse_requested_executor(arguments)?;
     let available = match requested {
         Some(kind) => vec![kind],
@@ -204,44 +222,275 @@ fn act(arguments: &Value) -> Result<Value, ToolError> {
         ExecutorKind::BrowserUse => act_browser_use(arguments),
         ExecutorKind::Cua => act_cua(arguments),
         ExecutorKind::Macos => act_stub(selected, arguments),
-        ExecutorKind::Browser => act_browser(arguments),
+        ExecutorKind::Browser => act_browser(server, arguments),
         other => Err(ToolError::NotImplemented {
             executor: other.as_str().to_owned(),
         }),
     }
 }
 
-fn act_browser(arguments: &Value) -> Result<Value, ToolError> {
+fn act_browser(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     let origin = resolve_origin(arguments)?;
     let region = require_region(arguments)?;
     let _action = parse_press_action(arguments)?;
     let score = parse_act_score(arguments, &region)?;
-    let manifold = load_origin(&origin)?;
-    if manifold.get(&region).is_none() {
-        return Err(ToolError::UnknownRegion(region.to_string()));
+    let query = act_query(arguments)?;
+    if query.is_some() && score.is_some() {
+        return Err(ToolError::ConfidenceWithQuery);
     }
+    let expectation = parse_expectation(arguments)?;
+    let observe_after = match arguments.get("observe_after") {
+        None | Some(Value::Null) => expectation.is_some() || matches!(origin, Origin::Cdp(_)),
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => {
+            return Err(ToolError::InvalidArguments(
+                "observe_after must be a boolean".into(),
+            ))
+        }
+    };
+    if expectation.is_some() && !observe_after {
+        return Err(ToolError::ExpectNeedsObserveAfter);
+    }
+    let plan = ActPlan {
+        key: origin_key(&origin),
+        region,
+        score,
+        query,
+        expectation,
+        observe_after,
+        matcher: opt_str(arguments, "matcher")?
+            .unwrap_or("weighted")
+            .to_owned(),
+        arguments: arguments.clone(),
+    };
+    match &origin {
+        Origin::Fixture(path) => {
+            let body = read_cdp_script(path)?;
+            let transport =
+                ReplayTransport::parse(&body).map_err(|err| ToolError::Browser(err.to_string()))?;
+            run_act(server, BrowserSession::new(transport), &plan).0
+        }
+        Origin::Cdp(url) => {
+            let session = server.take_session(url)?;
+            let (result, session, healthy) = run_act(server, session, &plan);
+            if healthy {
+                server.keep_session(url, session);
+            }
+            result
+        }
+    }
+}
+
+struct ActPlan {
+    key: String,
+    region: RegionId,
+    score: Option<ActScore>,
+    query: Option<LocateQuery>,
+    expectation: Option<Expectation>,
+    observe_after: bool,
+    matcher: String,
+    arguments: Value,
+}
+
+/// Observe (or reuse the session's latest observation), gate, press, and
+/// optionally observe again, diff, and verify. Returns the session and whether
+/// its transport is still usable.
+fn run_act<T: CdpTransport>(
+    server: &mut Server,
+    mut session: BrowserSession<T>,
+    plan: &ActPlan,
+) -> (Result<Value, ToolError>, BrowserSession<T>, bool) {
+    let reuse = session
+        .manifold()
+        .is_some()
+        .then(|| server.latest_for(&plan.key))
+        .flatten();
+    let (before_id, before) = match reuse {
+        Some(id) => {
+            let manifold = session.manifold().expect("checked above").clone();
+            (id, manifold)
+        }
+        None => match session.observe() {
+            Ok(manifold) => {
+                let manifold = manifold.clone();
+                (server.record(&plan.key, manifold.clone()), manifold)
+            }
+            Err(err) => return (Err(ToolError::Browser(err.to_string())), session, false),
+        },
+    };
+    if before.get(&plan.region).is_none() {
+        return (
+            Err(ToolError::UnknownRegion(plan.region.to_string())),
+            session,
+            true,
+        );
+    }
+    let score = match ranked_score(&before, plan) {
+        Ok(score) => score,
+        Err(err) => return (Err(err), session, true),
+    };
     if let Some(score) = &score {
-        match gate_confidence(score.confidence()) {
-            Ok(()) => {}
-            Err(err) => {
-                return refusal(err, target_of(&manifold, &region), score, Some(&manifold));
+        if let Err(err) = gate_confidence(score.confidence()) {
+            let refused = refusal(err, target_of(&before, &plan.region), score, Some(&before)).map(
+                |mut body| {
+                    insert(&mut body, "before_snapshot", json!(before_id.get()));
+                    insert(&mut body, "after_snapshot", Value::Null);
+                    body
+                },
+            );
+            return (refused, session, true);
+        }
+    }
+    let mut request = ActionRequest::new(plan.region.clone(), Action::Click);
+    if let Some(score) = &score {
+        request = score.apply(request);
+    }
+    let mut executor = BrowserExecutor::new(session);
+    let executed = executor.execute(&request);
+    let mut session = executor.into_session();
+    let receipt = match executed {
+        Ok(receipt) => receipt,
+        Err(err) => return (Err(map_executor(err)), session, false),
+    };
+    let mut verified = false;
+    let mut fallback = None;
+    let mut verify_error = None;
+    let mut delta = empty_delta();
+    let mut after_id: Option<SnapshotId> = None;
+    if plan.observe_after {
+        let after = match session.observe() {
+            Ok(manifold) => manifold.clone(),
+            Err(err) => return (Err(ToolError::Browser(err.to_string())), session, false),
+        };
+        after_id = Some(server.record(&plan.key, after.clone()));
+        delta = delta_json(&diff(&before, &after));
+        if let Some(expectation) = &plan.expectation {
+            match verify(&after, expectation) {
+                Ok(()) => verified = true,
+                Err(err) => {
+                    fallback = Some("verify-failed");
+                    verify_error = Some(verify_tool_error(err).to_value());
+                }
             }
         }
     }
-    let receipt = press(&origin, &region, score.as_ref())?;
     let mut body = outcome(
         "act",
-        target_of(&manifold, &region),
+        target_of(&before, &plan.region),
         Some(Action::Click.as_str()),
         true,
-        false,
-        empty_delta(),
+        verified,
+        delta,
         score.as_ref().map(|s| s.top),
-        None,
+        fallback,
         Some("browser"),
     );
     insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
-    Ok(body)
+    insert(&mut body, "before_snapshot", json!(before_id.get()));
+    insert(
+        &mut body,
+        "after_snapshot",
+        after_id.map_or(Value::Null, |id| json!(id.get())),
+    );
+    if let Some(error) = verify_error {
+        insert(&mut body, "verify_error", error);
+    }
+    (Ok(body), session, true)
+}
+
+/// With locate fields, rank `before` with the same matcher locate uses and
+/// require `region` to be first. Otherwise the caller's score.
+fn ranked_score(
+    before: &InteractionManifold,
+    plan: &ActPlan,
+) -> Result<Option<ActScore>, ToolError> {
+    let Some(query) = &plan.query else {
+        return Ok(plan.score.as_ref().map(|score| ActScore {
+            top: score.top,
+            runner_up: score.runner_up.clone(),
+        }));
+    };
+    let ranked = rank(before, query, &plan.matcher, &plan.arguments)?;
+    let Some(top) = ranked.first() else {
+        return Err(ToolError::UnknownRegion(plan.region.to_string()));
+    };
+    if top.id() != &plan.region {
+        return Err(ToolError::TargetNotTop {
+            region: plan.region.to_string(),
+            top: top.id().to_string(),
+        });
+    }
+    Ok(Some(ActScore {
+        top: top.confidence(),
+        runner_up: ranked
+            .get(1)
+            .map(|second| (second.id().clone(), second.confidence())),
+    }))
+}
+
+/// Locate fields on `act`: text, role, position. `action` is the press verb
+/// here, so it is not a locate field.
+fn act_query(arguments: &Value) -> Result<Option<LocateQuery>, ToolError> {
+    let text = opt_str(arguments, "text")?;
+    let role = opt_str(arguments, "role")?;
+    let position = opt_str(arguments, "position")?;
+    if text.is_none() && role.is_none() && position.is_none() {
+        return Ok(None);
+    }
+    let mut query = LocateQuery::new();
+    if let Some(text) = text {
+        query = query.text(text).map_err(|_| ToolError::EmptyText)?;
+    }
+    if let Some(role) = role {
+        let parsed = Role::parse(&role.to_ascii_lowercase())
+            .ok_or_else(|| ToolError::UnknownRole(role.to_owned()))?;
+        query = query.role(parsed);
+    }
+    if let Some(position) = position {
+        let parsed = Zone::parse(&position.to_ascii_lowercase())
+            .ok_or_else(|| ToolError::UnknownPosition(position.to_owned()))?;
+        query = query.position(parsed);
+    }
+    Ok(Some(query))
+}
+
+fn parse_expectation(arguments: &Value) -> Result<Option<Expectation>, ToolError> {
+    let expect_text = opt_str(arguments, "expect_text")?;
+    let expect_absent = opt_str(arguments, "expect_absent")?;
+    match (expect_text, expect_absent) {
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => Err(ToolError::BothExpectations),
+        (Some(text), None) => Expectation::text_present(text)
+            .map(Some)
+            .map_err(|_| ToolError::EmptyText),
+        (None, Some(id)) => RegionId::try_new(id)
+            .map(|id| Some(Expectation::region_absent(id)))
+            .map_err(|_| ToolError::UnknownRegion(id.to_owned())),
+    }
+}
+
+fn verify_tool_error(err: VerifyError) -> ToolError {
+    match err {
+        VerifyError::ExpectedTextMissing { expected } => {
+            ToolError::ExpectedTextMissing { expected }
+        }
+        VerifyError::RegionStillPresent { id } => ToolError::RegionStillPresent { id },
+        VerifyError::EmptyExpectation => ToolError::EmptyText,
+        other => ToolError::Browser(other.to_string()),
+    }
+}
+
+fn delta_json(delta: &ManifoldDiff) -> Value {
+    let changed: Vec<&str> = delta
+        .changed()
+        .iter()
+        .map(|change| change.id().as_str())
+        .collect();
+    json!({
+        "added": id_strings(delta.added()),
+        "removed": id_strings(delta.removed()),
+        "changed": changed,
+    })
 }
 
 /// Confidence the caller passed for an act. `None` means inspected.
@@ -328,37 +577,54 @@ fn refusal(
     }
 }
 
-fn diff_tool(arguments: &Value) -> Result<Value, ToolError> {
-    let before_path = opt_str(arguments, "before")?.ok_or(ToolError::MissingBefore)?;
-    let after_path = opt_str(arguments, "after")?.ok_or(ToolError::MissingAfter)?;
-    let before = load_path_manifold(before_path)?;
-    let after = load_path_manifold(after_path)?;
-    let delta = diff(&before, &after);
-    let changed: Vec<&str> = delta
-        .changed()
-        .iter()
-        .map(|change| change.id().as_str())
-        .collect();
-    let state_delta = json!({
-        "added": id_strings(delta.added()),
-        "removed": id_strings(delta.removed()),
-        "changed": changed,
-    });
+fn diff_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let before_path = opt_str(arguments, "before")?;
+    let after_path = opt_str(arguments, "after")?;
+    let before_id = opt_snapshot(arguments, "before_snapshot")?;
+    let after_id = opt_snapshot(arguments, "after_snapshot")?;
+    let by_path = before_path.is_some() || after_path.is_some();
+    let by_id = before_id.is_some() || after_id.is_some();
+    let delta = match (by_path, by_id) {
+        (true, true) => return Err(ToolError::MixedDiffSources),
+        (false, true) => {
+            let before_id = before_id.ok_or(ToolError::MissingBefore)?;
+            let after_id = after_id.ok_or(ToolError::MissingAfter)?;
+            let before = &server.snapshot(before_id)?.manifold;
+            let after = &server.snapshot(after_id)?.manifold;
+            diff(before, after)
+        }
+        _ => {
+            let before = load_path_manifold(before_path.ok_or(ToolError::MissingBefore)?)?;
+            let after = load_path_manifold(after_path.ok_or(ToolError::MissingAfter)?)?;
+            diff(&before, &after)
+        }
+    };
     Ok(outcome(
         "diff",
         Value::Null,
         None,
         false,
         false,
-        state_delta,
+        delta_json(&delta),
         None,
         None,
         None,
     ))
 }
 
-fn verify_tool(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn opt_snapshot(arguments: &Value, key: &str) -> Result<Option<u64>, ToolError> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| ToolError::BadSnapshot(number.to_string())),
+        Some(other) => Err(ToolError::BadSnapshot(other.to_string())),
+    }
+}
+
+fn verify_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (_snapshot, manifold) = observe_origin(server, &resolve_origin(arguments)?)?;
     let expect_text = opt_str(arguments, "expect_text")?;
     let expect_absent = opt_str(arguments, "expect_absent")?;
     match (expect_text, expect_absent) {
@@ -554,32 +820,6 @@ fn refused_with(target: Value, score: f64, fallback: &str) -> Value {
     body
 }
 
-fn press(
-    origin: &Origin,
-    region: &RegionId,
-    score: Option<&ActScore>,
-) -> Result<ActionReceipt, ToolError> {
-    let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = score {
-        request = score.apply(request);
-    }
-    match origin {
-        Origin::Fixture(path) => {
-            let body = read_cdp_script(path)?;
-            let transport =
-                ReplayTransport::parse(&body).map_err(|err| ToolError::Browser(err.to_string()))?;
-            let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-            executor.execute(&request).map_err(map_executor)
-        }
-        Origin::Cdp(url) => {
-            let transport = WebSocketTransport::connect(url)
-                .map_err(|err| ToolError::Browser(err.to_string()))?;
-            let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-            executor.execute(&request).map_err(map_executor)
-        }
-    }
-}
-
 fn parse_requested_executor(arguments: &Value) -> Result<Option<ExecutorKind>, ToolError> {
     match opt_str(arguments, "executor")? {
         None => Ok(None),
@@ -640,19 +880,33 @@ fn resolve_origin(arguments: &Value) -> Result<Origin, ToolError> {
     }
 }
 
-fn load_origin(origin: &Origin) -> Result<InteractionManifold, ToolError> {
+fn origin_key(origin: &Origin) -> String {
     match origin {
-        Origin::Fixture(path) => load_path_manifold(path),
+        Origin::Fixture(path) => format!("fixture:{path}"),
+        Origin::Cdp(url) => format!("cdp:{url}"),
+    }
+}
+
+/// Observe `origin` and record it in the server's ring. A live session is kept
+/// for the next call; a failed live call drops it.
+fn observe_origin(
+    server: &mut Server,
+    origin: &Origin,
+) -> Result<(SnapshotId, InteractionManifold), ToolError> {
+    let manifold = match origin {
+        Origin::Fixture(path) => load_path_manifold(path)?,
         Origin::Cdp(url) => {
-            let transport = WebSocketTransport::connect(url)
-                .map_err(|err| ToolError::Browser(err.to_string()))?;
-            let mut session = BrowserSession::new(transport);
-            session
+            let mut session = server.take_session(url)?;
+            let manifold = session
                 .observe()
                 .cloned()
-                .map_err(|err| ToolError::Browser(err.to_string()))
+                .map_err(|err| ToolError::Browser(err.to_string()))?;
+            server.keep_session(url, session);
+            manifold
         }
-    }
+    };
+    let id = server.record(&origin_key(origin), manifold.clone());
+    Ok((id, manifold))
 }
 
 fn load_path_manifold(path: &str) -> Result<InteractionManifold, ToolError> {

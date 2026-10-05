@@ -52,6 +52,8 @@ Tests or proofs updated: resonance matcher tests, browser fusion and session tes
 
 `hyper-use mcp` is a newline-delimited JSON-RPC server. Tools are observe, locate, inspect, act, diff, verify. No navigate. The ranker crates do not depend on `hyper-use-mcp`.
 
+The server owns a 16-entry in-memory snapshot ring and up to four live CDP sessions. A failed live call drops its session; there is no retry or reconnect. Act can observe after the press, diff, and verify in one call.
+
 ```
 Verification impact
 
@@ -145,4 +147,27 @@ Verification impact
 Reason: the weighted text term and the act margin are pure functions of their inputs. Observe and press are one blocking CDP call stream. Skipping a node with no box and dropping a press tier do not add interleaving, so no system model was added.
 Affected invariants: an exact label outranks a superset label under weighted; HGRA semantic is unchanged; a ranked act with a margin below 50 millis does not press and returns fallback ambiguous; a runner_up without confidence is an error; an inspected act is not gated; a getBoxModel protocol error omits that node and a missing script step is still fatal; press never reports DOM.focus as a click; a thrown click function is a tier failure.
 Tests or proofs updated: matcher unit test, a 16-case weighted proptest, a CLI locate test, executor margin tests and two 16-case margin proptests, MCP and CLI act tests, browser observe tests on hidden-node.cdp.json, press tier tests. No second model of WeightedMatcher::rank.
+```
+
+
+## MCP session and snapshot ring
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[x] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: the server is still one blocking stdin reader. Keeping a session between calls adds ownership but no interleaving; a failed call drops the session and there is no retry, so it is not a recovery protocol and the system model is unaffected. The ring is in memory, so persistence is unaffected.
+Affected invariants: snapshot ids strictly increase and are never reused; an evicted id is an exact error; diff by snapshot ids equals diff by the same fixtures; act with an expectation returns a real state_delta and verified; a failed postcondition is executed true and verified false; act with locate fields refuses when region is not first; the free call_tool keeps no state.
+Tests or proofs updated: history unit test and a 16-case proptest, MCP closed-loop act tests, diff-by-snapshot tests, and a stdio subprocess test. No second formal model.
 ```

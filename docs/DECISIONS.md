@@ -255,9 +255,10 @@ return a JSON-RPC error and it does not press. The proof is the
 `sign-in.cdp.json` fixture, which has no press responses: a click would be
 `Browser`, and the test expects `executed: false`. An inspected act (no
 confidence) still presses. `act` against a manifold fixture is
-`ActNeedsCdp`, because that file has no DOM node. The result does not include
-a fresh state delta. Call `diff` or `verify` for that. Live `cdp` is accepted
-and is not required by tests.
+`ActNeedsCdp`, because that file has no DOM node. With an expectation, or on a
+live `cdp` session, the result includes a fresh state delta (see
+"MCP session and snapshot ring"). Live `cdp` is accepted and is not required
+by tests.
 
 Tool failures are `isError: true` with a JSON object whose `variant` matches
 `ToolError`. Protocol failures (`ParseError`, `InvalidRequest`,
@@ -529,3 +530,49 @@ transport log), `low_confidence_wins_over_ambiguity`,
 `ranked_within_margin_does_not_submit` (Browser Use and CUA) and
 `ranked_outside_margin_passes_the_gate`, MCP and CLI act tests, and
 `below_margin_does_not_execute_and_does_not_call_transport`.
+
+## MCP session and snapshot ring
+
+The MCP server used to be free functions: every call reconnected, observed
+from scratch, and dropped the result. Nothing could compare the state before
+an act with the state after it. `serve_stdio` now owns one `Server`:
+
+- a `SnapshotRing` (in `hyper-use-observe::history`) of the last 16
+  observations, with ids that only increase and are never reused. Every tool
+  that observes returns `snapshot`. `diff` accepts `before_snapshot` and
+  `after_snapshot` as well as file paths, but not a mix
+  (`MixedDiffSources`). An evicted id is `SnapshotEvicted { id, oldest }`.
+- up to `MAX_LIVE_SESSIONS` (4) live CDP sessions keyed by endpoint. A live
+  call that fails drops its session. There is no retry and no reconnect loop;
+  the next call opens a new socket. Fixture origins open a fresh replay
+  transport per call, so calling `observe` twice on one fixture still works.
+
+`act` is now one closed loop: observe (or reuse the live session's latest
+observation, so the bindings match what the caller located), gate, press,
+then observe again when `observe_after` is set, diff, and verify an optional
+`expect_text` or `expect_absent`. `observe_after` defaults to true with an
+expectation or on a live session. The result carries `state_delta`,
+`verified`, `before_snapshot`, and `after_snapshot`. A failed postcondition is
+`executed: true`, `verified: false`, `fallback: "verify-failed"`, and a
+`verify_error` object. `act` can also take the locate fields (text, role,
+position): it ranks its own observation with the same `RegionMatcher`,
+derives the ranked confidence and runner-up, and refuses with `TargetNotTop`
+when `region` is not first. That closes the margin bypass for callers that use
+it. It is not a second ranker.
+
+The free `call_tool` and `handle_line` build a new `Server` per call, so they
+keep their old stateless meaning.
+
+Downside accepted: on a live page the reused before-snapshot can be stale if
+the page changed between calls. Persistence is not involved: the ring is in
+memory and lost when the process exits.
+
+Verifiers: `ring_evicts_oldest_and_ids_never_repeat`, the 16-case proptest
+`snapshot_ids_are_strictly_increasing`,
+`act_closed_loop_reports_delta_and_verifies_welcome` on
+`fixtures/sign-in-loop.cdp.json`,
+`act_closed_loop_verify_failure_is_executed_true_verified_false`,
+`act_with_locate_fields_derives_the_ranked_gate`,
+`diff_by_snapshot_ids_matches_diff_by_paths`, `evicted_snapshot_is_exact`,
+`stateless_call_tool_is_unchanged`, and the stdio subprocess test
+`observe_then_act_then_diff_by_snapshot_in_one_process`.

@@ -5,6 +5,10 @@
 //! Transport is newline-delimited JSON-RPC 2.0 on stdin and stdout. A
 //! notification (no `id`) gets no response. Batches are rejected.
 //!
+//! [`serve_stdio`] owns one [`Server`], which keeps live CDP sessions and a
+//! ring of recent snapshots between calls. The free [`handle_line`] and
+//! [`call_tool`] use a fresh `Server` each time, so they keep no state.
+//!
 //! The ranker crates do not depend on this crate. `serde_json` is used here
 //! to parse JSON-RPC. It is not a public type in the ranker API.
 
@@ -12,10 +16,12 @@
 
 mod error;
 mod rpc;
+mod server;
 mod tools;
 
 pub use error::ToolError;
 pub use rpc::{handle_line, serve_stdio};
+pub use server::{Server, MAX_LIVE_SESSIONS};
 pub use tools::call_tool;
 
 /// `observe`

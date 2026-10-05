@@ -85,6 +85,10 @@ pub enum ToolError {
         message: String,
     },
     InvalidArguments(String),
+    /// Allow ticket no longer matches before-snapshot world/target.
+    TicketInvalid(String),
+    /// Ticketed verify saw an empty before/after delta.
+    VerifyNoEffect,
     Io {
         path: String,
         message: String,
@@ -145,6 +149,8 @@ impl ToolError {
             Self::CuaRejected { .. } => "CuaRejected",
             Self::CuaScript { .. } => "CuaScript",
             Self::InvalidArguments(_) => "InvalidArguments",
+            Self::TicketInvalid(_) => "TicketInvalid",
+            Self::VerifyNoEffect => "VerifyNoEffect",
             Self::Io { .. } => "Io",
             Self::Fixture(_) => "Fixture",
             Self::Browser(_) => "Browser",
@@ -202,6 +208,10 @@ impl ToolError {
             Self::InvalidArguments(message) => {
                 json!({"variant": "InvalidArguments", "message": message})
             }
+            Self::TicketInvalid(message) => {
+                json!({"variant": "TicketInvalid", "message": message})
+            }
+            Self::VerifyNoEffect => json!({"variant": "VerifyNoEffect"}),
             Self::Io { path, message } => {
                 json!({"variant": "Io", "path": path, "message": message})
             }
@@ -301,6 +311,8 @@ impl fmt::Display for ToolError {
                 write!(f, "invalid cua script: {message}")
             }
             Self::InvalidArguments(message) => write!(f, "invalid arguments: {message}"),
+            Self::TicketInvalid(message) => write!(f, "ticket invalid: {message}"),
+            Self::VerifyNoEffect => f.write_str("verify saw no effect"),
             Self::Io { path, message } => write!(f, "cannot read {path}: {message}"),
             Self::Fixture(message) => write!(f, "fixture: {message}"),
             Self::Browser(message) => write!(f, "browser: {message}"),

@@ -79,6 +79,10 @@ pub struct GuardEvidence {
 }
 
 /// Firewall decision. Never implies Hyper-Use clicked.
+///
+/// [`GuardDecision::Allow`] carries an [`crate::ActionTicket`]. The host must
+/// revalidate that ticket against a fresh observation before clicking the
+/// exact target. Hyper-Use itself never presses.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum GuardDecision {
@@ -87,6 +91,7 @@ pub enum GuardDecision {
         confidence: MatcherConfidence,
         margin: Option<MatcherConfidence>,
         evidence: GuardEvidence,
+        ticket: crate::ActionTicket,
     },
     Refuse {
         reason: GuardReason,

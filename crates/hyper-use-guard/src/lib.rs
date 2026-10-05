@@ -1,8 +1,16 @@
 //! Action firewall decisions for hyper-use.
 //!
 //! Hyper-Use does not click. A host proposes a target; this crate ranks,
-//! gates, and returns [`GuardDecision`]. Browser Use (or another executor)
-//! performs the trusted action only after [`GuardDecision::Allow`].
+//! gates, and returns [`GuardDecision`]. [`GuardDecision::Allow`] carries an
+//! [`ActionTicket`]. Browser Use (or another executor) must [`revalidate`] that
+//! ticket against a fresh observation, then press the exact target.
+//!
+//! Hard-gate direction: occluded / front-layer / disabled / hidden / wrong
+//! ancestry / stale ticket should become *impossible* before ranking (blocked
+//! candidates stay as evidence). Ranking then chooses among viable candidates
+//! only. Until that split lands, some safety still mixes into scores (see
+//! `buried_better_label` in [`decide`]); do not rip that path in the same change
+//! as the ticket lease.
 //!
 //! The guard judges the proposal against the world as it is now, not as the
 //! host last saw it:
@@ -21,6 +29,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ticket;
 pub mod world;
 
 use std::fmt;
@@ -31,7 +40,10 @@ use hyper_use_resonance::{
     default_matcher, weighted_semantic, Match, RegionMatcher, RegionState, TEXT_MISS_CAP,
 };
 
-pub use hyper_use_protocol::{GuardCandidate, GuardDecision, GuardEvidence, GuardReason};
+pub use hyper_use_protocol::{
+    ActionTicket, GuardCandidate, GuardDecision, GuardEvidence, GuardReason, TicketInvalid,
+};
+pub use ticket::{consume_ticket, issue_ticket, revalidate, world_fingerprint, ConsumeError};
 pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
 
 /// Raw confidence below this never allows. Not a probability.
@@ -59,6 +71,8 @@ pub struct GuardRequest {
     focused: Option<RegionId>,
     /// World of the observation the host decided on, if it said.
     seen_world: Option<WorldSnapshot>,
+    /// Host observation id (MCP snapshot ring). Embedded in the Allow ticket.
+    snapshot_id: u64,
 }
 
 impl GuardRequest {
@@ -69,7 +83,18 @@ impl GuardRequest {
             proposed: None,
             focused: None,
             seen_world: None,
+            snapshot_id: 0,
         }
+    }
+
+    /// Observation / snapshot id the host is deciding against.
+    pub fn snapshot_id(mut self, id: u64) -> Self {
+        self.snapshot_id = id;
+        self
+    }
+
+    pub fn snapshot_id_value(&self) -> u64 {
+        self.snapshot_id
     }
 
     pub fn proposed(mut self, id: RegionId) -> Self {
@@ -248,6 +273,11 @@ fn decide(
     // the same occluded penalty. Still refuse when any buried/occluded region
     // matches the query's label better than the effective top (HGRA + dialog
     // "Delete" vs buried "Delete project").
+    //
+    // Hard-gate TODO: move this (and front-layer / occluded / disabled) into a
+    // pre-rank impossible set so ranking never sees buried candidates as
+    // viable. Keep `buried_better_label` until that split; do not delete it in
+    // the ActionTicket PR.
     let top_region_for_semantic = raw.get(top.id()).expect("ranked id comes from manifold");
     let top_semantic = weighted_semantic(request.query(), top_region_for_semantic);
     let buried_better_label = raw.regions().any(|region| {
@@ -317,19 +347,37 @@ fn decide(
                 candidates,
             });
         }
+        let target = candidates[0].clone();
+        let ticket = issue_ticket(
+            request.snapshot_id_value(),
+            request.action(),
+            &target,
+            raw_region,
+            &WorldSnapshot::of(raw, request.focused_id().cloned()),
+        );
         return Ok(GuardDecision::Allow {
-            target: candidates[0].clone(),
+            target,
             confidence: MatcherConfidence::try_new(top_conf)?,
             margin: Some(MatcherConfidence::try_new(margin)?),
             evidence,
+            ticket,
         });
     }
 
+    let target = candidates[0].clone();
+    let ticket = issue_ticket(
+        request.snapshot_id_value(),
+        request.action(),
+        &target,
+        raw_region,
+        &WorldSnapshot::of(raw, request.focused_id().cloned()),
+    );
     Ok(GuardDecision::Allow {
-        target: candidates[0].clone(),
+        target,
         confidence: MatcherConfidence::try_new(top_conf)?,
         margin: None,
         evidence,
+        ticket,
     })
 }
 

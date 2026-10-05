@@ -1,5 +1,33 @@
 # Decisions
 
+
+## ActionTicket boundary + HGRA freeze (2026-10-05)
+
+Status: accepted on `feat/action-ticket`. Asia/Manila.
+
+**Decision.** The product boundary is an `ActionTicket` issued on
+`GuardDecision::Allow`. Hyper-Use remains non-clicking on the agent MCP path.
+Hosts (or an invisible Browser Use interceptor) must `revalidate` then press
+the exact target. Ticketed `verify` accepts before/after snapshots (+ optional
+ticket) and uses `verify_delta` where the expectation is a delta.
+
+**HGRA frozen.** Leave HGRA in `experiments/`. Weighted is the only product
+matcher until the B0/B1/B2 Browser Use ablation (`bench/arms/B01.md`) answers
+whether Hyper-Use itself reduces wrong actions. Matcher score floors that
+paper over uncalibrated thresholds (e.g. geo floor hacks) are not the path.
+
+**RESULTS.md.** Uniform A1–A8 tables are **historical** (pre-ticket, planner
+variables changed with Hyper-Use, tip ≠ current main). Rewrite RESULTS only
+from pinned B0/B1/B2 runs.
+
+**Hard gates (direction, not landed).** Occluded / front-layer / disabled /
+hidden / wrong ancestry / stale ticket should be impossible *before* rank;
+`buried_better_label` stays until that split. Do not delete it in the ticket PR.
+
+**Discarded for this change.** Full Browser Use monkeypatch (B1-full), crate
+fold, deleting legacy `act` / `contract.rs`, whole-page world equality →
+target-scoped fingerprints — next after B0/B1 stub proves the lease.
+
 ## Product pivot: browser action firewall (2026-10-05)
 
 Hyper-Use is an independent action-verification layer for browser agents. It

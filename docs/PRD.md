@@ -29,8 +29,9 @@ These exist before hyper-use is called. This repository does not implement them.
    stable region identity, visibility and enabled state).
 2. **guard** — resolve the proposed target, compare candidates, check visibility /
    enabled / occlusion / ambiguity, return `Allow`, `Refuse`, or `Escalate`.
-3. **verify** — after the host acts, observe again, diff, and check the expected
-   postcondition (`SUCCESS` / `NO-EFFECT` / `WRONG`).
+3. **verify** — after the host acts (with a valid ticket), observe again, diff,
+   and check the expected postcondition (`SUCCESS` / `NO-EFFECT` / `WRONG`),
+   preferably bound to the ticket + before/after snapshots.
 
 Locate, inspect, and diff remain internal primitives. They are not the external
 product workflow.
@@ -54,11 +55,22 @@ Escalate { reason, candidates }
 Reasons include low confidence, ambiguous twins, missing target, disabled /
 hidden / occluded control, and (on verify) no effect or wrong postcondition.
 
-## Matchers
+## ActionTicket (product boundary)
+
+`GuardDecision::Allow` issues an `ActionTicket` (ticket id, snapshot id, world /
+target fingerprints, target id, action). Hyper-Use MCP **never** clicks. The
+host — ideally an invisible executor interceptor in front of Browser Use — must
+revalidate the ticket against a fresh observation, then press the **exact**
+ticket target (or refuse stale / world-changed). B2 binds `verify` to that
+ticket with before/after + `verify_delta`. Without a ticket-consuming boundary,
+Allow is only a preflight opinion (TOCTOU). See `bench/arms/B01.md`.
+
+## Matchers (HGRA frozen)
 
 - `WeightedMatcher` is the product default.
-- HGRA lives under `experiments/hgra/` and stays there until it beats
-  `WeightedMatcher` on a large adversarial target-resolution suite.
+- **HGRA is frozen** under `experiments/hgra/`. No matcher PRs until B0/B1/B2
+  answers whether the firewall itself improves Browser Use. Do not tune HGRA
+  to paper over uncalibrated global thresholds.
 
 ## Acceptance bar (product)
 

@@ -9,6 +9,9 @@ not statistics.
 
 ## Arms
 
+Product-direction ablation (ActionTicket): see [`arms/B01.md`](arms/B01.md) (B0 Browser Use alone · B1 invisible guard ticket). A1–A8 below are the historical uniform suite.
+
+
 | Arm | Wiring | Model calls |
 |---|---|---|
 | A1 | Browser Use 0.13.10 `Agent` on the harness Chrome (`cdp_url`) | GPT 6 Luna (OpenCodex) |

@@ -194,7 +194,9 @@ fn render_decision(decision: &GuardDecision, json: bool) -> String {
             confidence,
             margin,
             evidence,
+            ticket,
         } => {
+            let _ticket_id = ticket.ticket_id;
             if json {
                 format!(
                     "{{\"decision\":\"allow\",\"id\":\"{}\",\"label\":\"{}\",\"confidence\":{},\"margin\":{},\"enabled\":{},\"visible\":{}}}\n",

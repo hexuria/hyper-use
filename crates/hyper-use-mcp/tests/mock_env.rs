@@ -126,6 +126,13 @@ fn observe_then_guard_allows_sign_in_without_clicking() {
     assert_eq!(guarded["decision"], "allow", "{guarded}");
     assert_eq!(guarded["executed"], false);
     assert_eq!(guarded["target"]["label"], "Sign in");
+    assert!(
+        guarded.get("ticket").is_some(),
+        "Allow must issue ActionTicket: {guarded}"
+    );
+    assert_eq!(guarded["ticket"]["target_label"], "Sign in");
+    assert_eq!(guarded["ticket"]["action"], "click");
+    assert!(guarded["ticket"]["ticket_id"].as_u64().unwrap() >= 1);
     assert_eq!(mock.presses(), 0);
 }
 

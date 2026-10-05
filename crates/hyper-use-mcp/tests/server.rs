@@ -61,7 +61,10 @@ fn tools_list_includes_product_and_legacy_verbs() {
     assert_eq!(init["result"]["protocolVersion"], "2024-11-05");
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("action firewall"), "{instructions}");
-    assert!(instructions.contains("does not click"), "{instructions}");
+    assert!(
+        instructions.contains("never clicks") || instructions.contains("ActionTicket"),
+        "{instructions}"
+    );
     assert!(handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
 }
 

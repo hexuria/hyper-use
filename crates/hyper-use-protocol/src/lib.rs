@@ -3,9 +3,9 @@
 //! Product operations are observe, guard, verify. Hyper-Use does not click and
 //! does not plan navigation. Locate / inspect / diff remain internal helpers.
 //!
-//! [`GuardDecision`] is the product contract. Legacy [`ComputerTask`] /
-//! [`ComputerResult`] types remain for transitional hosts and are not the
-//! recommended surface.
+//! [`GuardDecision`] plus [`ActionTicket`] are the product contract. Legacy
+//! [`ComputerTask`] / [`ComputerResult`] types remain for transitional hosts
+//! and are not the recommended surface.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +13,7 @@ use hyper_use_core::{Action, LocateQuery, RegionId};
 
 mod contract;
 mod guard;
+mod ticket;
 
 pub use contract::{
     ComputerResult, ComputerTask, Constraints, ExpectedOutcome, FallbackReason, Intent,
@@ -21,6 +22,7 @@ pub use contract::{
 pub use guard::{
     FirewallPhase, GuardCandidate, GuardDecision, GuardEvidence, GuardReason, FIREWALL_ORDER,
 };
+pub use ticket::{ActionTicket, TicketInvalid};
 
 /// Legacy six-phase loop. Prefer [`FirewallPhase`] / [`FIREWALL_ORDER`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

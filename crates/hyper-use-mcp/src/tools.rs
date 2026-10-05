@@ -8,7 +8,8 @@ use std::fs;
 use std::path::Path;
 
 use hyper_use_browser::{
-    page_delta, verify, BrowserSession, Expectation, PageState, ReplayTransport, VerifyError,
+    page_delta, verify, verify_delta, BrowserSession, Expectation, PageState, ReplayTransport,
+    VerifyError,
 };
 use hyper_use_core::{
     parse_fixture, Action, InteractionManifold, InteractionRegion, LocateQuery, RegionId, Role,
@@ -389,7 +390,9 @@ fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError
     };
     let (snapshot, manifold, page) = observe_origin(server, &origin)?;
     let query = with_near(base_query, near.as_ref(), &page);
-    let mut request = GuardRequest::click(query.clone()).focused(page.focused().cloned());
+    let mut request = GuardRequest::click(query.clone())
+        .focused(page.focused().cloned())
+        .snapshot_id(snapshot.get());
     if let Some(id) = proposed {
         request = request.proposed(id);
     }
@@ -491,7 +494,10 @@ fn decision_json(
     insert(&mut body, "snapshot", json!(snapshot.get()));
     match decision {
         GuardDecision::Allow {
-            margin, evidence, ..
+            margin,
+            evidence,
+            ticket,
+            ..
         } => {
             if let Some(m) = margin {
                 insert(&mut body, "margin", json!(m.get()));
@@ -506,6 +512,20 @@ fn decision_json(
                     "hidden": evidence.hidden,
                     "offscreen": evidence.offscreen,
                     "role": evidence.role.as_str(),
+                }),
+            );
+            insert(
+                &mut body,
+                "ticket",
+                json!({
+                    "ticket_id": ticket.ticket_id,
+                    "snapshot_id": ticket.snapshot_id,
+                    "action": ticket.action.as_str(),
+                    "target_id": ticket.target_id.as_str(),
+                    "target_role": ticket.target_role.as_str(),
+                    "target_label": ticket.target_label,
+                    "target_fingerprint": format!("{:016x}", ticket.target_fingerprint),
+                    "world_fingerprint": format!("{:016x}", ticket.world_fingerprint),
                 }),
             );
         }
@@ -586,15 +606,142 @@ fn opt_snapshot(arguments: &Value, key: &str) -> Result<Option<u64>, ToolError> 
 }
 
 fn verify_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (_snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let expect_text = opt_str(arguments, "expect_text")?;
     let expect_absent = opt_str(arguments, "expect_absent")?;
+    let expect_appeared = opt_str(arguments, "expect_appeared")?;
+    let expect_disappeared = opt_str(arguments, "expect_disappeared")?;
+    let expect_url_changed = arguments
+        .get("expect_url_changed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let before_id = opt_snapshot(arguments, "before_snapshot")?;
+    let after_id = opt_snapshot(arguments, "after_snapshot")?;
+
+    // Ticketed delta verify: before/after snapshots + expectation, optionally
+    // bound to an Allow ticket's target/world fingerprints.
+    if before_id.is_some() || after_id.is_some() {
+        let before_id = before_id.ok_or(ToolError::MissingBefore)?;
+        let after_id = after_id.ok_or(ToolError::MissingAfter)?;
+        let (before_m, before_p, after_m, after_p) = {
+            let before = server.snapshot(before_id)?;
+            let after = server.snapshot(after_id)?;
+            (
+                before.manifold.clone(),
+                before.page.clone(),
+                after.manifold.clone(),
+                after.page.clone(),
+            )
+        };
+        if let Some(ticket_obj) = arguments.get("ticket") {
+            let ticket = parse_ticket(ticket_obj)?;
+            // Ticket must still describe the *before* world/target.
+            hyper_use_guard::revalidate(&ticket, &before_m, before_p.focused().cloned())
+                .map_err(|err| ToolError::TicketInvalid(err.to_string()))?;
+        }
+        let regions = diff(&before_m, &after_m);
+        let pages = page_delta(&before_p, &after_p);
+        let expectation = match (
+            expect_text,
+            expect_absent,
+            expect_appeared,
+            expect_disappeared,
+            expect_url_changed,
+        ) {
+            (None, None, Some(id), None, false) => {
+                let region =
+                    RegionId::try_new(id).map_err(|_| ToolError::UnknownRegion(id.to_owned()))?;
+                Expectation::appeared(region)
+            }
+            (None, None, None, Some(id), false) => {
+                let region =
+                    RegionId::try_new(id).map_err(|_| ToolError::UnknownRegion(id.to_owned()))?;
+                Expectation::disappeared(region)
+            }
+            (None, None, None, None, true) => Expectation::url_changed(),
+            (Some(text), None, None, None, false) => {
+                // Snapshot text check on *after*.
+                return verify_text(&after_m, text);
+            }
+            (None, Some(id), None, None, false) => return verify_absent(&after_m, id),
+            _ => return Err(ToolError::MissingExpect),
+        };
+        match verify_delta(&regions, &pages, &expectation) {
+            Ok(()) => return Ok(verified_ok()),
+            Err(VerifyError::NoEffect) => {
+                return Err(ToolError::VerifyNoEffect);
+            }
+            Err(other) => return Err(ToolError::Browser(other.to_string())),
+        }
+    }
+
+    let (_snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     match (expect_text, expect_absent) {
         (None, None) => Err(ToolError::MissingExpect),
         (Some(_), Some(_)) => Err(ToolError::BothExpectations),
         (Some(text), None) => verify_text(&manifold, text),
         (None, Some(id)) => verify_absent(&manifold, id),
     }
+}
+
+fn parse_ticket(value: &Value) -> Result<hyper_use_protocol::ActionTicket, ToolError> {
+    use hyper_use_core::{Action, Role};
+    use hyper_use_protocol::ActionTicket;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| ToolError::InvalidArguments("ticket must be an object".into()))?;
+    let req = |key: &str| -> Result<&Value, ToolError> {
+        obj.get(key)
+            .ok_or_else(|| ToolError::InvalidArguments(format!("ticket missing {key}")))
+    };
+    let ticket_id = req("ticket_id")?
+        .as_u64()
+        .ok_or_else(|| ToolError::InvalidArguments("ticket.ticket_id".into()))?;
+    let snapshot_id = req("snapshot_id")?
+        .as_u64()
+        .ok_or_else(|| ToolError::InvalidArguments("ticket.snapshot_id".into()))?;
+    let action_raw = req("action")?
+        .as_str()
+        .ok_or_else(|| ToolError::InvalidArguments("ticket.action".into()))?;
+    let action = match action_raw {
+        "click" => Action::Click,
+        other => {
+            return Err(ToolError::InvalidArguments(format!(
+                "unsupported ticket action `{other}`"
+            )))
+        }
+    };
+    let target_id = RegionId::try_new(
+        req("target_id")?
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("ticket.target_id".into()))?,
+    )
+    .map_err(|_| ToolError::UnknownRegion("ticket.target_id".into()))?;
+    let role_raw = req("target_role")?
+        .as_str()
+        .ok_or_else(|| ToolError::InvalidArguments("ticket.target_role".into()))?;
+    let target_role = Role::parse(role_raw)
+        .ok_or_else(|| ToolError::InvalidArguments(format!("unknown ticket role `{role_raw}`")))?;
+    let target_label = req("target_label")?
+        .as_str()
+        .ok_or_else(|| ToolError::InvalidArguments("ticket.target_label".into()))?
+        .to_owned();
+    let parse_hex = |key: &str| -> Result<u64, ToolError> {
+        let raw = req(key)?
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments(format!("ticket.{key}")))?;
+        u64::from_str_radix(raw, 16)
+            .map_err(|_| ToolError::InvalidArguments(format!("ticket.{key} must be hex")))
+    };
+    Ok(ActionTicket {
+        ticket_id,
+        snapshot_id,
+        action,
+        target_id,
+        target_role,
+        target_label,
+        target_fingerprint: parse_hex("target_fingerprint")?,
+        world_fingerprint: parse_hex("world_fingerprint")?,
+    })
 }
 
 fn verify_text(manifold: &InteractionManifold, text: &str) -> Result<Value, ToolError> {

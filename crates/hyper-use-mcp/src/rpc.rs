@@ -130,7 +130,7 @@ fn initialize_result() -> Value {
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": {"tools": {"listChanged": false}},
         "serverInfo": {"name": "hyper-use", "version": env!("CARGO_PKG_VERSION")},
-        "instructions": "hyper-use is an action firewall: observe, guard, verify. It resolves what an agent is about to interact with, refuses ambiguous or unsafe actions, and verifies state change. It does not click. Browser Use (or another host) acts after Allow. Never guess coordinates. There is no navigate tool."
+        "instructions": "hyper-use is an action firewall: observe, guard, verify. Allow returns an ActionTicket. The host must revalidate that ticket against a fresh observation before clicking the exact target. Hyper-Use never clicks. Never guess coordinates. There is no navigate tool."
     })
 }
 
@@ -162,7 +162,7 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "guard" => (
-            "Decide allow / refuse / escalate for a proposed click against the page as observed now. Never clicks. Pass target (or text), optional role/position, optional within (container id) or near (\"focus\" or region id), optional proposed region id, optional seen_snapshot (the observation the host decided on). Refuses front-layer when the target is behind an open dialog; escalates world-changed when focus, open dialogs, clickable ids, or occluded regions differ from seen_snapshot. Returns decision, evidence, candidates, focused, front_layer, scope.",
+            "Decide allow / refuse / escalate for a proposed click against the page as observed now. Allow includes an ActionTicket the host must revalidate before clicking. Never clicks. Pass target (or text), optional role/position, optional within (container id) or near (\"focus\" or region id), optional proposed region id, optional seen_snapshot (the observation the host decided on). Refuses front-layer when the target is behind an open dialog; escalates world-changed when focus, open dialogs, clickable ids, or occluded regions differ from seen_snapshot. Returns decision, evidence, candidates, focused, front_layer, scope.",
             {
                 let mut props = locate_props();
                 props.insert(
@@ -239,11 +239,23 @@ fn tool_spec(name: &str) -> Value {
             Vec::new(),
         ),
         "verify" => (
-            "Check one postcondition: expect_text appeared, or expect_absent is gone. Does not click and does not plan how to get there.",
+            "Check a postcondition. Snapshot mode: expect_text / expect_absent on a fresh observe. Ticketed delta mode: before_snapshot + after_snapshot (+ optional ticket from Allow) with expect_appeared / expect_disappeared / expect_url_changed / expect_text / expect_absent. Does not click.",
             {
                 let mut props = source_props();
                 props.insert("expect_text".into(), json!({"type": "string"}));
                 props.insert("expect_absent".into(), json!({"type": "string"}));
+                props.insert("expect_appeared".into(), json!({"type": "string"}));
+                props.insert("expect_disappeared".into(), json!({"type": "string"}));
+                props.insert("expect_url_changed".into(), json!({"type": "boolean"}));
+                props.insert("before_snapshot".into(), json!({"type": "integer"}));
+                props.insert("after_snapshot".into(), json!({"type": "integer"}));
+                props.insert(
+                    "ticket".into(),
+                    json!({
+                        "type": "object",
+                        "description": "ActionTicket from GuardDecision::Allow; revalidated against before_snapshot"
+                    }),
+                );
                 props
             },
             Vec::new(),

@@ -1,5 +1,12 @@
 # hyper-use uniform benchmark: results
 
+> **Historical.** These A1–A8 numbers are from the pre-ActionTicket uniform
+> bench (tip around `4ae30d3`). They are **not** proof of the current firewall
+> product. The keep/kill experiment is B0/B1/B2 (`bench/arms/B01.md`): same
+> Browser Use, invisible Hyper-Use interceptor, Weighted only, no JEV/HGRA.
+> HGRA development is frozen until that ablation finishes.
+
+
 Branch: https://github.com/hexuria/hyper-use/tree/bench/uniform. Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Harness: `bench/` (see `bench/README.md`).
 
 **n = 1 run per arm per task** (up to 3 fresh tries, stopping at the first pass). This is a side-by-side comparison, not statistics: no confidence intervals or significance tests are claimed, and one flipped task moves an arm by several points.

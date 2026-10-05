@@ -44,6 +44,12 @@ use typesafe_sdk::{JsonContent, Question};
 
 const MAX_STEPS: usize = 14;
 
+/// After this many consecutive identical ambiguous guard refuses, inject
+/// `within` / `near` choices into the next locate/guard JEV prompts (same
+/// spirit as MCP `REPEAT_THRESHOLD` for locate). The gate still refuses until
+/// the query is scoped — this only widens the option set the harness offers.
+const AMBIGUOUS_SCOPE_THRESHOLD: usize = 2;
+
 struct Task {
     id: &'static str,
     /// Page the fresh tab opens, relative to the site root.
@@ -479,6 +485,155 @@ fn low_confidence_position(
         .map(str::to_owned)
 }
 
+/// JEV choice: (value offered to the model, short about text).
+type JevChoice = (String, String);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AmbiguousStreak {
+    key: String,
+    count: usize,
+}
+
+fn guard_is_ambiguous(guard: &Value) -> bool {
+    matches!(
+        guard["reason"]
+            .as_str()
+            .or_else(|| guard["fallback"].as_str()),
+        Some("ambiguous")
+    )
+}
+
+/// Fingerprint for "identical" ambiguous refuses: top twin pair when present
+/// (order-insensitive), else text/role/proposed from the call args.
+fn ambiguous_refuse_key(guard: &Value, args: &Value) -> Option<String> {
+    if !guard_is_ambiguous(guard) {
+        return None;
+    }
+    let twin: Vec<&str> = guard["candidates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(2)
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    if twin.len() == 2 {
+        let (a, b) = if twin[0] <= twin[1] {
+            (twin[0], twin[1])
+        } else {
+            (twin[1], twin[0])
+        };
+        return Some(format!("twins:{a}|{b}"));
+    }
+    let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    let role = args.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    let proposed = args.get("proposed").and_then(|v| v.as_str()).unwrap_or("");
+    Some(format!("query:{text}|{role}|{proposed}"))
+}
+
+fn note_ambiguous_refuse(streak: &mut Option<AmbiguousStreak>, guard: &Value, args: &Value) {
+    match ambiguous_refuse_key(guard, args) {
+        Some(key) => match streak {
+            Some(s) if s.key == key => s.count = s.count.saturating_add(1),
+            _ => *streak = Some(AmbiguousStreak { key, count: 1 }),
+        },
+        None => *streak = None,
+    }
+}
+
+fn prefers_compose_scope(label: &str, modal: bool) -> bool {
+    let lower = label.to_ascii_lowercase();
+    modal || lower.contains("new message") || lower.contains("compose")
+}
+
+/// `within` / `near` option pairs for the next locate/guard after the ambiguous
+/// streak hits [`AMBIGUOUS_SCOPE_THRESHOLD`]. Prefers front_layer Compose /
+/// "New Message", then twin candidate parents from the observed regions.
+fn ambiguous_scope_options(guard: &Value, regions: &[Value]) -> (Vec<JevChoice>, Vec<JevChoice>) {
+    let mut within = vec![(
+        "none".into(),
+        "omit within (twins stay tied if both still match)".into(),
+    )];
+    let mut near = vec![
+        ("none".into(), "omit near (default ranking)".into()),
+        ("focus".into(), "near the focused region (cursor)".into()),
+    ];
+    let push_unique = |opts: &mut Vec<JevChoice>, id: &str, about: String| {
+        if id.is_empty() || opts.iter().any(|(existing, _)| existing == id) {
+            return;
+        }
+        opts.push((id.to_owned(), about));
+    };
+
+    let mut preferred_within: Vec<JevChoice> = Vec::new();
+    let mut other_within: Vec<JevChoice> = Vec::new();
+    if let Some(layer) = guard["front_layer"].as_array() {
+        for entry in layer {
+            let id = entry["id"].as_str().unwrap_or("");
+            let label = entry["label"].as_str().unwrap_or("");
+            let modal = entry["modal"].as_bool().unwrap_or(false);
+            if id.is_empty() {
+                continue;
+            }
+            let about = format!(
+                "within front_layer \"{label}\" ({id}) — scopes the query to that container"
+            );
+            if prefers_compose_scope(label, modal) {
+                preferred_within.push((id.to_owned(), about.clone()));
+            } else {
+                other_within.push((id.to_owned(), about));
+            }
+            let near_about = format!("near front_layer \"{label}\" ({id})");
+            push_unique(&mut near, id, near_about);
+        }
+    }
+    for (id, about) in preferred_within.into_iter().chain(other_within) {
+        push_unique(&mut within, &id, about);
+    }
+
+    if let Some(cands) = guard["candidates"].as_array() {
+        for cand in cands.iter().take(2) {
+            let cid = cand["id"].as_str().unwrap_or("");
+            let Some(region) = regions.iter().find(|r| r["id"].as_str() == Some(cid)) else {
+                continue;
+            };
+            let Some(parent) = region["parent"].as_str() else {
+                continue;
+            };
+            let parent_label = regions
+                .iter()
+                .find(|r| r["id"].as_str() == Some(parent))
+                .and_then(|r| r["label"].as_str())
+                .unwrap_or(parent);
+            push_unique(
+                &mut within,
+                parent,
+                format!("within parent \"{parent_label}\" of twin candidate {cid}"),
+            );
+            push_unique(
+                &mut near,
+                parent,
+                format!("near parent \"{parent_label}\" of twin candidate {cid}"),
+            );
+            push_unique(
+                &mut near,
+                cid,
+                format!(
+                    "near twin candidate {cid} (\"{}\")",
+                    cand["label"].as_str().unwrap_or("")
+                ),
+            );
+        }
+    }
+
+    (within, near)
+}
+
+fn scope_nudge_active(streak: &Option<AmbiguousStreak>) -> bool {
+    streak
+        .as_ref()
+        .is_some_and(|s| s.count >= AMBIGUOUS_SCOPE_THRESHOLD)
+}
+
 fn position_options(
     zones: &[&str],
     suggested: &[(String, String)],
@@ -608,41 +763,55 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let (mut tool_calls, mut jev_calls) = (0usize, 0usize);
     let mut clicks_executed = 0usize;
     let mut outcome = "max-steps".to_owned();
+    let mut ambiguous_streak: Option<AmbiguousStreak> = None;
 
     for step in 1..=args.max_steps {
+        let nudge = scope_nudge_active(&ambiguous_streak);
+        let mut guidance = vec![
+            "observe lists the page regions; locate ranks regions for a text, role, and position query".into(),
+            "guard decides Allow or Refuse for a click intent (text/role/position); it never clicks".into(),
+            "after Allow this harness clicks the allowed region via CDP; after Refuse do not click — change the query and try again".into(),
+            "verify checks that a quoted string is present on the page after a click".into(),
+            "locate signals repeated_query means this exact query already ran on this unchanged page and will return the same ranking; use a suggested_position it names, or change the text or role".into(),
+            "position is optional: choose none unless you know the target's zone; a wrong zone (for example top on a bottom compose-sheet control) drops confidence and can refuse as low-confidence even when the label ranks first".into(),
+            "when the last guard refused low-confidence and the query had a position, retry with position none before changing the text".into(),
+            "each region has a state: availability enabled or disabled, visibility visible, occluded, offscreen, or hidden".into(),
+            "thread toolbar Archive and quick-reply Send exist only when the thread view is open; do not guard inbox row links or occluded twins to open a thread — this task already starts on the right view when needed".into(),
+            "when two Send buttons are visible (Compose and quick reply), prefer the Compose sheet Send unless the task names the quick reply box".into(),
+            "choose done when the task's check has passed, or give up when it cannot pass".into(),
+        ];
+        if nudge {
+            let count = ambiguous_streak.as_ref().map(|s| s.count).unwrap_or(0);
+            guidance.push(format!(
+                "last guard refused ambiguous {count} times with the same twin/query; the next locate/guard offers within/near — pick within the front_layer Compose/\"New Message\" (or near it) so the twins separate; bare text will keep refusing"
+            ));
+        }
         let state = json!({
             "role": "You drive hyper-use, a browser coprocessor, through MCP tools to do one task. Choose the next call. hyper-use never navigates and never guesses coordinates.",
             "task": task.text,
             "tools": tools,
-            "guidance": [
-                "observe lists the page regions; locate ranks regions for a text, role, and position query",
-                "guard decides Allow or Refuse for a click intent (text/role/position); it never clicks",
-                "after Allow this harness clicks the allowed region via CDP; after Refuse do not click — change the query and try again",
-                "verify checks that a quoted string is present on the page after a click",
-                "locate signals repeated_query means this exact query already ran on this unchanged page and will return the same ranking; use a suggested_position it names, or change the text or role",
-                "position is optional: choose none unless you know the target's zone; a wrong zone (for example top on a bottom compose-sheet control) drops confidence and can refuse as low-confidence even when the label ranks first",
-                "when the last guard refused low-confidence and the query had a position, retry with position none before changing the text",
-                "each region has a state: availability enabled or disabled, visibility visible, occluded, offscreen, or hidden",
-                "thread toolbar Archive and quick-reply Send exist only when the thread view is open; do not guard inbox row links or occluded twins to open a thread — this task already starts on the right view when needed",
-                "when two Send buttons are visible (Compose and quick reply), prefer the Compose sheet Send unless the task names the quick reply box",
-                "choose done when the task's check has passed, or give up when it cannot pass"
-            ],
+            "guidance": guidance,
             "page_regions": regions,
             "last_locate": last_locate,
             "last_guard": last_guard,
             "history": history,
             "step": step,
+            "ambiguous_scope_nudge": nudge,
         });
+        let guard_about = if nudge {
+            "decide Allow/Refuse for a click; on Allow this harness presses via CDP — after repeated ambiguous, pass within/near to scope (Compose/New Message)"
+        } else {
+            "decide Allow/Refuse for a click; on Allow this harness presses via CDP"
+        };
+        let locate_about = if nudge {
+            "rank regions for a text/role/position query (preview; does not click) — after repeated ambiguous, pass within/near to scope"
+        } else {
+            "rank regions for a text/role/position query (preview; does not click)"
+        };
         let mut tool_options: Vec<(String, String)> = vec![
             ("observe".into(), "list the regions on the page".into()),
-            (
-                "locate".into(),
-                "rank regions for a text/role/position query (preview; does not click)".into(),
-            ),
-            (
-                "guard".into(),
-                "decide Allow/Refuse for a click; on Allow this harness presses via CDP".into(),
-            ),
+            ("locate".into(), locate_about.into()),
+            ("guard".into(), guard_about.into()),
         ];
         if !regions.is_empty() {
             tool_options.push((
@@ -792,6 +961,32 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                         arguments["position"] = json!(zone);
                     }
                 }
+
+                // Harness nudge: after N identical ambiguous refuses, offer
+                // within/near so JEV can scope. Guard still refuses until scoped.
+                if nudge {
+                    if let Some(guard) = last_guard.as_ref() {
+                        let (within_opts, near_opts) = ambiguous_scope_options(guard, &regions);
+                        if let Some(within) = ask_arg(
+                            "within",
+                            "Which container should scope this query? Prefer front_layer Compose/New Message after ambiguous twins.",
+                            within_opts,
+                        ) {
+                            if within != "none" {
+                                arguments["within"] = json!(within);
+                            }
+                        }
+                        if let Some(near) = ask_arg(
+                            "near",
+                            "Which anchor should scope this query as near? Prefer the Compose/New Message front_layer after ambiguous twins.",
+                            near_opts,
+                        ) {
+                            if near != "none" {
+                                arguments["near"] = json!(near);
+                            }
+                        }
+                    }
+                }
             }
             "inspect" => match ask_arg(
                 "region",
@@ -841,6 +1036,32 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 ) {
                     if zone != "none" {
                         arguments["position"] = json!(zone);
+                    }
+                }
+
+                // Harness nudge: after N identical ambiguous refuses, offer
+                // within/near so JEV can scope. Guard still refuses until scoped.
+                if nudge {
+                    if let Some(guard) = last_guard.as_ref() {
+                        let (within_opts, near_opts) = ambiguous_scope_options(guard, &regions);
+                        if let Some(within) = ask_arg(
+                            "within",
+                            "Which container should scope this query? Prefer front_layer Compose/New Message after ambiguous twins.",
+                            within_opts,
+                        ) {
+                            if within != "none" {
+                                arguments["within"] = json!(within);
+                            }
+                        }
+                        if let Some(near) = ask_arg(
+                            "near",
+                            "Which anchor should scope this query as near? Prefer the Compose/New Message front_layer after ambiguous twins.",
+                            near_opts,
+                        ) {
+                            if near != "none" {
+                                arguments["near"] = json!(near);
+                            }
+                        }
                     }
                 }
                 // Optional: pin the last locate's top as proposed.
@@ -1000,6 +1221,15 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 }
                 last_guard = Some(guard_body.clone());
                 last_guard_args = Some(arguments.clone());
+                note_ambiguous_refuse(&mut ambiguous_streak, &guard_body, &arguments);
+                if nudge || scope_nudge_active(&ambiguous_streak) {
+                    log.push(json!({
+                        "kind": "ambiguous-scope-nudge",
+                        "step": step,
+                        "streak": ambiguous_streak.as_ref().map(|s| json!({"key": s.key, "count": s.count})),
+                        "active_next": scope_nudge_active(&ambiguous_streak),
+                    }));
+                }
                 // Replace the logged guard body so the transcript shows click outcome
                 // (inspect/observe pushes may follow the guard call).
                 if let Some(entry) = log
@@ -1050,6 +1280,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
         "verified_true": count(&|e| e["tool"] == "verify" && e["body"]["verified"] == true),
         "refuse_reasons": refuse_reasons,
         "refused_ambiguous": count(&|e| e["body"]["fallback"] == "ambiguous" || e["body"]["reason"] == "ambiguous"),
+        "ambiguous_scope_nudge_events": log.lines.iter().filter(|e| e["kind"] == "ambiguous-scope-nudge").count(),
         "refused_low_confidence": count(&|e| e["body"]["fallback"] == "low-confidence" || e["body"]["reason"] == "low-confidence"),
         "refused_proposed_not_top": count(&|e| e["body"]["reason"] == "proposed-not-top" || e["body"]["fallback"] == "proposed-not-top"),
         "no_effect": count(&|e| e["body"]["fallback"] == "no-effect"),
@@ -1151,4 +1382,89 @@ fn main() {
         serde_json::to_string_pretty(&summaries).unwrap(),
     )
     .unwrap();
+}
+
+#[cfg(test)]
+mod ambiguous_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ambiguous_key_uses_sorted_twin_pair() {
+        let guard = json!({
+            "reason": "ambiguous",
+            "fallback": "ambiguous",
+            "candidates": [
+                {"id": "n1013", "label": "Send"},
+                {"id": "n954", "label": "Send"}
+            ]
+        });
+        let args = json!({"text": "Send", "role": "button", "proposed": "n1013"});
+        assert_eq!(
+            ambiguous_refuse_key(&guard, &args).as_deref(),
+            Some("twins:n1013|n954")
+        );
+        // Order of the top two does not reset the streak key.
+        let flipped = json!({
+            "reason": "ambiguous",
+            "candidates": [
+                {"id": "n954", "label": "Send"},
+                {"id": "n1013", "label": "Send"}
+            ]
+        });
+        assert_eq!(
+            ambiguous_refuse_key(&flipped, &args),
+            ambiguous_refuse_key(&guard, &args)
+        );
+    }
+
+    #[test]
+    fn streak_hits_threshold_then_clears_on_allow() {
+        let mut streak = None;
+        let guard = json!({
+            "reason": "ambiguous",
+            "candidates": [{"id": "a"}, {"id": "b"}]
+        });
+        let args = json!({"text": "Send"});
+        note_ambiguous_refuse(&mut streak, &guard, &args);
+        assert!(!scope_nudge_active(&streak));
+        note_ambiguous_refuse(&mut streak, &guard, &args);
+        assert!(scope_nudge_active(&streak));
+        assert_eq!(streak.as_ref().unwrap().count, 2);
+
+        let allow = json!({"decision": "allow", "reason": "ok"});
+        note_ambiguous_refuse(&mut streak, &allow, &args);
+        assert!(streak.is_none());
+        assert!(!scope_nudge_active(&streak));
+    }
+
+    #[test]
+    fn scope_options_prefer_new_message_front_layer() {
+        let guard = json!({
+            "reason": "ambiguous",
+            "front_layer": [
+                {"id": "n900", "label": "Other sheet", "modal": false},
+                {"id": "n968", "label": "New Message", "modal": false}
+            ],
+            "candidates": [
+                {"id": "n1013", "label": "Send"},
+                {"id": "n954", "label": "Send"}
+            ]
+        });
+        let regions = vec![
+            json!({"id": "n1013", "label": "Send", "parent": "n968"}),
+            json!({"id": "n954", "label": "Send", "parent": null}),
+            json!({"id": "n968", "label": "New Message", "parent": null}),
+        ];
+        let (within, near) = ambiguous_scope_options(&guard, &regions);
+        assert_eq!(within[0].0, "none");
+        // New Message preferred ahead of Other sheet.
+        assert_eq!(within[1].0, "n968");
+        assert!(within[1].1.contains("New Message"));
+        assert!(within.iter().any(|(id, _)| id == "n900"));
+        assert!(near
+            .iter()
+            .any(|(id, about)| id == "n968" && about.contains("New Message")));
+        assert_eq!(AMBIGUOUS_SCOPE_THRESHOLD, 2);
+    }
 }

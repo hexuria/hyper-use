@@ -169,7 +169,7 @@ Verification impact
 
 Reason: the server is still one blocking stdin reader. Keeping a session between calls adds ownership but no interleaving; a failed call drops the session and there is no retry, so it is not a recovery protocol and the system model is unaffected. The ring is in memory, so persistence is unaffected.
 Affected invariants: snapshot ids strictly increase and are never reused; an evicted id is an exact error; diff by snapshot ids equals diff by the same fixtures; act with an expectation returns a real state_delta and verified; a failed postcondition is executed true and verified false; act with locate fields refuses when region is not first; the free call_tool keeps no state.
-Tests or proofs updated: history unit test and a 16-case proptest, MCP closed-loop act tests, diff-by-snapshot tests, and a stdio subprocess test. No second formal model.
+Tests or proofs updated: history unit test and a 16-case proptest, MCP closed-loop act tests, diff-by-snapshot tests, and observe_then_diff_by_snapshot_in_one_process. That subprocess checks verified true, added n300, and removed n100 and n200. No second formal model.
 ```
 
 

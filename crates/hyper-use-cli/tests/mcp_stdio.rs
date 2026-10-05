@@ -62,8 +62,9 @@ fn stdio_server_lists_tools_and_locates() {
     assert!(lines[2].contains("Sign in"), "{}", lines[2]);
 }
 
+/// One process: observe, then act with expect_text Welcome, then diff by snapshot id.
 #[test]
-fn observe_then_act_then_diff_by_snapshot_in_one_process() {
+fn observe_then_diff_by_snapshot_in_one_process() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_hyper-use"))
         .arg("mcp")
         .stdin(Stdio::piped())
@@ -101,4 +102,5 @@ fn observe_then_act_then_diff_by_snapshot_in_one_process() {
     assert!(lines[1].contains(r#"\"after_snapshot\":3"#), "{}", lines[1]);
     assert!(!lines[2].contains(r#""isError":true"#), "{}", lines[2]);
     assert!(lines[2].contains(r#"\"added\":[\"n300\"]"#), "{}", lines[2]);
+    assert!(lines[2].contains(r#"\"removed\":[\"n100\",\"n200\"]"#), "{}", lines[2]);
 }

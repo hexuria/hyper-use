@@ -1,5 +1,49 @@
 # Decisions
 
+## Product pivot: browser action firewall (2026-10-05)
+
+Hyper-Use is an independent action-verification layer for browser agents. It
+resolves what an agent is about to interact with, refuses ambiguous or unsafe
+actions, and verifies the resulting state change.
+
+**Discarded alternatives**
+
+- Hyper-Use as a Browser Use / CUA replacement. Uniform bench (`bench/uniform`,
+  PR #2): Luna + Browser Use 91% first-try; Hyper-Use alone 43%; JEV + Hyper-Use
+  30%. The winning combo uses Hyper-Use around Browser Use, not instead of it.
+- Keeping `hyper-use-browser-use`, `hyper-use-cua`, `hyper-use-macos`, and
+  `hyper-use-executor` in the product graph. A8 attaches real Browser Use to
+  Chrome; the Rust replay crates were representations of integrations that the
+  winning arm did not use.
+- Synthetic DOM `this.click()` / coordinate press on the public MCP path. A
+  safety layer must not execute less-realistic clicks than Browser Use
+  (`isTrusted=false` can reach controls a person could not). Actuation leaves
+  Hyper-Use; `GuardDecision` is the product output.
+- Shipping HGRA / `hyper-use-hyper` on the default path. It has not been shown
+  to beat `WeightedMatcher`. Quarantined under `experiments/hgra/`.
+- Implementing typing / select / scroll inside Hyper-Use. Browser Use already
+  does those; adding them recreates a worse Browser Use.
+
+**Accepted downsides**
+
+- Hosts must perform the click themselves after `Allow`. Hyper-Use alone cannot
+  finish a press-only task end-to-end.
+- Bench arms A5–A8 that drove MCP `act` must move to `guard` + host actuation
+  (or stay on `bench/uniform` as historical evidence).
+- Removing executor crates breaks the old `--executor browser-use|cua` CLI/MCP
+  surface. That is intentional.
+- Contextual row/card/dialog resolution moves from `bench/arms/combo.py` into
+  Rust; until that lands, look-alike rows still need host-supplied context or
+  escalation.
+
+**Act / press status**
+
+`BrowserSession::press` and MCP/CLI `act` that click are going away from the
+product path. Prefer `guard` → host acts → `verify`. Any remaining press in
+browser fixtures is internal / transitional, not the public contract.
+
+---
+
 ## Product name
 
 The technique may be discussed as HGRA. The shipped product, crates, binary,

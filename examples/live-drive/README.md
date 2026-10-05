@@ -69,6 +69,12 @@ guard decision, and a history of call summaries. When the last locate carried
 position would pick. The option order does not change, and the harness does
 not pick for JEV.
 
+After **two consecutive identical ambiguous** guard refuses (same twin pair or
+same text/role/proposed), the harness injects `within` / `near` choices into
+the next locate/guard prompts, preferring a front_layer Compose / "New
+Message" container. The gate still refuses until the query is scoped — this
+is a harness nudge only, not a product change.
+
 ## Built-in Acme tasks
 
 | id | start | notes |

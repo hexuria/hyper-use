@@ -4,17 +4,28 @@
 //! a throwaway Chrome and sets `HYPER_USE_LIVE_CDP` + `HYPER_USE_LIVE_SITE`.
 //! Tests must run with `--test-threads=1` so they share one tab without racing.
 //! No JEV, no Luna: observe → guard only.
+//! Rank traces: `RUST_LOG=hyper_use_resonance=debug`.
 
 use std::thread;
 use std::time::Duration;
 
 use hyper_use_browser::{BrowserSession, CdpTransport, WebSocketTransport};
-use hyper_use_core::{LocateQuery, Role};
+use hyper_use_core::{InteractionManifold, LocateQuery, Role};
 use hyper_use_guard::{
-    blocker, guard, with_front_layer, FrontLayer, GuardDecision, GuardReason, GuardRequest,
+    blocker, guard, guard_with, with_front_layer, FrontLayer, GuardDecision, GuardError,
+    GuardReason, GuardRequest,
 };
+#[cfg(feature = "hgra")]
+use hyper_use_resonance::HgraMatcher;
 use hyper_use_resonance::RegionState;
 use serde_json::json;
+
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
+}
 
 fn cdp() -> String {
     std::env::var("HYPER_USE_LIVE_CDP")
@@ -27,6 +38,7 @@ fn site() -> String {
 }
 
 fn session_for(path: &str) -> BrowserSession<WebSocketTransport> {
+    init_tracing();
     let url = format!("{}{}", site().trim_end_matches('/'), path);
     let transport = WebSocketTransport::connect(&cdp()).expect("connect live Chrome");
     let mut session = BrowserSession::new(transport);
@@ -73,6 +85,32 @@ fn find_ids_by_label(session: &BrowserSession<WebSocketTransport>, label: &str) 
         .collect()
 }
 
+
+/// Rank+decide with the matcher selected by `HYPER_USE_MATCHER` (default weighted).
+/// Set `HYPER_USE_MATCHER=hgra` and build with `--features hgra` for forced-HGRA remasure.
+fn decide(
+    manifold: &InteractionManifold,
+    request: &GuardRequest,
+) -> Result<GuardDecision, GuardError> {
+    let matcher = std::env::var("HYPER_USE_MATCHER").unwrap_or_else(|_| "weighted".into());
+    match matcher.as_str() {
+        "weighted" | "" => guard(manifold, request),
+        "hgra" => {
+            #[cfg(feature = "hgra")]
+            {
+                eprintln!("matcher=hgra");
+                guard_with(manifold, request, &HgraMatcher::default())
+            }
+            #[cfg(not(feature = "hgra"))]
+            {
+                let _ = (manifold, request);
+                panic!("HYPER_USE_MATCHER=hgra requires cargo --features hgra");
+            }
+        }
+        other => panic!("unknown HYPER_USE_MATCHER={other} (want weighted|hgra)"),
+    }
+}
+
 fn dump_regions(session: &BrowserSession<WebSocketTransport>) -> String {
     let manifold = session.manifold().expect("observed");
     manifold
@@ -96,7 +134,7 @@ fn live_modal_confirm_refuses_buried_delete_and_allows_dialog_cancel() {
         dump_regions(&session)
     );
 
-    let buried = guard(
+    let buried = decide(
         &manifold,
         &GuardRequest::click(
             LocateQuery::new()
@@ -116,7 +154,7 @@ fn live_modal_confirm_refuses_buried_delete_and_allows_dialog_cancel() {
         }
     }
 
-    let twin = guard(
+    let twin = decide(
         &manifold,
         &GuardRequest::click(
             LocateQuery::new()
@@ -162,7 +200,7 @@ fn live_twin_suspend_near_focus_picks_beta_row() {
         focused_region.label()
     );
 
-    let bare = guard(
+    let bare = decide(
         &manifold,
         &GuardRequest::click(
             LocateQuery::new()
@@ -180,7 +218,7 @@ fn live_twin_suspend_near_focus_picks_beta_row() {
         other => panic!("expected escalate ambiguous without context, got {other:?}"),
     }
 
-    let focused_guard = guard(
+    let focused_guard = decide(
         &manifold,
         &GuardRequest::click(
             LocateQuery::new()
@@ -239,7 +277,7 @@ fn live_cookie_backdrop_hit_test_refuses_save() {
         dump_regions(&session)
     );
 
-    let decision = guard(
+    let decision = decide(
         &manifold,
         &GuardRequest::click(LocateQuery::new().text("Save").unwrap().role(Role::Button)),
     )
@@ -252,7 +290,7 @@ fn live_cookie_backdrop_hit_test_refuses_save() {
         other => panic!("expected refuse occluded/front-layer for Save, got {other:?}"),
     }
 
-    let accept = guard(
+    let accept = decide(
         &manifold,
         &GuardRequest::click(
             LocateQuery::new()

@@ -116,3 +116,11 @@ Evidence: `hgra_query_vector_encodes_within_as_parent_channel` and
 `hgra_near_encodes_resolved_scope_into_the_query_vector` on
 `fixtures/twin-suspend-rows.manifold`. The 5-case `hgra_remeasure` corpus is
 unchanged (no ancestry on those pages).
+
+## Rank traces
+
+```sh
+RUST_LOG=hyper_use_resonance=debug cargo test -p hyper-use-resonance --features hgra -- --nocapture
+```
+
+Target `hyper_use_resonance::rank` logs per-candidate score parts and the post-sort top/margin.

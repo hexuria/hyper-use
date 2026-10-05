@@ -19,6 +19,21 @@ graph is a bug.
 > ActionTicket + host interceptor (B0/B1) remain a valid ablation until the
 > agent fully owns execution.
 
+## Primary API (agent runtime)
+
+```rust
+use hyper_use_agent::AgentBuilder;
+use hyper_use_policy::PuaPolicy;
+
+let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    .max_steps(60)
+    .build("Click Sign in");
+let outcome = agent.run();
+```
+
+PUA decides among finite ActionSpace candidates. Guard + ActionTicket bind
+execution. MCP is an optional adapter, not required to run the loop.
+
 ## Product loop
 
 ```text

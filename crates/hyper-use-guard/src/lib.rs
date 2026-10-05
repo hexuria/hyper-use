@@ -43,7 +43,10 @@ use hyper_use_resonance::{
 pub use hyper_use_protocol::{
     ActionTicket, GuardCandidate, GuardDecision, GuardEvidence, GuardReason, TicketInvalid,
 };
-pub use ticket::{consume_ticket, issue_ticket, revalidate, world_fingerprint, ConsumeError};
+pub use ticket::{
+    consume_ticket, consume_ticket_once, issue_ticket, revalidate, world_fingerprint, ConsumeError,
+    TicketLedger,
+};
 pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
 
 /// Raw confidence below this never allows. Not a probability.

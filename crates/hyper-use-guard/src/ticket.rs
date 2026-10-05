@@ -133,6 +133,50 @@ impl<E: std::error::Error + 'static> std::error::Error for ConsumeError<E> {
     }
 }
 
+/// Tracks one-shot consumption of ticket ids for a single agent/executor session.
+#[derive(Clone, Debug, Default)]
+pub struct TicketLedger {
+    consumed: std::collections::BTreeSet<u64>,
+}
+
+impl TicketLedger {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_consumed(&self, ticket_id: u64) -> bool {
+        self.consumed.contains(&ticket_id)
+    }
+
+    pub fn mark_consumed(&mut self, ticket_id: u64) -> Result<(), TicketInvalid> {
+        if !self.consumed.insert(ticket_id) {
+            return Err(TicketInvalid::TicketConsumed);
+        }
+        Ok(())
+    }
+}
+
+/// Revalidate, ensure the ticket was not already consumed, invoke `press` for the
+/// **exact** ticket target/action, then mark the ticket consumed (even if press
+/// fails after starting — callers that need retry must issue a new ticket).
+pub fn consume_ticket_once<E>(
+    ledger: &mut TicketLedger,
+    ticket: &ActionTicket,
+    manifold: &InteractionManifold,
+    focused: Option<RegionId>,
+    mut press: impl FnMut(&RegionId, Action) -> Result<(), E>,
+) -> Result<(), ConsumeError<E>> {
+    if ledger.is_consumed(ticket.ticket_id) {
+        return Err(ConsumeError::Invalid(TicketInvalid::TicketConsumed));
+    }
+    revalidate(ticket, manifold, focused).map_err(ConsumeError::Invalid)?;
+    press(&ticket.target_id, ticket.action).map_err(ConsumeError::Press)?;
+    ledger
+        .mark_consumed(ticket.ticket_id)
+        .map_err(ConsumeError::Invalid)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use hyper_use_core::{
@@ -226,6 +270,55 @@ mod tests {
         assert_eq!(
             pressed,
             Some((RegionId::try_new("ok").unwrap(), Action::Click))
+        );
+    }
+
+    #[test]
+    fn consume_ticket_once_refuses_second_press() {
+        let m = manifold(vec![button("ok", "Sign in", 100.0)]);
+        let decision = guard(
+            &m,
+            &GuardRequest::click(LocateQuery::new().text("Sign in").unwrap()),
+        )
+        .unwrap();
+        let GuardDecision::Allow { ticket, .. } = decision else {
+            panic!("expected allow");
+        };
+        let mut ledger = TicketLedger::new();
+        let mut presses = 0u32;
+        consume_ticket_once(&mut ledger, &ticket, &m, None, |_id, _action| {
+            presses += 1;
+            Ok::<(), GuardReason>(())
+        })
+        .unwrap();
+        assert_eq!(presses, 1);
+        let err = consume_ticket_once(&mut ledger, &ticket, &m, None, |_id, _action| {
+            presses += 1;
+            Ok::<(), GuardReason>(())
+        })
+        .unwrap_err();
+        match err {
+            ConsumeError::Invalid(TicketInvalid::TicketConsumed) => {}
+            other => panic!("expected TicketConsumed, got {other}"),
+        }
+        assert_eq!(presses, 1);
+    }
+
+    #[test]
+    fn revalidate_fails_when_target_label_changes() {
+        let before = manifold(vec![button("ok", "Sign in", 100.0)]);
+        let decision = guard(
+            &before,
+            &GuardRequest::click(LocateQuery::new().text("Sign in").unwrap()),
+        )
+        .unwrap();
+        let GuardDecision::Allow { ticket, .. } = decision else {
+            panic!("expected allow");
+        };
+        let after = manifold(vec![button("ok", "Sign out", 100.0)]);
+        assert_eq!(
+            revalidate(&ticket, &after, None),
+            Err(TicketInvalid::TargetChanged)
         );
     }
 }

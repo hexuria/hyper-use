@@ -52,6 +52,10 @@ pub enum TicketInvalid {
     TargetGone,
     /// The target is present but role/label/fingerprint no longer match.
     TargetChanged,
+    /// This ticket_id was already consumed (one-shot).
+    TicketConsumed,
+    /// Executor was asked to press a different target/action than the ticket.
+    TicketMismatch,
 }
 
 impl TicketInvalid {
@@ -60,6 +64,8 @@ impl TicketInvalid {
             Self::WorldChanged => "world-changed",
             Self::TargetGone => "target-gone",
             Self::TargetChanged => "target-changed",
+            Self::TicketConsumed => "ticket-consumed",
+            Self::TicketMismatch => "ticket-mismatch",
         }
     }
 }

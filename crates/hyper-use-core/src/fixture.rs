@@ -129,6 +129,9 @@ fn format_flags(flags: RegionFlags) -> String {
     if flags.detached() {
         names.push("detached");
     }
+    if flags.modal() {
+        names.push("modal");
+    }
     names.join(",")
 }
 

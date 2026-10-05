@@ -309,3 +309,29 @@ Reason: the stale flag is one bool on a single-threaded session, set by press an
 Affected invariants: after a press the stored observation is not reused as an act's before; an unknown page state never reports url_changed or title_changed and never yields NoEffect; act state_delta carries title_changed; two DOM nodes with one backend are still DuplicateRegion.
 Tests or proofs updated: press_marks_the_observation_stale_and_observe_clears_it, stale_before_is_not_reused_after_a_press_without_observe_after, unknown_on_either_side_is_never_a_change_and_never_known, unknown_page_state_is_never_no_effect, two_ax_nodes_with_one_backend_id_stay_separate, loop_window_is_exactly_four_snapshots_before_after, structured_cdp_pages_observe_with_unique_ids (16 cases). No second formal model.
 ```
+
+## Mock environment and the later live drive
+
+`crates/hyper-use-mcp/tests/mock_env.rs` drives one `Server` through `call_tool` over `cdp` endpoints opened by `Server::with_connector`, which hands back a logged `ReplayTransport` built with `ScriptBuilder`. `crates/hyper-use-cli/tests/mcp_stdio_mock.rs` drives the real `hyper-use mcp` child line by line. Neither starts Chrome, opens a socket, or needs a key.
+
+The mock environment owns: the six-verb caller flow and its JSON shapes; whether a press happened (CDP call log); session reuse, the stale flag, reconnect after a dropped session, and the LRU cap; the raw gate and margin refusals; ring diff and eviction; NoEffect and signals as data; unknown page state. It does not own real Chrome response shapes or timing, real page behaviour after a click, websocket failures, or whether an agent picks good queries. A live JEV + Claude drive (not started; needs explicit approval and a key) would own those, and it is not a benchmark of Browser Use or CUA.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[ ] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: the connector only changes how a transport is opened; the server is still one blocking reader with no retry. Scripts are replay fixtures, not crash recovery.
+Affected invariants: Server::new still connects with WebSocketTransport; with_connector is the only seam; a mock tab is a ReplayTransport, so a missing step is NoScriptedResponse and fails the call rather than inventing a click.
+Tests or proofs updated: ten mock_env tests and an_mcp_client_drives_the_closed_loop_over_stdio. Reverting the stale-observation or unknown-page fix fails two of them. No second model of Chrome.
+```

@@ -846,3 +846,53 @@ Downside accepted: a new advisory can fail CI with no code change. That is the
 point.
 
 Verifier: the `deny` CI job. Local run on 2026-10-05: `advisories ok`.
+
+## Mock environment before any live drive
+
+Status: 2026-10-05.
+
+Unit tests check one function at a time. They did not catch the stale
+`before` or the empty-URL false delta, because both only show up across
+calls. The mock environment runs caller flows across calls on one `Server`.
+
+`Server::with_connector` takes `FnMut(&str) -> Result<Box<dyn CdpTransport>,
+CdpError>`. `Server::new` passes `WebSocketTransport::connect`, so the stdio
+binary is unchanged. `Box<T: CdpTransport>` implements `CdpTransport`. Tests
+pass a connector that returns a `ReplayTransport` from `ScriptBuilder`,
+wrapped to log each CDP method. `Server::live_sessions` exposes the kept
+endpoints, oldest first.
+
+What the mock environment owns:
+
+- the observe, locate, inspect, act, diff, verify flow, with each call built
+  from the previous reply, as a caller would;
+- whether a press happened, from the CDP call log;
+- session reuse, the stale flag, reconnect after a dropped session, and the
+  four-session LRU cap;
+- the raw 0.55 gate, the 0.05 margin, and caller `runner_up`;
+- ring diff, eviction, NoEffect, and no-op signals as data;
+- unknown page history.
+
+What it does not own, and a later live JEV + Claude drive would:
+
+- Chrome's real response shapes, ordering, and timing;
+- what a real page does after a click (navigation, re-render, async load);
+- websocket failures, slow or hung sockets (no timeout exists yet);
+- whether an agent driving the tool picks good queries and reads refusals
+  correctly.
+
+The live drive needs a JEV API key and an approved run. It has not started.
+It is not a benchmark of Browser Use or CUA, and no success rate is claimed
+from the mock suite.
+
+Downside accepted: a script emits only what the extractors read, in the order
+the code calls. If Chrome changes a shape, the mock still passes. That is the
+live drive's job.
+
+Verifiers: the ten tests in `crates/hyper-use-mcp/tests/mock_env.rs` and
+`an_mcp_client_drives_the_closed_loop_over_stdio` in
+`crates/hyper-use-cli/tests/mcp_stdio_mock.rs`. Reverting the
+stale-observation fix fails
+`act_without_observe_after_then_next_act_does_not_reuse_stale_before`;
+reverting the unknown-page fix fails
+`page_history_failure_is_unknown_not_a_false_delta`.

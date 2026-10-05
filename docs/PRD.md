@@ -62,7 +62,7 @@ next turn (or DONE / BLOCKED)
 | **Hyper-Use policy** | WHAT browser evidence each candidate gets; ActionSpace construction |
 | **Hyper-Use guard** | Physical/logical executability; ticket issue |
 | **Hyper-Use executor** | Exact ticketed action or nothing |
-| **TextResolver** | Arbitrary `TYPE_TEXT` strings (not PUA) |
+| **TextResolver** | Arbitrary `TYPE_TEXT` strings (not PUA); optional goal-grounded model resolver behind `model-text` (ADR 0006) |
 | **Host / MCP** | Optional adapter; must not bypass tickets |
 
 ## What Hyper-Use deliberately does not do

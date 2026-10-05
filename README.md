@@ -51,6 +51,15 @@ cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
+Optional model payloads (feature `model-text`, ADR 0006): PUA still picks the
+target; a model only extracts a TYPE_TEXT / SELECT value that must occur in the
+goal, else deterministic fallback, else abstain. Tests use scripted models.
+
+```bash
+cargo run -p hyper-use-cli --features model-text -- run --cdp http://127.0.0.1:9222 \
+  --goal "type rust ownership in the Search box" --text-model-cmd ./my-text-model.sh
+```
+
 ```rust
 let mut agent = AgentBuilder::new(BrowserSession::new(transport), PuaPolicy::default())
     .max_steps(20)

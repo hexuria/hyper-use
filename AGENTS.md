@@ -59,6 +59,11 @@ crate.
 >    ticket is consumed, so executor revalidation always runs after resolver
 >    latency. Payloads are CDP arguments, never spliced into script source;
 >    there is no coordinate tier for text.
+> 7a. **Model text is payload-only and grounded** (feature `model-text`,
+>    ADR 0006). The model fills the payload of an action PUA already chose;
+>    replies must echo the context fingerprint, pass shape checks, and occur
+>    in the goal clause, else deterministic fallback, else abstain. CI uses
+>    scripted models only; no provider SDK or key handling in the tree.
 > 8. **Remote escalation is explicit and closed.** Feature `remote`;
 >    reply is exactly a choice id + kind from the offered menu or abstain.
 >    Selectors, coordinates, scripts, extra fields → hard error.
@@ -81,7 +86,7 @@ crate.
 | `hyper-use-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
 | `hyper-use-observe` | Observation history and id diff |
 | `hyper-use-geometry` | Geometry helpers |
-| `hyper-use-policy` | `BrowserPolicy`, `PuaPolicy` (pinned `hexuria/pua` rev), `TextResolver`, `RemotePolicy` (feature `remote`), multi-step clause split |
+| `hyper-use-policy` | `BrowserPolicy`, `PuaPolicy` (pinned `hexuria/pua` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
 | `hyper-use-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
 | `hyper-use-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
 | `hyper-use-protocol` | Guard / ticket / verify wire types |

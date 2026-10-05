@@ -4,12 +4,19 @@
 //! hyper-use run --goal <text> --cdp [url] [--url <page>] [--max-steps N]
 //! hyper-use run --goal <text> --fixture <replay.cdp.json>   # full loop over a CDP replay
 //! hyper-use run --goal <text> --fixture <page.manifold>     # predict only (dry run)
+//! hyper-use run ... --text-model-cmd <program>   # feature `model-text`: model TYPE/SELECT payloads
 //! ```
 //!
 //! Live mode drives the attached Chrome page: observe → PUA → gate → ticket →
 //! executor (revalidate + consume) → input → observe → verify, until DONE,
 //! BLOCKED, abstain, or a bound. No LLM and no MCP are involved; PUA abstains
 //! rather than guessing.
+//!
+//! `--text-model-cmd` (built with `--features model-text`) only changes where
+//! TYPE_TEXT / SELECT *payloads* come from: a user program speaking the
+//! `CommandTextModel` JSON line protocol. Replies are context-bound and
+//! grounded in the goal; refused replies fall back to the deterministic
+//! resolver, then abstain. The program owns any API keys.
 
 use hyper_use_agent::{Agent, AgentBuilder, AgentOutcome, BrowserRuntime, MockBrowser};
 use hyper_use_browser::{BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
@@ -24,6 +31,7 @@ struct RunArgs {
     url: Option<String>,
     fixture: Option<String>,
     max_steps: u32,
+    text_model_cmd: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<RunArgs, CliError> {
@@ -32,6 +40,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
     let mut url = None;
     let mut fixture = None;
     let mut max_steps = None;
+    let mut text_model_cmd = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -53,6 +62,11 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
             "--goal" => set(&mut goal, "--goal", value("--goal")?)?,
             "--url" => set(&mut url, "--url", value("--url")?)?,
             "--fixture" => set(&mut fixture, "--fixture", value("--fixture")?)?,
+            "--text-model-cmd" => set(
+                &mut text_model_cmd,
+                "--text-model-cmd",
+                value("--text-model-cmd")?,
+            )?,
             "--max-steps" => {
                 let raw = value("--max-steps")?;
                 let n: u32 = raw.parse().map_err(|_| CliError::BadNumber {
@@ -97,6 +111,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         url,
         fixture,
         max_steps: max_steps.unwrap_or(20),
+        text_model_cmd,
     })
 }
 
@@ -158,11 +173,51 @@ pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
 }
 
 fn drive<T: CdpTransport>(session: BrowserSession<T>, args: &RunArgs) -> Result<String, CliError> {
-    let mut agent = AgentBuilder::new(session, PuaPolicy::default())
-        .max_steps(args.max_steps)
-        .build(args.goal.clone());
+    let builder = AgentBuilder::new(session, PuaPolicy::default()).max_steps(args.max_steps);
+    if let Some(program) = args.text_model_cmd.as_deref() {
+        return drive_model_text(builder, program, args);
+    }
+    let mut agent = builder.build(args.goal.clone());
     let outcome = agent.run();
     render(&agent, &outcome)
+}
+
+#[cfg(feature = "model-text")]
+fn drive_model_text<B: BrowserRuntime>(
+    builder: AgentBuilder<B, PuaPolicy>,
+    program: &str,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let mut agent = builder
+        .model_text(hyper_use_policy::CommandTextModel::new(program))
+        .build(args.goal.clone());
+    let outcome = agent.run();
+    let mut out = format!(
+        "text resolver model (command) calls={}\n",
+        agent.text_resolver().model_calls()
+    );
+    match render(&agent, &outcome) {
+        Ok(rendered) => {
+            out.push_str(&rendered);
+            Ok(out)
+        }
+        Err(CliError::Agent(rendered)) => {
+            out.push_str(&rendered);
+            Err(CliError::Agent(out))
+        }
+        Err(other) => Err(other),
+    }
+}
+
+#[cfg(not(feature = "model-text"))]
+fn drive_model_text<B: BrowserRuntime>(
+    _builder: AgentBuilder<B, PuaPolicy>,
+    _program: &str,
+    _args: &RunArgs,
+) -> Result<String, CliError> {
+    Err(CliError::UnknownFlag(
+        "--text-model-cmd requires building with --features model-text".into(),
+    ))
 }
 
 fn render<B, P, T>(agent: &Agent<B, P, T>, outcome: &AgentOutcome) -> Result<String, CliError>
@@ -253,6 +308,60 @@ mod tests {
             path.to_str().unwrap(),
         ]))
         .unwrap();
+        assert!(out.contains("TYPE_TEXT:"), "{out}");
+        assert!(out.contains("-> success"), "{out}");
+        assert!(out.contains("outcome done"), "{out}");
+    }
+
+    #[cfg(not(feature = "model-text"))]
+    #[test]
+    fn text_model_cmd_requires_feature() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/agent-type-search.cdp.json");
+        let err = run_command(&a(&[
+            "--goal",
+            "type rust in the Search box",
+            "--fixture",
+            path.to_str().unwrap(),
+            "--text-model-cmd",
+            "/nonexistent",
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, CliError::UnknownFlag(ref m) if m.contains("model-text")),
+            "{err:?}"
+        );
+    }
+
+    /// Full replay loop with a local scripted model command (no network).
+    #[cfg(all(feature = "model-text", unix))]
+    #[test]
+    fn text_model_cmd_drives_replay_loop() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let fixture = root.join("agent-type-search.cdp.json");
+        let dir = std::env::temp_dir().join(format!("hu-run-model-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("model.sh");
+        std::fs::write(
+            &model,
+            "#!/bin/sh\nread -r line\nfp=$(printf '%s' \"$line\" | sed 's/.*\"context_fingerprint\":\\([0-9]*\\).*/\\1/')\nprintf '{\"text\":\"rust\",\"context_fingerprint\":%s}\\n' \"$fp\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&model, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = run_command(&a(&[
+            "--goal",
+            "type rust in the Search box",
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "--text-model-cmd",
+            model.to_str().unwrap(),
+        ]))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(
+            out.contains("text resolver model (command) calls=1"),
+            "{out}"
+        );
         assert!(out.contains("TYPE_TEXT:"), "{out}");
         assert!(out.contains("-> success"), "{out}");
         assert!(out.contains("outcome done"), "{out}");

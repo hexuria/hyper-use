@@ -102,6 +102,12 @@ browser; it measures nothing.
 | page changes during text resolution | `adversarial` | stale, nothing typed |
 | readonly / rejected input | `adversarial`, `replay_cdp` | `InputRejected`, ticket consumed, nothing typed |
 | unresolvable TYPE_TEXT value | `adversarial` | failed, nothing typed |
+| `model-text`: goal-grounded model payload (type / select) | `model_text` (agent), policy unit | typed / selected via ticket, verified |
+| `model-text`: invented / multiline / label-echo / empty / too-long reply | `model_text`, policy unit | refused; fallback or abstain, nothing typed |
+| `model-text`: reply bound to stale context fingerprint | `model_text`, policy unit | refused; abstain, nothing typed |
+| `model-text`: model outage | `model_text`, policy unit | deterministic fallback, else abstain |
+| `model-text`: page moves during model call | `model_text` | ticket stale, nothing typed; model re-asked with new fingerprint |
+| `model-text`: feature off / default builder | `model_text`, CLI unit | deterministic resolver; `--text-model-cmd` refused |
 | wrong effect (page mangles value) | `adversarial` | `wrong-effect` ×3 → blocked |
 | repeated no-effect click | `adversarial` | bounded → blocked |
 | page never settles | `adversarial` | stale bound → failed, no input |
@@ -122,8 +128,32 @@ prediction and execution on a live page.
 - Multi-step is **only** plain `then` / `and then` outside quotes
   (`split_sequential_clauses`). No branching, conditionals, or LLM planner.
   Each clause remains one PUA single-intent.
-- `model-text` TextResolver is still a feature name only; deterministic
-  resolver handles quoted / `type X into` / `fill X with` forms.
+- `model-text` TextResolver ([ADR 0006](adr/0006-model-text-resolver.md)) is
+  tested offline only, with `ScriptedTextModel` and a local `sh` command
+  model. No live LLM numbers are claimed. Values must be grounded in the goal
+  clause (extraction, not generation); SELECT is grounded in the goal, not in
+  the page's option list (the manifold has no options yet). Default remains
+  `DeterministicTextResolver` (quoted / `type X into` / `fill X with`).
+
+### Enabling model-text (optional, live LLM not required)
+
+```bash
+# Offline tests (what CI runs; scripted models, no network, no keys)
+cargo test -p hyper-use-policy -p hyper-use-agent -p hyper-use-cli \
+  --features hyper-use-policy/model-text,hyper-use-agent/model-text,hyper-use-cli/model-text
+
+# Live: plug any model in via a program you own (it holds its own API key)
+cargo run -p hyper-use-cli --features model-text -- run \
+  --cdp http://127.0.0.1:9222 --goal "type rust ownership in the Search box" \
+  --text-model-cmd ./my-text-model.sh
+```
+
+The program reads one JSON line
+`{"goal","field_label","field_role","context_fingerprint","max_chars"}` on
+stdin and prints `{"text":"…","context_fingerprint":<same number>}` or
+`{"declined":"reason"}`. Library: `AgentBuilder::model_text(model)` with any
+`TextModel`, or `.text_resolver(ModelTextResolver::new(m).without_fallback())`
+to abstain instead of falling back.
 - iframes / shadow DOM / virtualized lists / autocomplete are not covered.
 - MCP `guard` still uses the float `0.55` / `0.05` ranking gate for host
   preflight (A5/A6 / combo benches). Agent path uses hard `gate` only.

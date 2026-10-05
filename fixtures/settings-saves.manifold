@@ -1,0 +1,8 @@
+# hyper-use manifold fixture v1
+# Acme Mail settings: two "Save" buttons with the same role and label. The
+# vacation one is disabled (no changes), the signature one is enabled. A
+# third sits below the fold. Only the region state tells them apart.
+viewport w=1280 h=800
+region id=a-save-vacation role=button label="Save" x=344 y=262 w=80 h=36 actions=click sources=dom,accessibility flags=disabled
+region id=b-save-footer role=button label="Save" x=344 y=1400 w=80 h=36 actions=click sources=dom,accessibility
+region id=z-save-signature role=button label="Save" x=344 y=446 w=80 h=36 actions=click sources=dom,accessibility

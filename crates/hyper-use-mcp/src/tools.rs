@@ -7,7 +7,9 @@
 //! Every observation is recorded in the server's snapshot ring and its id is
 //! returned as `snapshot`. `act` observes before, presses, and (when asked, or
 //! on a live session) observes after, diffs, and verifies in the same call.
-//! `signals` reports a signature no-op or a loop. It does not retry.
+//! `signals` reports a signature no-op or a loop. It does not retry. On
+//! `locate`, `signals` carries `repeated_query` when the same normalized query
+//! already ran on the same page signature; that does not refuse or retry.
 
 use std::fs;
 use std::path::Path;
@@ -18,7 +20,8 @@ use hyper_use_browser::{
     ReplayTransport, VerifyError,
 };
 use hyper_use_core::{
-    parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
+    parse_fixture, Action, InteractionManifold, InteractionRegion, LocateQuery, RegionId, Role,
+    Zone,
 };
 use hyper_use_executor::{
     gate_confidence, select_act_executor, ActConfidence, ActionExecutor, ActionRequest,
@@ -32,13 +35,21 @@ use hyper_use_observe::{
     ManifoldDiff,
 };
 use hyper_use_protocol::{FallbackReason, MatcherConfidence, ProtocolError, StateDelta};
-use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
+use hyper_use_resonance::{
+    separating_zone, HgraMatcher, Match, RegionMatcher, RegionState, ResonanceModel,
+    WeightedMatcher,
+};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
+use crate::repeat::{QueryKey, REPEAT_THRESHOLD};
 use crate::server::Server;
 
 const PRODUCT: &str = "hyper-use";
+
+// A text miss is clamped below the act gate, so a scored act on a region whose
+// label shares no token with the query text cannot execute.
+const _: () = assert!(hyper_use_resonance::TEXT_MISS_CAP < hyper_use_executor::MIN_ACT_CONFIDENCE);
 
 enum Origin {
     Fixture(String),
@@ -101,6 +112,7 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
                 "id": region.id().as_str(),
                 "role": region.role().as_str(),
                 "label": region.label(),
+                "state": state_json(&manifold, region),
             })
         })
         .collect();
@@ -121,13 +133,16 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
 }
 
 fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let origin = resolve_origin(arguments)?;
+    let (snapshot, manifold, _page) = observe_origin(server, &origin)?;
     let query = build_query(arguments)?;
     let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
         return Err(ToolError::DimsRequireHgra);
     }
     let ranked = rank(&manifold, &query, matcher_name, arguments)?;
+    let key = QueryKey::new(&query, matcher_name, opt_u64(arguments, "dims")?);
+    let count = server.record_locate(&origin_key(&origin), &manifold, key);
     let top = ranked.first();
     let target = match top {
         Some(candidate) => target_of(&manifold, candidate.id()),
@@ -151,7 +166,38 @@ fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     insert(&mut body, "benchmark", json!(false));
     insert(&mut body, "candidates", candidates_of(&manifold, &ranked));
     insert(&mut body, "snapshot", json!(snapshot.get()));
+    let signals = if count >= REPEAT_THRESHOLD {
+        vec![repeated_query_json(&manifold, &ranked, count)]
+    } else {
+        Vec::new()
+    };
+    insert(&mut body, "signals", Value::Array(signals));
     Ok(body)
+}
+
+/// `repeated_query`: this exact query already ran on this exact page state.
+/// Names the top and runner-up, each with a position zone that separates it
+/// from the other (or null). Data only. The ranking above is unchanged.
+fn repeated_query_json(manifold: &InteractionManifold, ranked: &[Match], count: usize) -> Value {
+    let rect = |candidate: &Match| manifold.get(candidate.id()).map(|region| region.rect());
+    let hint = |candidate: &Match, other: Option<&Match>| {
+        let zone = match (rect(candidate), other.and_then(rect)) {
+            (Some(own), Some(theirs)) => separating_zone(manifold.viewport(), own, theirs),
+            _ => None,
+        };
+        json!({
+            "id": candidate.id().as_str(),
+            "suggested_position": zone.map(|zone| zone.as_str()),
+        })
+    };
+    let top = ranked.first();
+    let runner_up = ranked.get(1);
+    json!({
+        "kind": "repeated_query",
+        "count": count,
+        "top": top.map_or(Value::Null, |top| hint(top, runner_up)),
+        "runner_up": runner_up.map_or(Value::Null, |runner| hint(runner, top)),
+    })
 }
 
 fn rank(
@@ -192,6 +238,7 @@ fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
         "id": found.id().as_str(),
         "role": found.role().as_str(),
         "label": found.label(),
+        "state": state_json(&manifold, found),
         "x": found.rect().x(),
         "y": found.rect().y(),
         "width": found.rect().width(),
@@ -1164,11 +1211,21 @@ fn candidates_of(manifold: &InteractionManifold, ranked: &[Match]) -> Value {
                 "id": candidate.id().as_str(),
                 "role": region.map(|region| region.role().as_str()).unwrap_or("unknown"),
                 "label": region.map(|region| region.label()).unwrap_or(""),
+                "state": region.map_or(Value::Null, |region| state_json(manifold, region)),
                 "confidence": candidate.confidence(),
             })
         })
         .collect();
     Value::Array(rows)
+}
+
+/// `{"availability": "enabled"|"disabled", "visibility": "visible"|"occluded"|"offscreen"|"hidden"}`.
+fn state_json(manifold: &InteractionManifold, region: &InteractionRegion) -> Value {
+    let state = RegionState::of(manifold.viewport(), region);
+    json!({
+        "availability": state.availability().as_str(),
+        "visibility": state.visibility().as_str(),
+    })
 }
 
 fn id_strings(ids: &[RegionId]) -> Vec<&str> {

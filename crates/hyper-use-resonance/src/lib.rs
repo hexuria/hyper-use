@@ -17,6 +17,13 @@
 //! actionability 0.10, temporal stability 0.05, contextual consistency 0.05.
 //! Penalties: disabled 0.25, hidden 0.45, occluded 0.20, offscreen 0.35,
 //! stale 0.15, ambiguous 0.12, detached 0.20, zero-size 0.40.
+//!
+//! Text-miss cap: when the query has text and a region's label shares no
+//! token with it, both matchers clamp that region's total to at most
+//! [`TEXT_MISS_CAP`] (0.45). Without it, a text miss still collects the
+//! credit for constraints the query did not set (geometry with no position,
+//! actionability with no action), which is 0.50 under the weighted V1 model
+//! and more under other weights or HGRA.
 
 #![forbid(unsafe_code)]
 
@@ -24,6 +31,7 @@ mod error;
 mod matcher;
 mod model;
 mod signature;
+mod state;
 
 pub use matcher::{
     default_matcher, HgraMatcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher,
@@ -39,8 +47,30 @@ use hyper_use_hyper::{cosine, Dims, Encoder};
 pub use error::ResonanceError;
 pub use hyper_use_hyper::BipolarVector;
 pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
+pub use state::{separating_zone, Availability, RegionState, Visibility};
 
 use signature::{query_probes, region_signature as compose_signature, Memory};
+
+/// Highest total any matcher gives a region whose label shares no token with
+/// a non-empty text query.
+///
+/// Why 0.45: it is strictly below the executor's 0.55 act gate, so a nameless
+/// or unrelated region can never be clicked from a text query, whatever the
+/// weights. It is also 0.05 below the 0.50 that the weighted V1 model gives a
+/// label hit with the wrong role, so under V1 a right-named control of the
+/// wrong kind still ranks above every text miss instead of tying with them
+/// and losing on region id.
+pub const TEXT_MISS_CAP: f64 = 0.45;
+
+/// Clamp `total` to [`TEXT_MISS_CAP`] when the query has text and `label`
+/// shares none of its tokens. A query without text, or text with no tokens,
+/// is unchanged.
+pub(crate) fn cap_text_miss(query: &LocateQuery, label: &str, total: f64) -> f64 {
+    match query.text_ref() {
+        Some(text) if token_recall(text, label) == 0.0 => total.min(TEXT_MISS_CAP),
+        _ => total,
+    }
+}
 
 /// One ranked region. `rank` is 1-based after the deterministic sort.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,7 +92,8 @@ impl RankedCandidate {
     }
 }
 
-/// Breakdown of one region's resonance. `total = weighted positives - penalty`.
+/// Breakdown of one region's resonance. `total = weighted positives - penalty`,
+/// then clamped to [`TEXT_MISS_CAP`] on a text miss.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResonanceScore {
     hypervector: f64,
@@ -206,7 +237,7 @@ fn score_parts(
         temporal_stability,
         contextual_consistency,
         penalty,
-        total: positive - penalty,
+        total: cap_text_miss(query, region.label(), positive - penalty),
     }
 }
 
@@ -653,5 +684,100 @@ mod tests {
         // No benchmark compares these totals. Do not treat a higher number as a win.
         assert!(weighted[0].confidence().is_finite());
         assert!(hgra[0].confidence().is_finite());
+    }
+
+    /// Every HGRA score part pinned, so a changed weight, operator, or
+    /// accessor shows up. Two regions: one with a role miss, a dangling parent,
+    /// and an action miss; one on the wrong side with the asked action.
+    #[test]
+    fn hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum() {
+        let region =
+            |id: &str, x: f64, actions: Vec<Action>, sources, parent: Option<&str>, stability| {
+                InteractionRegion::try_new(RegionParts {
+                    id: RegionId::try_new(id).unwrap(),
+                    role: Role::Button,
+                    label: "Settings".into(),
+                    rect: Rect::try_new(x, 40.0, 80.0, 20.0).unwrap(),
+                    actions,
+                    parent: parent.map(|p| RegionId::try_new(p).unwrap()),
+                    sources,
+                    flags: RegionFlags::none(),
+                    temporal_stability: UnitInterval::try_new(stability).unwrap(),
+                })
+                .unwrap()
+            };
+        let both = SourceMask::DOM.union(SourceMask::ACCESSIBILITY);
+        let manifold = manifold(vec![
+            region("left", 16.0, vec![Action::Click], both, Some("gone"), 0.9),
+            region(
+                "right",
+                1300.0,
+                vec![Action::Click, Action::Type],
+                SourceMask::DOM,
+                None,
+                0.6,
+            ),
+        ]);
+        let query = LocateQuery::new()
+            .text("Settings")
+            .unwrap()
+            .role(Role::Link)
+            .position(Zone::Left)
+            .action(Action::Type);
+        let encoder = Encoder::new(Dims::D512);
+        let ranked = locate_with(&manifold, &query, &encoder, ResonanceModel::V1).unwrap();
+        let score = |id: &str| {
+            ranked
+                .iter()
+                .find(|candidate| candidate.id().as_str() == id)
+                .unwrap()
+                .score()
+                .clone()
+        };
+        let single = |query: LocateQuery, id: &str| {
+            locate_with(&manifold, &query, &encoder, ResonanceModel::V1)
+                .unwrap()
+                .into_iter()
+                .find(|candidate| candidate.id().as_str() == id)
+                .unwrap()
+                .score()
+                .hypervector()
+        };
+        let model = ResonanceModel::V1;
+        // (id, semantic, source, geometric, actionability, temporal, contextual)
+        for (id, semantic, source, geometric, actionability, temporal, contextual) in [
+            ("left", 0.5, 0.5, 1.0, 0.0, 0.9, 0.5),
+            ("right", 0.5, 0.25, 0.0, 1.0, 0.6, 1.0),
+        ] {
+            let parts = score(id);
+            assert_eq!(parts.semantic(), semantic, "{id}");
+            assert_eq!(parts.source_agreement(), source, "{id}");
+            assert_eq!(parts.geometric(), geometric, "{id}");
+            assert_eq!(parts.actionability(), actionability, "{id}");
+            assert!((parts.temporal_stability() - temporal).abs() < 1e-6, "{id}");
+            assert_eq!(parts.contextual_consistency(), contextual, "{id}");
+            assert_eq!(parts.penalty(), 0.0, "{id}");
+            let hv = parts.hypervector();
+            assert!((-1.0..=1.0).contains(&hv), "{id} {hv}");
+            // One probe per constraint; the hypervector term is their mean.
+            let mean = (single(LocateQuery::new().role(Role::Link), id)
+                + single(LocateQuery::new().text("Settings").unwrap(), id)
+                + single(LocateQuery::new().position(Zone::Left), id)
+                + single(LocateQuery::new().action(Action::Type), id))
+                / 4.0;
+            assert!((hv - mean).abs() < 1e-12, "{id} {hv} {mean}");
+            let expected = model.hypervector() * hv
+                + model.semantic() * semantic
+                + model.source_agreement() * source
+                + model.geometric() * geometric
+                + model.actionability() * actionability
+                + model.temporal_stability() * parts.temporal_stability()
+                + model.contextual_consistency() * contextual;
+            assert!(
+                (parts.total() - expected).abs() < 1e-12,
+                "{id} {} {expected}",
+                parts.total()
+            );
+        }
     }
 }

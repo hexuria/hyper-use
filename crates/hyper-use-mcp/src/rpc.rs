@@ -143,17 +143,17 @@ fn tools_list() -> Value {
 fn tool_spec(name: &str) -> Value {
     let (description, properties, required) = match name {
         "observe" => (
-            "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, label, and a snapshot id for diff. Does not click and does not choose the next capability.",
+            "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, label, state (availability enabled or disabled; visibility visible, occluded, offscreen, or hidden), and a snapshot id for diff. Does not click and does not choose the next capability.",
             source_props(),
             Vec::<&str>::new(),
         ),
         "locate" => (
-            "Rank regions for one query. Default matcher is weighted. matcher hgra selects the hyperdimensional ranker and is not a benchmark and not a measured win. Returns the top target id, role, label, and confidence. Does not click.",
+            "Rank regions for one query. Default matcher is weighted. matcher hgra selects the hyperdimensional ranker and is not a benchmark and not a measured win. Returns the top target id, role, label, and confidence, and candidates with state. signals carries repeated_query when the same query already ran on the same page state, with top and runner_up ids and a suggested_position that separates each; it is data and does not refuse or retry. Does not click.",
             locate_props(),
             Vec::new(),
         ),
         "inspect" => (
-            "Return one region by id, including its rectangle. The rectangle is descriptive. Do not click those coordinates. Act on the region id.",
+            "Return one region by id, including its state and rectangle. The rectangle is descriptive. Do not click those coordinates. Act on the region id.",
             {
                 let mut props = source_props();
                 props.insert("region".into(), json!({"type": "string"}));

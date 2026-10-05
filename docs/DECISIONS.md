@@ -896,10 +896,111 @@ Downside accepted: a script emits only what the extractors read, in the order
 the code calls. If Chrome changes a shape, the mock still passes. That is the
 live drive's job.
 
-Verifiers: the ten tests in `crates/hyper-use-mcp/tests/mock_env.rs` and
+Verifiers: the tests in `crates/hyper-use-mcp/tests/mock_env.rs`, the
+Acme Mail replica in `crates/hyper-use-mcp/tests/acme_mail.rs`, and
 `an_mcp_client_drives_the_closed_loop_over_stdio` in
 `crates/hyper-use-cli/tests/mcp_stdio_mock.rs`. Reverting the
 stale-observation fix fails
 `act_without_observe_after_then_next_act_does_not_reuse_stale_before`;
 reverting the unknown-page fix fails
 `page_history_failure_is_unknown_not_a_false_delta`.
+
+## Text-miss cap
+
+Status: 2026-10-05 (Asia/Manila). From live drive t7.
+
+JEV asked locate for "Send" as a link on the Acme Mail thread. No link is
+named Send, so every candidate missed. The weighted V1 total for a miss was
+still 0.50: semantic is `min(text, role)` = 0, but geometry scores 1 when no
+position is asked (0.30) and actionability scores 1 when no action is asked
+and the region has any action (0.20); every extracted region has at least
+Focus. The role does not contribute. All 63 candidates tied at 0.50, and an
+unnamed AX node (`ax11`) won on region id because `ax…` sorts before `n…`.
+
+Both matchers now clamp a region's total to `TEXT_MISS_CAP` (0.45) when the
+query has text and the label shares none of its tokens (`token_recall` is
+0). WeightedMatcher applies it in `weighted_total`; HGRA applies it in
+`score_parts`, so `locate`, `locate_with`, and `HgraMatcher` all carry it.
+0.45 is strictly below the 0.55 act gate for any weights, so a nameless or
+unrelated region can never be clicked from a text query. It is 0.05 below
+the 0.50 a label hit with the wrong role gets under V1, so that control
+ranks above every text miss. A `const` assert in the MCP crate ties the cap
+to `MIN_ACT_CONFIDENCE`.
+
+Eval corpus: weighted tops, margins, and gate decisions did not move. HGRA
+margins on `twins.manifold` rose (Export 184 to 223, Admin 195 to 231, Undo
+184 to 231 millis); HGRA tops and gate decisions did not move.
+
+Downside accepted: a query whose text the label does not contain at all
+(a typo, a synonym, an icon button with no accessible name) can no longer
+reach the gate from text, even if role and position point at the right
+control. The caller must fix the text or act on an inspected region. The
+cap is a constant, not calibrated, and HGRA totals are still not comparable
+to weighted ones.
+
+Verifiers: the 256-case proptest
+`a_nameless_region_never_reaches_the_act_gate_for_a_text_query` (arbitrary
+role, query role, position, action, geometry, flag, and weights; both
+matchers), `text_miss_is_not_rescued_by_a_role_hit`,
+`a_label_hit_with_the_wrong_role_outranks_a_nameless_region`,
+`the_cap_only_lowers_and_only_on_a_text_miss`,
+`eval_corpus_reports_both_matchers_without_a_winner`, and the replica test
+`t7_send_as_a_link_ranks_the_named_send_above_unnamed_nodes_and_does_not_click`.
+
+## Region state in observe, inspect, and locate
+
+Status: 2026-10-05. From the live drive: observe returned only id, role,
+and label, so a caller could not tell the disabled Save from the enabled one
+without running locate (which penalized the disabled one).
+
+`RegionState` (hyper-use-resonance) is `Availability` (enabled, disabled)
+and `Visibility`, a ladder where the most limiting condition wins: hidden,
+then offscreen, then occluded, then visible. Offscreen is the offscreen flag
+or a rect fully outside the viewport, the same test the locate penalty uses.
+MCP observe regions, the inspect target, and locate candidates carry
+`"state": {"availability": ..., "visibility": ...}`.
+
+Downside accepted: zero size, stale, ambiguous, and detached are not in the
+state; locate still penalizes them. `display:none` nodes are omitted by the
+extractor, so `hidden` only shows for regions that arrive with the hidden
+flag. Responses are a little larger.
+
+Verifiers: `flags_and_geometry_map_onto_the_ladder`,
+`the_most_limiting_visibility_wins`, and MCP
+`observe_alone_tells_the_disabled_save_from_the_enabled_one`
+(`fixtures/settings-saves.manifold`).
+
+## Repeated locate query signal
+
+Status: 2026-10-05. From live drive t8: after the twin Send refused as
+ambiguous, JEV asked the same locate eight more times on an unchanged page.
+`detect` compares snapshots around an act and could not see this.
+
+The MCP `Server` remembers the last 8 locate calls (`REPEAT_WINDOW`) as
+(origin, page `StateSignature`, normalized query). Text is normalized to its
+lower-case tokens; role, position, action, matcher, and dims are kept. From
+the 2nd identical call (`REPEAT_THRESHOLD`), locate's `signals` carries
+`{"kind": "repeated_query", "count", "top": {"id", "suggested_position"},
+"runner_up": {"id", "suggested_position"}}`. `suggested_position` is the
+first zone (left, right, top, bottom, center) one candidate is in and the
+other is not (`separating_zone`), or null.
+
+N = 2 because locate is deterministic: the same query on the same state
+returns the same ranking, so the first repeat already told the caller
+nothing new. N = 3 would only let one more empty call through. The signal is
+data: ranking, target, and candidates are unchanged, nothing is refused or
+retried, and the stateless `call_tool` keeps nothing and never signals.
+
+Downside accepted: the signature ignores geometry, so a page that only moved
+counts as unchanged. A repeat older than 8 locate calls (across all origins)
+is not reported. A suggested position can be null when the two candidates
+share every zone.
+
+Verifiers: `same_origin_signature_and_query_count_up`,
+`text_is_normalized_but_every_other_part_counts`,
+`a_changed_page_or_another_origin_starts_over`,
+`calls_older_than_the_window_are_forgotten`,
+`separating_zone_names_a_zone_only_the_target_is_in`, MCP
+`a_repeated_identical_locate_carries_repeated_query_and_still_ranks`, and the
+replica test `t8_twin_send_refuses_then_repeated_query_names_a_separating_position`.
+

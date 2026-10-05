@@ -1,7 +1,8 @@
 # Impeccable audit
 
 Current note, 2026-10-05 (Asia/Manila). Baseline reviewed: `9baa21e`
-(179 passed, 1 ignored). This note covers the fixes on
+(179 passed, 1 ignored). Updated after the live-drive fixes (238 passed,
+1 ignored). This note covers the fixes on
 `gol/serene-cray-7dwros` after that baseline. It is not a proof.
 
 The phase-1 snapshot that used to live in this file is historical and is not
@@ -22,6 +23,11 @@ every crate is `publish = false`.
 | Structurally valid but random CDP / tools/call | 16- and 32-case structured proptests | added |
 | Dependency advisories | `cargo deny check advisories` CI job | added |
 | Optional `jev` feature rot | `cargo check --features jev` CI step | added |
+| Text miss scores 0.50 from unasked constraints; unnamed node wins on id (live t7) | 256-case text-miss proptest, matcher unit tests, Acme replica t7 | fixed: `TEXT_MISS_CAP` 0.45 in both matchers |
+| observe cannot tell a disabled control from an enabled twin (live) | `RegionState` unit tests, MCP settings-saves test | fixed: typed `state` in observe, inspect, locate |
+| Caller repeats an identical locate on an unchanged page (live t8) | repeat.rs unit tests, MCP repeat test, Acme replica t8 | fixed: `repeated_query` signal (data only) |
+| HGRA score parts unpinned (42 missed mutants) | `hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum` | covered |
+| `http://` CDP endpoint resolved to the browser target (live) | `ws.rs` `/json/list` unit tests | fixed in `73a975a` |
 | Concurrency, crash recovery, unsafe | none needed | not applicable (one thread, no unsafe, no recovery) |
 
 ## What was run
@@ -31,7 +37,8 @@ every crate is `publish = false`.
 - `cargo check -p hyper-use-cli --features jev`: ok.
 - `cargo deny check advisories` (cargo-deny 0.20.2, all features): `advisories ok`.
 - cargo-mutants 27.1.0 on `observe/src/history.rs`, `observe/src/identity.rs`,
-  and `executor/src/lib.rs` (`--timeout 120 --jobs 2`, output outside the tree).
+  and `executor/src/lib.rs` (`--timeout 120 --jobs 2`, output outside the tree),
+  and again on the live-drive fixes (files listed under the table).
 
 ## Mutants, before and after
 
@@ -39,8 +46,16 @@ every crate is `publish = false`.
 | --- | --- | --- | --- | --- | --- |
 | Before (at `9baa21e`) | 181 | 111 | 19 | 49 | 2 |
 | After | 143 | 97 | 2 | 44 | 0 |
+| Live-drive fixes, before (at `7395922`) | 180 | 118 | 45 | 17 | 0 |
+| Live-drive fixes, after | 180 | 163 | 0 | 17 | 0 |
 
-The count dropped because the dead `signature_jaccard` (11 of the 19 misses)
+The live-drive rows cover `resonance/src/lib.rs`, `resonance/src/state.rs`,
+`mcp/src/repeat.rs`, `mcp/src/server.rs`, and the `locate`,
+`repeated_query_json`, and `state_json` mutants in `mcp/src/tools.rs`. Of the
+45 misses, 42 were HGRA score parts no test pinned (pre-existing), two were
+`Snapshot::origin` in loop detection, and one was `take_session`'s retain.
+
+For the first two rows, the count dropped because the dead `signature_jaccard` (11 of the 19 misses)
 was deleted. The two remaining misses are equivalent mutants, not gaps:
 
 - `executor/src/lib.rs` `margin < MIN_ACT_MARGIN - MARGIN_EPSILON` to `<=`:

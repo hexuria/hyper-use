@@ -1165,3 +1165,102 @@ fn stale_before_is_not_reused_after_a_press_without_observe_after() {
         "Welcome"
     );
 }
+
+#[test]
+fn observe_alone_tells_the_disabled_save_from_the_enabled_one() {
+    let observed = call(
+        "observe",
+        json!({"fixture": fixture("settings-saves.manifold")}),
+    )
+    .unwrap();
+    let rows: Vec<(&str, &str, &str, &str, &str)> = observed["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|region| {
+            (
+                region["id"].as_str().unwrap(),
+                region["role"].as_str().unwrap(),
+                region["label"].as_str().unwrap(),
+                region["state"]["availability"].as_str().unwrap(),
+                region["state"]["visibility"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("a-save-vacation", "button", "Save", "disabled", "visible"),
+            ("b-save-footer", "button", "Save", "enabled", "offscreen"),
+            ("z-save-signature", "button", "Save", "enabled", "visible"),
+        ]
+    );
+
+    let inspected = call(
+        "inspect",
+        json!({"fixture": fixture("settings-saves.manifold"), "region": "a-save-vacation"}),
+    )
+    .unwrap();
+    assert_eq!(
+        inspected["target"]["state"],
+        json!({"availability": "disabled", "visibility": "visible"})
+    );
+
+    let located = call(
+        "locate",
+        json!({"fixture": fixture("settings-saves.manifold"), "text": "Save", "role": "button"}),
+    )
+    .unwrap();
+    let candidates = located["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["id"], "z-save-signature");
+    assert_eq!(
+        candidates[0]["state"],
+        json!({"availability": "enabled", "visibility": "visible"})
+    );
+    let disabled = candidates
+        .iter()
+        .find(|row| row["id"] == "a-save-vacation")
+        .unwrap();
+    assert_eq!(disabled["state"]["availability"], "disabled");
+}
+
+#[test]
+fn a_repeated_identical_locate_carries_repeated_query_and_still_ranks() {
+    let mut server = Server::new();
+    let ask =
+        json!({"fixture": fixture("settings-saves.manifold"), "text": "Save", "role": "button"});
+    let first = server.call_tool("locate", &ask).unwrap();
+    assert_eq!(first["signals"], json!([]));
+
+    // Same query, different spelling of the text: still the same query.
+    let again =
+        json!({"fixture": fixture("settings-saves.manifold"), "text": " save! ", "role": "BUTTON"});
+    let second = server.call_tool("locate", &again).unwrap();
+    assert_eq!(second["candidates"], first["candidates"]);
+    assert_eq!(second["target"], first["target"]);
+    assert_eq!(
+        second["signals"],
+        json!([{
+            "kind": "repeated_query",
+            "count": 2,
+            "top": {"id": "z-save-signature", "suggested_position": null},
+            "runner_up": {"id": "a-save-vacation", "suggested_position": null},
+        }])
+    );
+    assert!(second.get("executed").is_none(), "{second}");
+
+    let third = server.call_tool("locate", &ask).unwrap();
+    assert_eq!(third["signals"][0]["count"], 3);
+
+    // A different query on the same page is a first call.
+    let positioned = json!({"fixture": fixture("settings-saves.manifold"), "text": "Save", "role": "button", "position": "left"});
+    assert_eq!(
+        server.call_tool("locate", &positioned).unwrap()["signals"],
+        json!([])
+    );
+
+    // The stateless entry point keeps nothing, so it never signals.
+    assert_eq!(call("locate", ask.clone()).unwrap()["signals"], json!([]));
+    assert_eq!(call("locate", ask).unwrap()["signals"], json!([]));
+    assert_eq!(hyper_use_mcp::REPEAT_THRESHOLD, 2);
+}

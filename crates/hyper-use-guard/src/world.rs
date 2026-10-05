@@ -240,12 +240,11 @@ pub fn neighborhood_of(manifold: &InteractionManifold, target: &RegionId) -> BTr
             (Some(p), Some(rp)) if p == rp => {
                 out.insert(region.id().clone());
             }
-            (None, None) => {
+            (None, None) if nearby(target_region, region) => {
                 // Flat page: only geometrically nearby peers matter.
-                if nearby(target_region, region) {
-                    out.insert(region.id().clone());
-                }
+                out.insert(region.id().clone());
             }
+            (None, None) => {}
             _ => {}
         }
     }

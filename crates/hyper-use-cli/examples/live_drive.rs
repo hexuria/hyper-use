@@ -407,6 +407,25 @@ fn quoted(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// `(zone, candidate id)` pairs from a `repeated_query` signal on the last
+/// locate, for the candidates that have a separating zone.
+fn repeated_query_hints(last_locate: Option<&Value>) -> Vec<(String, String)> {
+    let Some(signals) = last_locate.and_then(|located| located["signals"].as_array()) else {
+        return Vec::new();
+    };
+    signals
+        .iter()
+        .filter(|signal| signal["kind"] == "repeated_query")
+        .flat_map(|signal| [&signal["top"], &signal["runner_up"]])
+        .filter_map(|hint| {
+            Some((
+                hint["suggested_position"].as_str()?.to_owned(),
+                hint["id"].as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
 fn summarize(tool: &str, is_error: bool, body: &Value) -> Value {
     if is_error {
         return json!({"error": body});
@@ -417,7 +436,8 @@ fn summarize(tool: &str, is_error: bool, body: &Value) -> Value {
         }
         "locate" => json!({
             "target": body["target"]["id"],
-            "candidates": body["candidates"].as_array().map(|c| c.iter().take(3).map(|x| json!({"id": x["id"], "label": x["label"], "confidence": x["confidence"]})).collect::<Vec<_>>()),
+            "candidates": body["candidates"].as_array().map(|c| c.iter().take(3).map(|x| json!({"id": x["id"], "label": x["label"], "state": x["state"], "confidence": x["confidence"]})).collect::<Vec<_>>()),
+            "signals": body["signals"],
         }),
         "inspect" => body["target"].clone(),
         "act" => json!({
@@ -478,6 +498,8 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 "act presses one region; it refuses below confidence 0.55 or when the runner-up is within 0.05 (fallback ambiguous)",
                 "act on a cdp session observes again and returns state_delta; expect_text makes it verify",
                 "a refusal is not a click: change the query (role or position) and try again",
+                "locate signals repeated_query means this exact query already ran on this unchanged page and will return the same ranking; use a suggested_position it names, or change the text or role",
+                "each region has a state: availability enabled or disabled, visibility visible, occluded, offscreen, or hidden",
                 "choose done when the task's check has passed, or give up when it cannot pass"
             ],
             "page_regions": regions,
@@ -628,12 +650,24 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                     }
                 }
                 let zones = ["none", "left", "right", "top", "bottom", "center"];
+                // Surface a repeated_query signal from the last locate: name
+                // the candidate each suggested position would favour. Option
+                // order does not change.
+                let suggested = repeated_query_hints(last_locate.as_ref());
                 if let Some(zone) = ask_arg(
                     "position",
                     "Where on the page is the target?",
                     zones
                         .iter()
-                        .map(|z| (z.to_string(), format!("position {z}")))
+                        .map(|z| {
+                            let about = match suggested.iter().find(|(zone, _)| zone == z) {
+                                Some((_, id)) => format!(
+                                    "position {z} (repeated_query suggests it to pick {id})"
+                                ),
+                                None => format!("position {z}"),
+                            };
+                            (z.to_string(), about)
+                        })
                         .collect(),
                 ) {
                     if zone != "none" {
@@ -736,7 +770,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
             }
             "locate" if !is_error => {
                 last_locate = Some(
-                    json!({"query": shown_args, "candidates": body["candidates"].as_array().map(|c| c.iter().take(3).cloned().collect::<Vec<_>>())}),
+                    json!({"query": shown_args, "candidates": body["candidates"].as_array().map(|c| c.iter().take(3).cloned().collect::<Vec<_>>()), "signals": body["signals"]}),
                 )
             }
             "inspect" if !is_error => {
@@ -774,6 +808,7 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
         "refused_ambiguous": count(&|e| e["body"]["fallback"] == "ambiguous"),
         "refused_low_confidence": count(&|e| e["body"]["fallback"] == "low-confidence"),
         "no_effect": count(&|e| e["body"]["fallback"] == "no-effect"),
+        "repeated_query_signals": count(&|e| e["tool"] == "locate" && e["body"]["signals"].as_array().is_some_and(|s| s.iter().any(|x| x["kind"] == "repeated_query"))),
         "tool_errors": count(&|e| e["is_error"] == true),
         "error_variants": mcp_events.iter().filter(|e| e["is_error"] == true).map(|e| e["body"]["variant"].clone()).collect::<Vec<_>>(),
         "calls": mcp_events.iter().map(|e| e["tool"].clone()).collect::<Vec<_>>(),

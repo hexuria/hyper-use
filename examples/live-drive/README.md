@@ -40,6 +40,14 @@ tab's page websocket. The harness writes one JSONL transcript per task to
 (URL, title, snackbar text, Compose/thread/Cc visibility) read straight from
 the page after the run.
 
+## What JEV is shown
+
+The state JEV answers from includes the observed regions (with their
+`state`), the last locate's top three candidates and its `signals`, and a
+history of call summaries. When the last locate carried `repeated_query`,
+the position options name the candidate each suggested position would pick.
+The option order does not change, and the harness does not pick for JEV.
+
 ## Limits
 
 - The caller is the harness plus JEV, not a full agent. JEV only picks from

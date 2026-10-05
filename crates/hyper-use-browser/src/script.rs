@@ -21,6 +21,9 @@ pub struct DomSpec {
     pub label: String,
     pub rect: Option<(f64, f64, f64, f64)>,
     pub children: Vec<DomSpec>,
+    /// Extra attributes, in order (for example `role`, `aria-label`,
+    /// `aria-modal`). Empty for the plain kept tags.
+    pub attributes: Vec<(String, String)>,
 }
 
 impl DomSpec {
@@ -32,12 +35,48 @@ impl DomSpec {
             label: label.to_owned(),
             rect: Some(rect),
             children: Vec::new(),
+            attributes: Vec::new(),
+        }
+    }
+
+    /// A container `DIV` with an explicit `role` and `aria-label`, so observe
+    /// keeps it as a region and its children get it as their parent.
+    pub fn container(
+        node_id: i64,
+        backend: i64,
+        role: &str,
+        label: &str,
+        rect: (f64, f64, f64, f64),
+    ) -> Self {
+        Self {
+            node_id,
+            backend,
+            tag: "DIV",
+            label: String::new(),
+            rect: Some(rect),
+            children: Vec::new(),
+            attributes: vec![
+                ("role".to_owned(), role.to_owned()),
+                ("aria-label".to_owned(), label.to_owned()),
+            ],
         }
     }
 
     /// The same element with another kept tag (`A`, `INPUT`, `NAV`, `H1`).
     pub fn with_tag(mut self, tag: &'static str) -> Self {
         self.tag = tag;
+        self
+    }
+
+    /// Add one attribute.
+    pub fn with_attr(mut self, name: &str, value: &str) -> Self {
+        self.attributes.push((name.to_owned(), value.to_owned()));
+        self
+    }
+
+    /// Nest `children` under this element.
+    pub fn with_children(mut self, children: Vec<DomSpec>) -> Self {
+        self.children = children;
         self
     }
 }
@@ -50,6 +89,8 @@ pub struct AxSpec {
     pub name: String,
     pub rect: Option<(f64, f64, f64, f64)>,
     pub focused: bool,
+    /// The accessibility `modal` property.
+    pub modal: bool,
 }
 
 impl AxSpec {
@@ -60,12 +101,19 @@ impl AxSpec {
             name: name.to_owned(),
             rect: Some(rect),
             focused: false,
+            modal: false,
         }
     }
 
     /// Mark this node as the focused one.
     pub fn focused(mut self) -> Self {
         self.focused = true;
+        self
+    }
+
+    /// Mark this node as modal (a dialog opened with `showModal()`).
+    pub fn modal(mut self) -> Self {
+        self.modal = true;
         self
     }
 }
@@ -314,20 +362,28 @@ fn flatten<'a>(node: &'a DomSpec, out: &mut Vec<&'a DomSpec>) {
 }
 
 fn dom_json(node: &DomSpec) -> Value {
-    let mut children = vec![json!({
-        "nodeId": node.node_id * 1000 + 1,
-        "backendNodeId": node.backend * 1000 + 1,
-        "nodeType": 3,
-        "nodeName": "#text",
-        "nodeValue": node.label,
-    })];
+    let mut children = Vec::new();
+    if !node.label.is_empty() {
+        children.push(json!({
+            "nodeId": node.node_id * 1000 + 1,
+            "backendNodeId": node.backend * 1000 + 1,
+            "nodeType": 3,
+            "nodeName": "#text",
+            "nodeValue": node.label,
+        }));
+    }
     children.extend(node.children.iter().map(dom_json));
+    let attributes: Vec<&str> = node
+        .attributes
+        .iter()
+        .flat_map(|(name, value)| [name.as_str(), value.as_str()])
+        .collect();
     json!({
         "nodeId": node.node_id,
         "backendNodeId": node.backend,
         "nodeType": 1,
         "nodeName": node.tag,
-        "attributes": [],
+        "attributes": attributes,
         "children": children,
     })
 }
@@ -342,9 +398,15 @@ fn ax_json((index, node): (usize, &AxSpec)) -> Value {
     if let Some(backend) = node.backend {
         value["backendDOMNodeId"] = json!(backend);
     }
+    let mut properties = Vec::new();
     if node.focused {
-        value["properties"] =
-            json!([{"name": "focused", "value": {"type": "boolean", "value": true}}]);
+        properties.push(json!({"name": "focused", "value": {"type": "boolean", "value": true}}));
+    }
+    if node.modal {
+        properties.push(json!({"name": "modal", "value": {"type": "boolean", "value": true}}));
+    }
+    if !properties.is_empty() {
+        value["properties"] = json!(properties);
     }
     value
 }

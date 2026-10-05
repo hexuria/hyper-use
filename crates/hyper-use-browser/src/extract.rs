@@ -16,6 +16,8 @@ pub(crate) struct DomElement {
     pub actions: Vec<Action>,
     pub disabled: bool,
     pub hidden: bool,
+    /// `aria-modal="true"`. Only meaningful on a dialog.
+    pub modal: bool,
     /// Backend ids of kept ancestors, nearest first.
     pub ancestors: Vec<i64>,
 }
@@ -27,6 +29,9 @@ pub(crate) struct AxElement {
     pub name: String,
     pub disabled: bool,
     pub focused: bool,
+    /// The accessibility `modal` property. Chrome sets it on a dialog opened
+    /// with `showModal()` or marked `aria-modal="true"`.
+    pub modal: bool,
 }
 
 pub(crate) fn parse_viewport(result_json: &str) -> Result<hyper_use_core::Rect, BrowserError> {
@@ -90,12 +95,14 @@ pub(crate) fn ax_elements(tree_json: &str) -> Result<Vec<AxElement>, BrowserErro
         let backend = node.get("backendDOMNodeId").and_then(Value::as_i64);
         let disabled = ax_flag(node, "disabled");
         let focused = ax_flag(node, "focused");
+        let modal = ax_flag(node, "modal");
         out.push(AxElement {
             backend_dom_node_id: backend,
             role,
             name,
             disabled,
             focused,
+            modal,
         });
     }
     Ok(out)
@@ -211,6 +218,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         || attributes.get("aria-disabled").map(String::as_str) == Some("true");
     let hidden = attributes.contains_key("hidden")
         || attributes.get("aria-hidden").map(String::as_str) == Some("true");
+    let modal = attributes.get("aria-modal").map(String::as_str) == Some("true");
     Some(DomElement {
         node_id,
         backend_node_id,
@@ -219,6 +227,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         actions: actions_for_role(role),
         disabled,
         hidden,
+        modal,
         ancestors: Vec::new(),
     })
 }
@@ -245,6 +254,7 @@ fn keep_element(name: &str, role_attr: Option<&str>, label: &str) -> bool {
             | "H4"
             | "H5"
             | "H6"
+            | "DIALOG"
     ) {
         return true;
     }
@@ -268,6 +278,7 @@ fn dom_role(name: &str, role_attr: Option<&str>, input_type: Option<&str>) -> Ro
         "NAV" => Role::Navigation,
         "IMG" => Role::Image,
         "H1" | "H2" | "H3" | "H4" | "H5" | "H6" => Role::Heading,
+        "DIALOG" => Role::Dialog,
         "INPUT" => match input_type.unwrap_or("").to_ascii_lowercase().as_str() {
             "checkbox" => Role::Checkbox,
             "button" | "submit" => Role::Button,

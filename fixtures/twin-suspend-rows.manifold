@@ -1,0 +1,15 @@
+# hyper-use manifold fixture v1
+# Adversarial (context): two server rows, each with a "Suspend" button and a
+# "Hostname" field. Text, role, actions, and position zones are identical for
+# the twins, so no label-only matcher can pick one. Only the parent chain
+# (within=row-beta) or the focused field (near=beta-host) separates them.
+# The cursor analogy: a cargo runner picks the test under the cursor line.
+viewport w=1440 h=900
+region id=search role=text_field label="Search servers" x=40 y=40 w=300 h=36 actions=click,focus,type sources=dom,accessibility
+region id=servers role=generic label="Servers" x=40 y=100 w=1200 h=300 actions=focus sources=dom
+region id=row-alpha role=generic label="alpha" x=40 y=140 w=1200 h=48 actions=focus parent=servers sources=dom
+region id=row-beta role=generic label="beta" x=40 y=200 w=1200 h=48 actions=focus parent=servers sources=dom
+region id=alpha-host role=text_field label="Hostname" x=60 y=146 w=300 h=36 actions=click,focus,type parent=row-alpha sources=dom,accessibility
+region id=alpha-suspend role=button label="Suspend" x=1100 y=146 w=100 h=36 actions=click,focus parent=row-alpha sources=dom,accessibility
+region id=beta-host role=text_field label="Hostname" x=60 y=206 w=300 h=36 actions=click,focus,type parent=row-beta sources=dom,accessibility
+region id=beta-suspend role=button label="Suspend" x=1100 y=206 w=100 h=36 actions=click,focus parent=row-beta sources=dom,accessibility

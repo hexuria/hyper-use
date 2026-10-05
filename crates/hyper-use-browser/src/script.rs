@@ -9,6 +9,8 @@
 //! DOM nodes use tags that observe always keeps (`BUTTON`, `A`, `INPUT`,
 //! `NAV`, `H1`), so the getBoxModel order is the document order.
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
 
 /// One DOM element. `rect` of `None` is a getBoxModel protocol error, which
@@ -21,6 +23,9 @@ pub struct DomSpec {
     pub label: String,
     pub rect: Option<(f64, f64, f64, f64)>,
     pub children: Vec<DomSpec>,
+    /// Extra attributes, in order (for example `role`, `aria-label`,
+    /// `aria-modal`). Empty for the plain kept tags.
+    pub attributes: Vec<(String, String)>,
 }
 
 impl DomSpec {
@@ -32,12 +37,48 @@ impl DomSpec {
             label: label.to_owned(),
             rect: Some(rect),
             children: Vec::new(),
+            attributes: Vec::new(),
+        }
+    }
+
+    /// A container `DIV` with an explicit `role` and `aria-label`, so observe
+    /// keeps it as a region and its children get it as their parent.
+    pub fn container(
+        node_id: i64,
+        backend: i64,
+        role: &str,
+        label: &str,
+        rect: (f64, f64, f64, f64),
+    ) -> Self {
+        Self {
+            node_id,
+            backend,
+            tag: "DIV",
+            label: String::new(),
+            rect: Some(rect),
+            children: Vec::new(),
+            attributes: vec![
+                ("role".to_owned(), role.to_owned()),
+                ("aria-label".to_owned(), label.to_owned()),
+            ],
         }
     }
 
     /// The same element with another kept tag (`A`, `INPUT`, `NAV`, `H1`).
     pub fn with_tag(mut self, tag: &'static str) -> Self {
         self.tag = tag;
+        self
+    }
+
+    /// Add one attribute.
+    pub fn with_attr(mut self, name: &str, value: &str) -> Self {
+        self.attributes.push((name.to_owned(), value.to_owned()));
+        self
+    }
+
+    /// Nest `children` under this element.
+    pub fn with_children(mut self, children: Vec<DomSpec>) -> Self {
+        self.children = children;
         self
     }
 }
@@ -50,6 +91,8 @@ pub struct AxSpec {
     pub name: String,
     pub rect: Option<(f64, f64, f64, f64)>,
     pub focused: bool,
+    /// The accessibility `modal` property.
+    pub modal: bool,
 }
 
 impl AxSpec {
@@ -60,12 +103,19 @@ impl AxSpec {
             name: name.to_owned(),
             rect: Some(rect),
             focused: false,
+            modal: false,
         }
     }
 
     /// Mark this node as the focused one.
     pub fn focused(mut self) -> Self {
         self.focused = true;
+        self
+    }
+
+    /// Mark this node as modal (a dialog opened with `showModal()`).
+    pub fn modal(mut self) -> Self {
+        self.modal = true;
         self
     }
 }
@@ -140,6 +190,15 @@ pub struct PageSpec {
     pub dom: Vec<DomSpec>,
     pub ax: Vec<AxSpec>,
     pub history: HistorySpec,
+    /// `DOM.getNodeForLocation` override keyed by the clickable region's
+    /// backend id. Absent keys return the region's own backend (clear hit).
+    /// Use this to script a cookie banner or custom backdrop covering a
+    /// control: map the buried control's backend to the overlay's backend.
+    pub hit_overrides: BTreeMap<i64, i64>,
+    /// Optional computed-style overrides keyed by DOM `nodeId`. Absent keys
+    /// get a default static stacking style. Enables stacking-map fixtures
+    /// without relying on hit-test overrides.
+    pub style_overrides: BTreeMap<i64, Vec<(String, String)>>,
 }
 
 impl PageSpec {
@@ -187,7 +246,27 @@ impl PageSpec {
                 url: url.to_owned(),
                 title: title.to_owned(),
             },
+            hit_overrides: BTreeMap::new(),
+            style_overrides: BTreeMap::new(),
         }
+    }
+
+    /// Cover `target_backend`'s center with `hit_backend` (hit-test overlay).
+    pub fn cover(mut self, target_backend: i64, hit_backend: i64) -> Self {
+        self.hit_overrides.insert(target_backend, hit_backend);
+        self
+    }
+
+    /// Set computed style for a DOM `nodeId` (stacking-map fixtures).
+    pub fn style(mut self, node_id: i64, pairs: Vec<(&str, &str)>) -> Self {
+        self.style_overrides.insert(
+            node_id,
+            pairs
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        );
+        self
     }
 }
 
@@ -231,7 +310,8 @@ impl ScriptBuilder {
             self.calls.push(box_call(node.rect));
         }
         for node in &page.ax {
-            if node.backend.is_some() {
+            // Match `extract::ax_role`: skipped roles never request a box.
+            if node.backend.is_some() && ax_role_kept(node.role) {
                 self.calls.push(box_call(node.rect));
             }
         }
@@ -243,6 +323,29 @@ impl ScriptBuilder {
             HistorySpec::ProtocolError => error("Page.getNavigationHistory", "history failed"),
             HistorySpec::NoEntries => result("Page.getNavigationHistory", json!({})),
         });
+        // Stacking map: CSS.enable + computed style per kept DOM node, in
+        // RegionId order (same as BrowserSession::apply_stacking_occlusion).
+        self.calls.push(result("CSS.enable", json!({})));
+        for (node_id, pairs) in style_targets(page) {
+            let computed = pairs
+                .iter()
+                .map(|(name, value)| json!({"name": name, "value": value}))
+                .collect::<Vec<_>>();
+            self.calls.push(result(
+                "CSS.getComputedStyleForNode",
+                json!({"computedStyle": computed}),
+            ));
+            let _ = node_id; // params are not checked by ReplayTransport unless set
+        }
+        // Hit-test each clickable fused region in RegionId order (same order
+        // BrowserSession::apply_hit_test_occlusion walks the manifold).
+        for (_id, backend, _x, _y) in clickable_targets(page) {
+            let hit = page.hit_overrides.get(&backend).copied().unwrap_or(backend);
+            self.calls.push(result(
+                "DOM.getNodeForLocation",
+                json!({"backendNodeId": hit}),
+            ));
+        }
         self
     }
 
@@ -314,20 +417,28 @@ fn flatten<'a>(node: &'a DomSpec, out: &mut Vec<&'a DomSpec>) {
 }
 
 fn dom_json(node: &DomSpec) -> Value {
-    let mut children = vec![json!({
-        "nodeId": node.node_id * 1000 + 1,
-        "backendNodeId": node.backend * 1000 + 1,
-        "nodeType": 3,
-        "nodeName": "#text",
-        "nodeValue": node.label,
-    })];
+    let mut children = Vec::new();
+    if !node.label.is_empty() {
+        children.push(json!({
+            "nodeId": node.node_id * 1000 + 1,
+            "backendNodeId": node.backend * 1000 + 1,
+            "nodeType": 3,
+            "nodeName": "#text",
+            "nodeValue": node.label,
+        }));
+    }
     children.extend(node.children.iter().map(dom_json));
+    let attributes: Vec<&str> = node
+        .attributes
+        .iter()
+        .flat_map(|(name, value)| [name.as_str(), value.as_str()])
+        .collect();
     json!({
         "nodeId": node.node_id,
         "backendNodeId": node.backend,
         "nodeType": 1,
         "nodeName": node.tag,
-        "attributes": [],
+        "attributes": attributes,
         "children": children,
     })
 }
@@ -342,9 +453,261 @@ fn ax_json((index, node): (usize, &AxSpec)) -> Value {
     if let Some(backend) = node.backend {
         value["backendDOMNodeId"] = json!(backend);
     }
+    let mut properties = Vec::new();
     if node.focused {
-        value["properties"] =
-            json!([{"name": "focused", "value": {"type": "boolean", "value": true}}]);
+        properties.push(json!({"name": "focused", "value": {"type": "boolean", "value": true}}));
+    }
+    if node.modal {
+        properties.push(json!({"name": "modal", "value": {"type": "boolean", "value": true}}));
+    }
+    if !properties.is_empty() {
+        value["properties"] = json!(properties);
     }
     value
+}
+
+/// Kept DOM nodes that receive a stacking style, in RegionId (`n{backend}`) order.
+fn style_targets(page: &PageSpec) -> Vec<(i64, Vec<(String, String)>)> {
+    let mut flat = Vec::new();
+    for node in &page.dom {
+        flatten(node, &mut flat);
+    }
+    let mut targets: Vec<(String, i64, i64)> = Vec::new();
+    for node in flat {
+        if node.rect.is_none() {
+            continue;
+        }
+        // Only nodes observe keeps as regions get styles. Keep rule matches
+        // extract::keep_element for the tags ScriptBuilder emits.
+        if !dom_node_kept(node) {
+            continue;
+        }
+        targets.push((format!("n{}", node.backend), node.node_id, node.backend));
+    }
+    targets.sort_by(|left, right| left.0.cmp(&right.0));
+    targets
+        .into_iter()
+        .map(|(_id, node_id, _backend)| {
+            let pairs = page
+                .style_overrides
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_else(default_stacking_style);
+            (node_id, pairs)
+        })
+        .collect()
+}
+
+fn default_stacking_style() -> Vec<(String, String)> {
+    vec![
+        ("z-index".into(), "auto".into()),
+        ("position".into(), "static".into()),
+        ("opacity".into(), "1".into()),
+        ("transform".into(), "none".into()),
+        ("filter".into(), "none".into()),
+        ("isolation".into(), "auto".into()),
+        ("mix-blend-mode".into(), "normal".into()),
+        ("will-change".into(), "auto".into()),
+        ("pointer-events".into(), "auto".into()),
+    ]
+}
+
+fn dom_node_kept(node: &DomSpec) -> bool {
+    let role_attr = node
+        .attributes
+        .iter()
+        .find(|(name, _)| name == "role")
+        .map(|(_, value)| value.as_str());
+    let label = node.label.trim();
+    if role_attr.is_some() {
+        return true;
+    }
+    let tag = node.tag.to_ascii_uppercase();
+    matches!(
+        tag.as_str(),
+        "BUTTON"
+            | "A"
+            | "INPUT"
+            | "TEXTAREA"
+            | "SELECT"
+            | "NAV"
+            | "H1"
+            | "H2"
+            | "H3"
+            | "H4"
+            | "H5"
+            | "H6"
+    ) || (!label.is_empty() && matches!(tag.as_str(), "LABEL" | "SPAN" | "P" | "DIV"))
+}
+
+/// Clickable fused regions in `n{backend}` / `ax{backend}` id order.
+///
+/// Mirrors the session's hit-test targets closely enough for scripted pages:
+/// DOM-kept clickable controls, then AX-only clickable leftovers.
+fn clickable_targets(page: &PageSpec) -> Vec<(String, i64, f64, f64)> {
+    let mut flat = Vec::new();
+    for node in &page.dom {
+        flatten(node, &mut flat);
+    }
+    let mut dom_backends = std::collections::BTreeSet::new();
+    let mut targets: Vec<(String, i64, f64, f64)> = Vec::new();
+    for node in flat {
+        let Some(rect) = node.rect else {
+            continue;
+        };
+        if !dom_role_is_clickable(node) {
+            continue;
+        }
+        dom_backends.insert(node.backend);
+        let (x, y, w, h) = rect;
+        targets.push((
+            format!("n{}", node.backend),
+            node.backend,
+            x + w / 2.0,
+            y + h / 2.0,
+        ));
+    }
+    for node in &page.ax {
+        let Some(backend) = node.backend else {
+            continue;
+        };
+        if dom_backends.contains(&backend) {
+            continue;
+        }
+        if !ax_role_is_clickable(node.role) {
+            continue;
+        }
+        let Some(rect) = node.rect else {
+            continue;
+        };
+        let (x, y, w, h) = rect;
+        targets.push((format!("ax{backend}"), backend, x + w / 2.0, y + h / 2.0));
+    }
+    targets.sort_by(|left, right| left.0.cmp(&right.0));
+    targets
+}
+
+fn dom_role_is_clickable(node: &DomSpec) -> bool {
+    let role_attr = node
+        .attributes
+        .iter()
+        .find(|(name, _)| name == "role")
+        .map(|(_, value)| value.as_str());
+    let role = match role_attr {
+        Some("button") | Some("link") | Some("menuitem") | Some("tab") | Some("slider") => {
+            return true;
+        }
+        Some("textbox") | Some("searchbox") | Some("checkbox") => return true,
+        Some("dialog") | Some("alertdialog") | Some("row") | Some("navigation") => return false,
+        _ => node.tag.to_ascii_uppercase(),
+    };
+    matches!(
+        role.as_str(),
+        "BUTTON" | "A" | "INPUT" | "TEXTAREA" | "SELECT"
+    )
+}
+
+fn ax_role_kept(role: &str) -> bool {
+    !matches!(
+        role.to_ascii_lowercase().as_str(),
+        "statictext"
+            | "inlinetextbox"
+            | "none"
+            | "generic"
+            | "rootwebarea"
+            | "genericcontainer"
+            | "inline"
+            | ""
+    )
+}
+
+fn ax_role_is_clickable(role: &str) -> bool {
+    matches!(
+        role.to_ascii_lowercase().as_str(),
+        "button"
+            | "link"
+            | "textbox"
+            | "searchbox"
+            | "textfield"
+            | "checkbox"
+            | "menuitem"
+            | "tab"
+            | "slider"
+    )
+}
+
+#[cfg(test)]
+mod hit_script_tests {
+    use super::*;
+    #[test]
+    fn one_button_page_scripts_one_hit_test() {
+        let page = PageSpec::of(
+            &[Control::button(
+                10,
+                100,
+                "Sign in",
+                (100.0, 200.0, 80.0, 32.0),
+            )],
+            "http://x",
+            "X",
+        );
+        let json = ScriptBuilder::new().observe(&page).to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let hits: Vec<_> = value["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["method"] == "DOM.getNodeForLocation")
+            .collect();
+        eprintln!("calls={}", value["calls"].as_array().unwrap().len());
+        eprintln!("hits={hits:?}");
+        assert_eq!(hits.len(), 1, "{json}");
+        assert_eq!(hits[0]["result"]["backendNodeId"], 100);
+    }
+}
+
+#[cfg(test)]
+mod overlay_script_tests {
+    use super::*;
+    #[test]
+    fn cookie_backdrop_script_shape() {
+        let backdrop = DomSpec::container(
+            50,
+            500,
+            "generic",
+            "Cookie consent",
+            (0.0, 0.0, 1440.0, 900.0),
+        );
+        let save = DomSpec::button(10, 100, "Save", (1200.0, 780.0, 100.0, 36.0));
+        let accept = DomSpec::button(51, 510, "Accept all", (1200.0, 40.0, 120.0, 36.0));
+        let mut page = PageSpec::new(
+            vec![save, backdrop.with_children(vec![accept])],
+            vec![
+                AxSpec::new(100, "button", "Save", (1200.0, 780.0, 100.0, 36.0)),
+                AxSpec::new(500, "generic", "Cookie consent", (0.0, 0.0, 1440.0, 900.0)),
+                AxSpec::new(510, "button", "Accept all", (1200.0, 40.0, 120.0, 36.0)),
+            ],
+            "http://127.0.0.1/docs",
+            "Docs",
+        );
+        page = page.cover(100, 500);
+        let json = ScriptBuilder::new().observe(&page).to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let methods: Vec<_> = value["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["method"].as_str().unwrap())
+            .collect();
+        assert!(methods.contains(&"DOM.getNodeForLocation"));
+        assert_eq!(clickable_targets(&page).len(), 2);
+        let hits: Vec<_> = value["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["method"] == "DOM.getNodeForLocation")
+            .map(|c| c["result"]["backendNodeId"].as_i64().unwrap())
+            .collect();
+        assert_eq!(hits, vec![500, 510]); // Save covered by backdrop 500
+    }
 }

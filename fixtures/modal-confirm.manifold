@@ -1,0 +1,14 @@
+# hyper-use manifold fixture v1
+# Adversarial (front layer): a modal confirm dialog is open over a project
+# settings page. The page's "Delete project" and "Cancel" buttons are still
+# in the DOM, enabled, on screen, and match their labels exactly, so a
+# label-only gate allows them and a script click fires on them. A person
+# could not click them. The dialog is modal (aria-modal="true") and is not an
+# ancestor of the page buttons.
+viewport w=1440 h=900
+region id=page role=generic label="Project settings" x=0 y=0 w=1440 h=900 actions=focus sources=dom
+region id=page-cancel role=button label="Cancel" x=1060 y=780 w=100 h=36 actions=click,focus parent=page sources=dom,accessibility
+region id=page-delete role=button label="Delete project" x=1200 y=780 w=160 h=36 actions=click,focus parent=page sources=dom,accessibility
+region id=confirm role=dialog label="Delete project?" x=520 y=300 w=400 h=240 actions=focus sources=dom,accessibility flags=modal
+region id=confirm-cancel role=button label="Cancel" x=560 y=480 w=100 h=36 actions=click,focus parent=confirm sources=dom,accessibility
+region id=confirm-delete role=button label="Delete" x=780 y=480 w=100 h=36 actions=click,focus parent=confirm sources=dom,accessibility

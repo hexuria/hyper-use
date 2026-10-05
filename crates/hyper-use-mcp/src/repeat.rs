@@ -34,6 +34,8 @@ pub(crate) struct QueryKey {
     role: Option<&'static str>,
     position: Option<&'static str>,
     action: Option<&'static str>,
+    within: Option<String>,
+    near: Option<String>,
     matcher: String,
     dims: Option<u64>,
 }
@@ -45,6 +47,8 @@ impl QueryKey {
             role: query.role_ref().map(|role| role.as_str()),
             position: query.position_ref().map(|zone| zone.as_str()),
             action: query.action_ref().map(|action| action.as_str()),
+            within: query.within_ref().map(|id| id.as_str().to_owned()),
+            near: query.near_ref().map(|id| id.as_str().to_owned()),
             matcher: matcher.to_owned(),
             dims,
         }

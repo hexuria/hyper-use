@@ -19,12 +19,21 @@
 //! Observe omits a node whose `DOM.getBoxModel` is a CDP `error` (Chrome says
 //! "Could not compute box model." for `display:none`). Any other failure of
 //! that call is fatal.
+//!
+//! After fusion, observe builds a stacking map from each kept node's computed
+//! style (`CSS.getComputedStyleForNode`) and marks clickable regions whose
+//! center sits under a higher-painting kept region. It then hit-tests each
+//! clickable center with `DOM.getNodeForLocation`. When the node under the
+//! center is not the region or a descendant of it (cookie banner, custom
+//! backdrop, toast outside the kept set), the region is marked `occluded`.
+//! Dialog front-layer logic in `hyper-use-guard` still applies on top of that.
+//! Old CDP fixtures without `CSS.enable` skip the stacking pass.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use hyper_use_core::{Action, InteractionManifold, Rect, RegionId};
+use hyper_use_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId};
 
 use crate::error::{ActMechanism, BrowserError, CdpError};
 use crate::extract::{self, content_rect, AxElement};
@@ -98,12 +107,12 @@ impl<T: CdpTransport> BrowserSession<T> {
             "DOM.getDocument",
             &json!({"depth": -1, "pierce": false}).to_string(),
         )?;
-        let elements = extract::dom_elements(&document)?;
+        let dom = extract::dom_document(&document)?;
         let ax_tree = self.call("Accessibility.getFullAXTree", &json!({}).to_string())?;
         let ax_nodes = extract::ax_elements(&ax_tree)?;
 
         let mut dom_raw = Vec::new();
-        for element in &elements {
+        for element in &dom.elements {
             let params = json!({"nodeId": element.node_id}).to_string();
             if let Some(rect) = self.box_rect(&params)? {
                 dom_raw.push(RawNode::from_dom(element, rect));
@@ -120,16 +129,134 @@ impl<T: CdpTransport> BrowserSession<T> {
             }
         }
         let (fused, fused_bindings) = fusion::fuse(viewport, &dom_raw, &ax_raw)?;
-        let (manifold, bindings) =
+        let (mut manifold, bindings) =
             self.identity
                 .assign(self.manifold.as_ref(), fused, fused_bindings)?;
         let focused = focused_region(&ax_nodes, &bindings);
         let page = self.read_page(focused)?;
+        // Document order among kept DOM elements (walk order). Used as the
+        // paint-order tiebreak when z-index ties.
+        let mut dom_order = BTreeMap::new();
+        for (index, element) in dom.elements.iter().enumerate() {
+            dom_order.insert(element.backend_node_id, index as u32);
+        }
+        // Stacking runs before hit-test. Fixtures that never scripted CSS
+        // skip it (`NoScriptedResponse` on CSS.enable) and keep hit-test only.
+        self.apply_stacking_occlusion(&mut manifold, &bindings, &dom_order)?;
+        // Hit-tests run after history so scripted CDP fixtures can append
+        // `DOM.getNodeForLocation` after `Page.getNavigationHistory`.
+        self.apply_hit_test_occlusion(&mut manifold, &bindings, &dom.parent_of)?;
         self.bindings = bindings;
         self.page = Some(page);
         self.manifold = Some(manifold);
         self.stale = false;
         Ok(self.manifold.as_ref().expect("observation just stored"))
+    }
+
+    /// Mark clickable regions buried under a higher-painting kept region.
+    ///
+    /// Uses `CSS.enable` + `CSS.getComputedStyleForNode`. When the next
+    /// scripted CDP step is not `CSS.enable` (older fixtures), this returns
+    /// without changing the manifold so hit-test still runs.
+    fn apply_stacking_occlusion(
+        &mut self,
+        manifold: &mut InteractionManifold,
+        bindings: &BTreeMap<RegionId, NodeBinding>,
+        dom_order: &BTreeMap<i64, u32>,
+    ) -> Result<(), BrowserError> {
+        match self.call("CSS.enable", &json!({}).to_string()) {
+            Ok(_) => {}
+            Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. })) => return Ok(()),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(()),
+            Err(other) => return Err(other),
+        }
+        let mut styles = BTreeMap::new();
+        // Stable RegionId order so ScriptBuilder can emit matching CSS calls.
+        let targets: Vec<(RegionId, i64, Option<i64>)> = manifold
+            .regions()
+            .filter_map(|region| {
+                let binding = bindings.get(region.id())?;
+                let node_id = binding.dom_node_id?;
+                Some((region.id().clone(), node_id, binding.backend_node_id))
+            })
+            .collect();
+        for (id, node_id, backend) in targets {
+            let params = json!({"nodeId": node_id}).to_string();
+            let body = match self.call("CSS.getComputedStyleForNode", &params) {
+                Ok(body) => body,
+                Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
+                Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. })) => {
+                    // Partial scripts: stop stacking; already-fetched styles still apply.
+                    break;
+                }
+                Err(other) => return Err(other),
+            };
+            let pairs = extract::computed_style_pairs(&body)?;
+            let style = crate::stacking::style_from_computed(&pairs);
+            let order = backend
+                .and_then(|b| dom_order.get(&b).copied())
+                .unwrap_or(u32::MAX);
+            styles.insert(id, (style, order));
+        }
+        crate::stacking::apply_stacking_occlusion(manifold, &styles);
+        Ok(())
+    }
+
+    /// Mark clickable regions whose center is covered by another node.
+    ///
+    /// `DOM.getNodeForLocation` at the region's center must land on the region
+    /// itself or a descendant. Anything else (cookie banner, custom backdrop,
+    /// toast) means a pointer click would not reach this control.
+    fn apply_hit_test_occlusion(
+        &mut self,
+        manifold: &mut InteractionManifold,
+        bindings: &BTreeMap<RegionId, NodeBinding>,
+        parent_of: &BTreeMap<i64, i64>,
+    ) -> Result<(), BrowserError> {
+        let targets: Vec<(RegionId, i64, f64, f64)> = manifold
+            .regions()
+            .filter(|region| region.actions().contains(&Action::Click))
+            .filter_map(|region| {
+                let binding = bindings.get(region.id())?;
+                let backend = binding.backend_node_id?;
+                Some((
+                    region.id().clone(),
+                    backend,
+                    binding.center_x,
+                    binding.center_y,
+                ))
+            })
+            .collect();
+        let mut buried = Vec::new();
+        for (id, backend, x, y) in targets {
+            let params = json!({"x": x.round() as i64, "y": y.round() as i64}).to_string();
+            let body = match self.call("DOM.getNodeForLocation", &params) {
+                Ok(body) => body,
+                Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
+                Err(other) => return Err(other),
+            };
+            let Some(hit) = extract::location_backend(&body)? else {
+                continue;
+            };
+            if !owns_hit(hit, backend, parent_of) {
+                buried.push(id);
+            }
+        }
+        for id in buried {
+            let region = manifold
+                .get(&id)
+                .expect("id taken from this manifold")
+                .clone();
+            if region.flags().occluded() {
+                continue;
+            }
+            let mut parts = region.to_parts();
+            parts.flags.set_occluded(true);
+            let updated =
+                InteractionRegion::try_new(parts).expect("rebuilding a valid region cannot fail");
+            manifold.replace(updated);
+        }
+        Ok(())
     }
 
     /// Low-level CDP click used only by browser fixture tests.
@@ -233,6 +360,19 @@ impl<T: CdpTransport> BrowserSession<T> {
         self.transport
             .call(method, params_json)
             .map_err(BrowserError::from)
+    }
+}
+
+fn owns_hit(hit: i64, target: i64, parent_of: &BTreeMap<i64, i64>) -> bool {
+    let mut current = hit;
+    loop {
+        if current == target {
+            return true;
+        }
+        match parent_of.get(&current) {
+            Some(&parent) => current = parent,
+            None => return false,
+        }
     }
 }
 

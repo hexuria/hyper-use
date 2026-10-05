@@ -81,7 +81,15 @@ cap, not the vector. The first column reproduces the "before" totals exactly.
 ## Not changed (deferred)
 
 - Ancestor / container context channel in the query (nested Suspend-row case).
-  No fixture has nested twins yet.
+  Now handled outside the hypervector: `LocateQuery::within` / `near` fold
+  into the shared semantic minimum (`src/context.rs`), so HGRA obeys them too.
+  Fixture: `fixtures/twin-suspend-rows.manifold`. The HGRA vector itself still
+  does not encode context.
+
+This corpus is label ranking on static pages. It is **not** the product bar:
+it never opens a dialog and never puts one label under two parents. The bar
+for variable change is `crates/hyper-use-guard/tests/world_context.rs` (see
+"World context gate" in `docs/DECISIONS.md`).
 - `temporal_stability`: `locate_with` reads the region value; extractors still
   set it to 1, so the 5% weight carries no signal. Out of scope here.
 - The signature still bundles state, sources, and neighbors that no query
@@ -95,3 +103,16 @@ cap, not the vector. The first column reproduces the "before" totals exactly.
 cargo test -p hyper-use-resonance --features hgra --test hgra_remeasure -- --nocapture
 cargo test -p hyper-use-resonance --features hgra --lib bundled_query
 ```
+
+## World-context channel (feat/world-context-gate)
+
+`query_vector` now takes the resolved [`ContextScope`]. When `within` or a
+resolved `near` scope names a container, the query bundles the same permuted
+`parent` bindings the region signature already stores for that container's
+role and label tokens. Cosine therefore prefers in-scope twins; the semantic
+minimum still zeros out-of-scope regions (parity with WeightedMatcher).
+
+Evidence: `hgra_query_vector_encodes_within_as_parent_channel` and
+`hgra_near_encodes_resolved_scope_into_the_query_vector` on
+`fixtures/twin-suspend-rows.manifold`. The 5-case `hgra_remeasure` corpus is
+unchanged (no ancestry on those pages).

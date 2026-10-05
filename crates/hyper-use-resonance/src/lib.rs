@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+mod context;
 mod error;
 mod matcher;
 mod model;
@@ -33,6 +34,7 @@ use hyper_use_geometry::{is_fully_offscreen, normalize, zones};
 #[cfg(feature = "hgra")]
 use hyper_use_hyper::{cosine, Dims, Encoder};
 
+pub use context::ContextScope;
 pub use error::ResonanceError;
 #[cfg(feature = "hgra")]
 pub use hyper_use_hyper::BipolarVector;
@@ -168,12 +170,13 @@ pub fn locate_with(
     model: ResonanceModel,
 ) -> Result<Vec<RankedCandidate>, ResonanceError> {
     let mut memory = Memory::new(encoder);
-    let query_hv = query_vector(query, &mut memory)?;
+    let scope = ContextScope::resolve(query, manifold);
+    let query_hv = query_vector(query, &scope, manifold, &mut memory)?;
     let mut ranked = Vec::with_capacity(manifold.len());
     for region in manifold.regions() {
         let signature = compose_signature(manifold, region, &mut memory)?;
         let hypervector = query_similarity(query_hv.as_ref(), &signature)?;
-        let score = score_parts(manifold, region, query, hypervector, model);
+        let score = score_parts(manifold, region, query, &scope, hypervector, model);
         debug_assert!(score.total.is_finite());
         ranked.push(RankedCandidate {
             rank: 0,
@@ -242,10 +245,14 @@ fn score_parts(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
     query: &LocateQuery,
+    scope: &ContextScope,
     hypervector: f64,
     model: ResonanceModel,
 ) -> ResonanceScore {
-    let semantic = semantic_score(query, region);
+    // World context (within / near) folds into semantic by minimum, the same
+    // way as in the weighted matcher. The hypervector also encodes the
+    // resolved container as parent-channel probes (see `query_vector`).
+    let semantic = semantic_score(query, region).min(scope.score(manifold, region));
     let source_agreement = f64::from(region.sources().count()) / f64::from(SourceMask::KNOWN_COUNT);
     let geometric = geometric_score(manifold.viewport(), region.rect(), query);
     let actionability = actionability_score(region, query);
@@ -750,7 +757,10 @@ mod tests {
         let mut memory = Memory::new(&encoder);
         let probes = query_probes(&query, &mut memory).unwrap();
         assert_eq!(probes.len(), 2);
-        let bundled = query_vector(&query, &mut memory).unwrap().unwrap();
+        let scope = ContextScope::resolve(&query, &manifold);
+        let bundled = query_vector(&query, &scope, &manifold, &mut memory)
+            .unwrap()
+            .unwrap();
         let ranked = locate_with(&manifold, &query, &encoder, model).unwrap();
         let mut bundled_total = std::collections::BTreeMap::new();
         let mut mean_total = std::collections::BTreeMap::new();
@@ -761,10 +771,13 @@ mod tests {
             assert_eq!(candidate.score().hypervector(), hv);
             let mean = probe_mean_similarity(&probes, &signature).unwrap();
             let id = candidate.id().as_str();
-            bundled_total.insert(id, score_parts(&manifold, region, &query, hv, model).total);
+            bundled_total.insert(
+                id,
+                score_parts(&manifold, region, &query, &scope, hv, model).total,
+            );
             mean_total.insert(
                 id,
-                score_parts(&manifold, region, &query, mean, model).total,
+                score_parts(&manifold, region, &query, &scope, mean, model).total,
             );
         }
         let bundled_margin = bundled_total["z-send"] - bundled_total["a-feedback"];
@@ -774,6 +787,91 @@ mod tests {
             "bundled {bundled_margin} probe-mean {mean_margin}"
         );
         assert!(mean_total["z-send"] > mean_total["a-feedback"]);
+    }
+
+    #[test]
+    fn hgra_query_vector_encodes_within_as_parent_channel() {
+        let manifold =
+            parse_fixture(include_str!("../../../fixtures/twin-suspend-rows.manifold")).unwrap();
+        let query = LocateQuery::new()
+            .text("Suspend")
+            .unwrap()
+            .role(Role::Button)
+            .within(RegionId::try_new("row-alpha").unwrap());
+        let encoder = Encoder::new(Dims::DEFAULT);
+        let mut memory = Memory::new(&encoder);
+        let scope = ContextScope::resolve(&query, &manifold);
+        assert_eq!(scope.within().map(RegionId::as_str), Some("row-alpha"));
+        let with_ctx = query_vector(&query, &scope, &manifold, &mut memory)
+            .unwrap()
+            .unwrap();
+        let bare = LocateQuery::new()
+            .text("Suspend")
+            .unwrap()
+            .role(Role::Button);
+        let bare_scope = ContextScope::resolve(&bare, &manifold);
+        let without = query_vector(&bare, &bare_scope, &manifold, &mut memory)
+            .unwrap()
+            .unwrap();
+        assert_ne!(with_ctx.as_slice(), without.as_slice());
+
+        let sig_a = compose_signature(
+            &manifold,
+            manifold.get_str("alpha-suspend").unwrap(),
+            &mut memory,
+        )
+        .unwrap();
+        let sig_b = compose_signature(
+            &manifold,
+            manifold.get_str("beta-suspend").unwrap(),
+            &mut memory,
+        )
+        .unwrap();
+        let cos_a = cosine(&with_ctx, &sig_a).unwrap();
+        let cos_b = cosine(&with_ctx, &sig_b).unwrap();
+        assert!(
+            cos_a > cos_b,
+            "within(row-alpha) should cosine-prefer alpha-suspend ({cos_a}) over beta-suspend ({cos_b})"
+        );
+
+        let ranked = HgraMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "alpha-suspend");
+    }
+
+    #[test]
+    fn hgra_near_encodes_resolved_scope_into_the_query_vector() {
+        let manifold =
+            parse_fixture(include_str!("../../../fixtures/twin-suspend-rows.manifold")).unwrap();
+        let query = LocateQuery::new()
+            .text("Suspend")
+            .unwrap()
+            .role(Role::Button)
+            .near(Some(RegionId::try_new("beta-host").unwrap()));
+        let encoder = Encoder::new(Dims::DEFAULT);
+        let mut memory = Memory::new(&encoder);
+        let scope = ContextScope::resolve(&query, &manifold);
+        assert_eq!(scope.near_scope().map(RegionId::as_str), Some("row-beta"));
+        let hv = query_vector(&query, &scope, &manifold, &mut memory)
+            .unwrap()
+            .unwrap();
+        let sig_b = compose_signature(
+            &manifold,
+            manifold.get_str("beta-suspend").unwrap(),
+            &mut memory,
+        )
+        .unwrap();
+        let sig_a = compose_signature(
+            &manifold,
+            manifold.get_str("alpha-suspend").unwrap(),
+            &mut memory,
+        )
+        .unwrap();
+        assert!(
+            cosine(&hv, &sig_b).unwrap() > cosine(&hv, &sig_a).unwrap(),
+            "near(beta-host) query should cosine-prefer beta-suspend"
+        );
+        let ranked = HgraMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "beta-suspend");
     }
 
     #[test]
@@ -848,7 +946,10 @@ mod tests {
         let mut memory = Memory::new(&encoder);
         let probes = query_probes(&query, &mut memory).unwrap();
         assert_eq!(probes.len(), 4);
-        let bundled = query_vector(&query, &mut memory).unwrap().unwrap();
+        let scope = ContextScope::resolve(&query, &manifold);
+        let bundled = query_vector(&query, &scope, &manifold, &mut memory)
+            .unwrap()
+            .unwrap();
         let model = ResonanceModel::V1;
         // (id, semantic, source, geometric, actionability, temporal, contextual)
         for (id, semantic, source, geometric, actionability, temporal, contextual) in [

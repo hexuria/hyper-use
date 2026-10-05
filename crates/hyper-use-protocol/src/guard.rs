@@ -25,6 +25,12 @@ pub enum GuardReason {
     ProposedNotTop,
     NoEffect,
     WrongEffect,
+    /// The target sits behind a dialog: outside a modal dialog, or under a
+    /// non-modal dialog's box. A script click would bypass the dialog.
+    FrontLayer,
+    /// The front layer (open dialogs) differs from the observation the host
+    /// decided on. The host must observe again before it acts.
+    WorldChanged,
 }
 
 impl GuardReason {
@@ -40,6 +46,8 @@ impl GuardReason {
             Self::ProposedNotTop => "proposed-not-top",
             Self::NoEffect => "no-effect",
             Self::WrongEffect => "wrong-effect",
+            Self::FrontLayer => "front-layer",
+            Self::WorldChanged => "world-changed",
         }
     }
 }

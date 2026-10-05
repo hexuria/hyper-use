@@ -14,10 +14,15 @@ use hyper_use_core::{
     parse_fixture, Action, InteractionManifold, InteractionRegion, LocateQuery, RegionId, Role,
     Zone,
 };
-use hyper_use_guard::{guard_with, GuardRequest, MIN_ALLOW_CONFIDENCE};
+use hyper_use_guard::{
+    blocker, guard_with, with_front_layer, FrontLayer, GuardRequest, WorldSnapshot,
+    MIN_ALLOW_CONFIDENCE,
+};
 use hyper_use_observe::{diff, history::SnapshotId, ManifoldDiff};
 use hyper_use_protocol::{GuardDecision, StateDelta};
-use hyper_use_resonance::{separating_zone, Match, RegionMatcher, RegionState, WeightedMatcher};
+use hyper_use_resonance::{
+    separating_zone, ContextScope, Match, RegionMatcher, RegionState, WeightedMatcher,
+};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
@@ -31,6 +36,59 @@ const _: () = assert!(hyper_use_resonance::TEXT_MISS_CAP < MIN_ALLOW_CONFIDENCE)
 enum Origin {
     Fixture(String),
     Cdp(String),
+}
+
+/// The `near` argument: the focused region of the current observation (the
+/// "cursor"), or an explicit region id.
+enum Near {
+    Focus,
+    Region(RegionId),
+}
+
+impl Near {
+    /// The anchor for this observation. `focus` with no focused region is no
+    /// anchor, which is the default ranking.
+    fn anchor(&self, page: &PageState) -> Option<RegionId> {
+        match self {
+            Self::Focus => page.focused().cloned(),
+            Self::Region(id) => Some(id.clone()),
+        }
+    }
+}
+
+fn parse_near(arguments: &Value) -> Result<Option<Near>, ToolError> {
+    match opt_str(arguments, "near")? {
+        None => Ok(None),
+        Some("focus") => Ok(Some(Near::Focus)),
+        Some(raw) => RegionId::try_new(raw)
+            .map(|id| Some(Near::Region(id)))
+            .map_err(|_| ToolError::UnknownRegion(raw.to_owned())),
+    }
+}
+
+fn with_near(query: LocateQuery, near: Option<&Near>, page: &PageState) -> LocateQuery {
+    match near {
+        Some(near) => query.near(near.anchor(page)),
+        None => query,
+    }
+}
+
+/// `{"focused": id|null, "front_layer": [{id, label, modal}]}` facts of one
+/// observation, shared by observe, locate, and guard.
+fn world_json(manifold: &InteractionManifold, page: &PageState) -> (Value, Value) {
+    let focused = page.focused().map_or(Value::Null, |id| json!(id.as_str()));
+    let layer: Vec<Value> = FrontLayer::of(manifold)
+        .entries()
+        .iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id.as_str(),
+                "label": manifold.get(&entry.id).map_or("", |region| region.label()),
+                "modal": entry.modal,
+            })
+        })
+        .collect();
+    (focused, Value::Array(layer))
 }
 
 /// Run one tool against a fresh [`Server`]. Keeps no state between calls.
@@ -83,7 +141,9 @@ pub(crate) fn dispatch(
 }
 
 fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let (snapshot, raw, page) = observe_origin(server, &resolve_origin(arguments)?)?;
+    // State as a person sees it: regions behind an open dialog read occluded.
+    let manifold = with_front_layer(&raw);
     let regions: Vec<Value> = manifold
         .regions()
         .map(|region| {
@@ -91,10 +151,12 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
                 "id": region.id().as_str(),
                 "role": region.role().as_str(),
                 "label": region.label(),
+                "parent": region.parent().map_or(Value::Null, |id| json!(id.as_str())),
                 "state": state_json(&manifold, region),
             })
         })
         .collect();
+    let (focused, front_layer) = world_json(&raw, &page);
     let mut body = outcome(
         "observe",
         Value::Null,
@@ -107,21 +169,25 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
         None,
     );
     insert(&mut body, "regions", Value::Array(regions));
+    insert(&mut body, "focused", focused);
+    insert(&mut body, "front_layer", front_layer);
     insert(&mut body, "snapshot", json!(snapshot.get()));
     Ok(body)
 }
 
 fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     let origin = resolve_origin(arguments)?;
-    let (snapshot, manifold, _page) = observe_origin(server, &origin)?;
-    let query = build_query(arguments)?;
+    let (snapshot, raw, page) = observe_origin(server, &origin)?;
+    let near = parse_near(arguments)?;
+    let query = with_near(build_query(arguments)?, near.as_ref(), &page);
+    let manifold = with_front_layer(&raw);
     let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
         return Err(ToolError::DimsRequireHgra);
     }
     let ranked = rank(&manifold, &query, matcher_name, arguments)?;
     let key = QueryKey::new(&query, matcher_name, opt_u64(arguments, "dims")?);
-    let count = server.record_locate(&origin_key(&origin), &manifold, key);
+    let count = server.record_locate(&origin_key(&origin), &raw, key);
     let top = ranked.first();
     let target = match top {
         Some(candidate) => target_of(&manifold, candidate.id()),
@@ -144,6 +210,7 @@ fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     insert(&mut body, "matcher", json!(matcher_name));
     insert(&mut body, "benchmark", json!(false));
     insert(&mut body, "candidates", candidates_of(&manifold, &ranked));
+    insert(&mut body, "scope", scope_json(&query, &manifold));
     insert(&mut body, "snapshot", json!(snapshot.get()));
     let signals = if count >= REPEAT_THRESHOLD {
         vec![repeated_query_json(&manifold, &ranked, count)]
@@ -203,7 +270,8 @@ fn rank(
 }
 
 fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
-    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let (snapshot, raw, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
+    let manifold = with_front_layer(&raw);
     let region = require_region(arguments)?;
     let found = manifold
         .get(&region)
@@ -213,6 +281,8 @@ fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
         "role": found.role().as_str(),
         "label": found.label(),
         "state": state_json(&manifold, found),
+        "parent": found.parent().map_or(Value::Null, |id| json!(id.as_str())),
+        "blocked_by": blocker(&raw, found).map_or(Value::Null, |dialog| json!(dialog.id().as_str())),
         "x": found.rect().x(),
         "y": found.rect().y(),
         "width": found.rect().width(),
@@ -236,24 +306,75 @@ fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
 
 fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     let origin = resolve_origin(arguments)?;
-    let query = build_guard_query(arguments)?;
-    let mut request = GuardRequest::click(query);
+    let base_query = build_guard_query(arguments)?;
+    let near = parse_near(arguments)?;
     let proposed = match opt_str(arguments, "proposed")? {
         Some(raw) => Some(raw),
         None => opt_str(arguments, "region")?,
     };
-    if let Some(raw) = proposed {
-        let id = RegionId::try_new(raw).map_err(|_| ToolError::UnknownRegion(raw.to_owned()))?;
-        request = request.proposed(id);
-    }
+    let proposed = match proposed {
+        Some(raw) => {
+            Some(RegionId::try_new(raw).map_err(|_| ToolError::UnknownRegion(raw.to_owned()))?)
+        }
+        None => None,
+    };
     let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
     if matcher_name != "weighted" {
         return Err(ToolError::UnknownMatcher(matcher_name.to_owned()));
     }
-    let (snapshot, manifold, _page) = observe_origin(server, &origin)?;
+    // The observation the host decided on. Its world snapshot (focus, dialogs,
+    // clickable ids, occluded set) is compared with the world observed now.
+    let seen = match opt_snapshot(arguments, "seen_snapshot")? {
+        Some(id) => {
+            let seen = server.snapshot(id)?;
+            if seen.origin != origin_key(&origin) {
+                return Err(ToolError::InvalidArguments(format!(
+                    "seen_snapshot {id} was observed from {}, not {}",
+                    seen.origin,
+                    origin_key(&origin)
+                )));
+            }
+            Some(WorldSnapshot::of(
+                &seen.manifold,
+                seen.page.focused().cloned(),
+            ))
+        }
+        None => None,
+    };
+    let (snapshot, manifold, page) = observe_origin(server, &origin)?;
+    let query = with_near(base_query, near.as_ref(), &page);
+    let mut request = GuardRequest::click(query.clone()).focused(page.focused().cloned());
+    if let Some(id) = proposed {
+        request = request.proposed(id);
+    }
+    if let Some(seen) = seen {
+        request = request.seen_world(seen);
+    }
     let decision = guard_with(&manifold, &request, &WeightedMatcher::default())
         .map_err(|err| ToolError::Ranker(err.to_string()))?;
-    Ok(decision_json("guard", snapshot, &manifold, decision))
+    let mut body = decision_json("guard", snapshot, &manifold, decision);
+    let (focused, front_layer) = world_json(&manifold, &page);
+    insert(&mut body, "focused", focused);
+    insert(&mut body, "front_layer", front_layer);
+    insert(
+        &mut body,
+        "scope",
+        scope_json(&query, &with_front_layer(&manifold)),
+    );
+    Ok(body)
+}
+
+/// `{"within": id|null, "near": anchor|null, "near_scope": id|null}`: the
+/// context the ranking used. `near_scope` null with an anchor means the
+/// anchor gave no scope and the default ranking ran.
+fn scope_json(query: &LocateQuery, manifold: &InteractionManifold) -> Value {
+    let scope = ContextScope::resolve(query, manifold);
+    let id = |id: Option<&RegionId>| id.map_or(Value::Null, |id| json!(id.as_str()));
+    json!({
+        "within": id(scope.within()),
+        "near": id(query.near_ref()),
+        "near_scope": id(scope.near_scope()),
+    })
 }
 
 fn build_guard_query(arguments: &Value) -> Result<LocateQuery, ToolError> {
@@ -574,6 +695,11 @@ fn build_query(arguments: &Value) -> Result<LocateQuery, ToolError> {
         let parsed = Action::parse(&action.to_ascii_lowercase())
             .ok_or_else(|| ToolError::UnknownAction(action.to_owned()))?;
         query = query.action(parsed);
+    }
+    if let Some(within) = opt_str(arguments, "within")? {
+        let id =
+            RegionId::try_new(within).map_err(|_| ToolError::UnknownRegion(within.to_owned()))?;
+        query = query.within(id);
     }
     Ok(query)
 }

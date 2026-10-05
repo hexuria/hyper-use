@@ -205,4 +205,33 @@ mod tests {
         assert_eq!(err, ExecError::Rejected("readonly".into()));
         assert!(ledger.is_consumed(t.ticket_id));
     }
+
+    #[test]
+    fn exec_error_display_is_exact() {
+        let cases = [
+            (
+                ExecError::Ticket(TicketInvalid::TicketConsumed),
+                "ticket ticket-consumed",
+            ),
+            (
+                ExecError::Gate(GuardReason::FrontLayer),
+                "gate refused: front-layer",
+            ),
+            (
+                ExecError::Observe("socket closed".into()),
+                "observe before input failed: socket closed",
+            ),
+            (
+                ExecError::Rejected("readonly".into()),
+                "page rejected input: readonly",
+            ),
+            (
+                ExecError::Dispatch("timeout".into()),
+                "dispatch failed: timeout",
+            ),
+        ];
+        for (err, want) in cases {
+            assert_eq!(err.to_string(), want);
+        }
+    }
 }

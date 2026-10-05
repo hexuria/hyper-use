@@ -1,10 +1,21 @@
 //! Property tests for the executor boundary and abstention.
 
-use hyper_use_agent::{execute_ticketed, AgentBuilder, AgentOutcome, Input, MockBrowser};
+use hyper_use_agent::{
+    execute_ticketed, AgentBuilder, AgentOutcome, ExecError, Input, MockBrowser,
+};
 use hyper_use_core::{parse_fixture, Action, InteractionManifold, RegionId};
 use hyper_use_guard::{gate, TicketLedger};
 use hyper_use_policy::PuaPolicy;
+use hyper_use_protocol::{GuardReason, TicketInvalid};
 use proptest::prelude::*;
+
+const TICKET_INVALID: [TicketInvalid; 5] = [
+    TicketInvalid::WorldChanged,
+    TicketInvalid::TargetGone,
+    TicketInvalid::TargetChanged,
+    TicketInvalid::TicketConsumed,
+    TicketInvalid::TicketMismatch,
+];
 
 #[derive(Clone, Copy)]
 enum Extra {
@@ -124,5 +135,62 @@ proptest! {
         let outcome = agent.run();
         prop_assert!(matches!(outcome, AgentOutcome::Abstained { .. }), "{:?}", outcome);
         prop_assert!(agent.browser_mut().press_log().is_empty());
+    }
+
+    /// Stale (observe → decide again) is exactly world / target drift. A spent
+    /// lease (`ticket-consumed`), an operation swap (`ticket-mismatch`), a gate
+    /// refusal, an observe failure, a page rejection, or a dispatch failure is
+    /// never "stale", so the agent never silently retries it.
+    #[test]
+    fn is_stale_is_exactly_world_or_target_drift(k in 0usize..9) {
+        let err = match k {
+            0..=4 => ExecError::Ticket(TICKET_INVALID[k]),
+            5 => ExecError::Gate(GuardReason::Occluded),
+            6 => ExecError::Observe("x".into()),
+            7 => ExecError::Rejected("x".into()),
+            _ => ExecError::Dispatch("x".into()),
+        };
+        let expect = matches!(
+            err,
+            ExecError::Ticket(
+                TicketInvalid::WorldChanged | TicketInvalid::TargetChanged | TicketInvalid::TargetGone
+            )
+        );
+        prop_assert_eq!(err.is_stale(), expect, "{:?}", err);
+    }
+
+    /// Once the executor consumed a ticket (success or page rejection), any
+    /// later use is `ticket-consumed` — even if the world also went stale —
+    /// and nothing more is dispatched.
+    #[test]
+    fn consumed_beats_stale_at_the_executor(
+        n in 2usize..6,
+        pick in 0usize..6,
+        reject: bool,
+        mutation in 0u8..4,
+    ) {
+        let pick = pick % n;
+        let before = page(n, None, None, Extra::None, false);
+        let target = RegionId::try_new(format!("b{pick}")).unwrap();
+        let ticket = gate(&before, &target, Action::Click, None, 0).unwrap();
+        let mut browser = MockBrowser::new(before.clone());
+        if reject {
+            browser.reject_next("disabled at dispatch");
+        }
+        let mut ledger = TicketLedger::new();
+        let first = execute_ticketed(&mut browser, &mut ledger, &ticket, &Input::Click);
+        prop_assert_eq!(first.is_ok(), !reject);
+        prop_assert!(ledger.is_consumed(ticket.ticket_id));
+        let inputs_after_first = browser.input_log().len();
+        browser.replace_manifold(match mutation {
+            0 => before.clone(),
+            1 => page(n, Some((pick, "Delete everything")), None, Extra::None, false),
+            2 => page(n, None, Some(pick), Extra::None, false),
+            _ => page(n, None, None, Extra::None, true),
+        });
+        let err = execute_ticketed(&mut browser, &mut ledger, &ticket, &Input::Click).unwrap_err();
+        prop_assert_eq!(&err, &ExecError::Ticket(TicketInvalid::TicketConsumed));
+        prop_assert!(!err.is_stale());
+        prop_assert_eq!(browser.input_log().len(), inputs_after_first);
     }
 }

@@ -22,7 +22,7 @@
 
 use hyper_use_browser::ScrollDirection;
 use hyper_use_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
-use hyper_use_guard::{gate, with_front_layer, world_fingerprint, TicketLedger, WorldSnapshot};
+use hyper_use_guard::{gate, with_front_layer, TicketLedger};
 use hyper_use_policy::{
     split_sequential_clauses, AgentGoal, BrowserPolicy, DeterministicTextResolver, HistoryEntry,
     PolicyDecision, PolicyOutcome, TextContext, TextResolver,
@@ -43,13 +43,21 @@ pub enum AgentState {
 }
 
 /// A policy choice waiting for ticketed execution.
+///
+/// There is exactly **one** staleness barrier between this prediction and page
+/// input: the [`hyper_use_protocol::ActionTicket`] issued by
+/// [`hyper_use_guard::gate`] on [`Self::manifold`] and revalidated by
+/// [`crate::execute_ticketed`] against a fresh observation (target-scoped world
+/// fingerprint + target role / label / fingerprint). A prediction carries no
+/// fingerprint of its own, so nothing here implies a second pre-ticket check
+/// (ADR 0005 §R2).
 #[derive(Clone, Debug)]
 pub struct Predicted {
     pub decision: PolicyDecision,
-    /// TYPE_TEXT text or SELECT option, from the [`TextResolver`].
+    /// TYPE_TEXT text or SELECT option, from the [`TextResolver`]. Its context
+    /// (goal clause, target label / role / fingerprint) is checked once at
+    /// resolution time; target drift after that is caught by the ticket.
     pub payload: Option<String>,
-    pub text_fingerprint: Option<u64>,
-    pub observation_fingerprint: u64,
     pub space_captured_at_ms: u64,
     /// The observation the decision was made on (ticket is issued against it).
     pub manifold: InteractionManifold,
@@ -296,7 +304,6 @@ where
         }
 
         let mut payload = None;
-        let mut text_fingerprint = None;
         if matches!(decision.kind, ActionKind::TypeText | ActionKind::Select) {
             let ctx = TextContext {
                 goal: self.goal.clone(),
@@ -322,17 +329,14 @@ where
             }
             // The target is revalidated after resolution by the executor
             // (fresh observe + ticket), so resolver latency cannot go stale
-            // unnoticed.
-            text_fingerprint = Some(resolution.context_fingerprint);
+            // unnoticed. The ticket binds the same target role / label /
+            // fingerprint the text context was built from.
             payload = Some(resolution.text);
         }
 
-        let world = WorldSnapshot::of(&manifold, focused.clone());
         self.predicted = Some(Predicted {
             decision,
             payload,
-            text_fingerprint,
-            observation_fingerprint: world_fingerprint(&world),
             space_captured_at_ms: space.captured_at_ms(),
             manifold,
             focused,

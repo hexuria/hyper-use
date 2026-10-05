@@ -1,98 +1,137 @@
-# Impeccable audit
+# Impeccable audit — Agent + PUA + ticket path
 
-Current note, 2026-10-05 (Asia/Manila). Baseline reviewed: `9baa21e`
-(179 passed, 1 ignored). Updated after the live-drive fixes (238 passed,
-1 ignored). This note covers the fixes on
-`gol/serene-cray-7dwros` after that baseline. It is not a proof.
+Current note, 2026-10-06 (Asia/Manila). Baseline reviewed: `87ffc2d` (main
+after PR #17). Read-only impeccable-rust audit of the post-pivot path
+(ADR 0001–0004), then remediation R1–R6 on `feat/audit-r1-r6`. After
+remediation: `cargo test --workspace` 287 passed, 0 failed (36 ignored: live
+Chrome / paid remote). It is not a proof.
 
-The phase-1 snapshot that used to live in this file is historical and is not
-reproduced. `#![forbid(unsafe_code)]` stays. Rust is pinned to 1.99.0 and
+This supersedes the pre-pivot note (baseline `9baa21e`, observe / MCP
+preflight / legacy executor), which is in git history. Its findings on the
+MCP preflight surface (gate rounding, confidence range, text-miss cap,
+`repeated_query`, CDP endpoint resolution) still hold and still have their
+owner tests; they are not repeated here.
+
+`#![forbid(unsafe_code)]` stays on every crate. Rust is pinned to 1.99.0 and
 every crate is `publish = false`.
 
-## Failure class and owner
+## Scope
 
-| Failure class | Owner | Status |
-| --- | --- | --- |
-| Gate rounding (0.5496 clicked as 550 millis) | executor unit tests, 64-case gate proptest | fixed: raw `f64` compare |
-| Caller confidence outside `[0, 1]` | MCP exact-error test, tools/call proptest | fixed: `ConfidenceOutOfRange` |
-| Stale `before` after `observe_after: false` | browser session test, MCP stale test | fixed: `fresh_manifold()` |
-| History failure read as empty URL (false delta / false NoEffect) | `page_delta` and `verify_delta` unit tests | fixed: `Option` page state |
-| Two AX-only nodes on one backend id fail observe | fusion unit test | fixed: `ax{id}-{k}` |
-| Error variants with no exact assertion | exact-error tests per crate | covered, except two unreachable |
-| Malformed CDP / JSON-RPC input panics | 16-case garbage proptests | unchanged |
-| Structurally valid but random CDP / tools/call | 16- and 32-case structured proptests | added |
-| Dependency advisories | `cargo deny check advisories` CI job | added |
-| Optional `jev` feature rot | `cargo check --features jev` CI step | added |
-| Text miss scores 0.50 from unasked constraints; unnamed node wins on id (live t7) | 256-case text-miss proptest, matcher unit tests, Acme replica t7 | fixed: `TEXT_MISS_CAP` 0.45 in both matchers |
-| observe cannot tell a disabled control from an enabled twin (live) | `RegionState` unit tests, MCP settings-saves test | fixed: typed `state` in observe, inspect, locate |
-| Caller repeats an identical locate on an unchanged page (live t8) | repeat.rs unit tests, MCP repeat test, Acme replica t8 | fixed: `repeated_query` signal (data only) |
-| HGRA score parts unpinned (42 missed mutants) | `hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum` | covered |
-| `http://` CDP endpoint resolved to the browser target (live) | `ws.rs` `/json/list` unit tests | fixed in `73a975a` |
-| Concurrency, crash recovery, unsafe | none needed | not applicable (one thread, no unsafe, no recovery) |
+```text
+observe → ActionSpace (with_front_layer) → PuaPolicy / RemotePolicy
+  → TextResolver (TYPE_TEXT / SELECT) → gate → ActionTicket
+  → execute_ticketed: ledger → kind == ticket.action → fresh observe
+      → revalidate (of_target world + target role/label/fp) → gate
+      → mark consumed → dispatch(ticket.target_id)
+  → settle → observe → diff / value check → history
+```
+
+Files: `hyper-use-agent/src/{agent,executor,runtime,verify_map}.rs`,
+`hyper-use-guard/src/{gate,ticket,world}.rs`, `hyper-use-policy/src/{pua_policy,text,remote,goal}.rs`,
+`hyper-use-protocol/src/ticket.rs`.
+
+## Findings and remediation
+
+| ID | Class | Finding at `87ffc2d` | Fix | Owner |
+| --- | --- | --- | --- | --- |
+| R1 | REQUIRED | `consume_ticket_once` pressed **then** marked consumed; a failed press left the lease reusable, contrary to its own doc and to ADR 0003 §1 | consume before press, same order as `execute_ticketed` ([ADR 0005](adr/0005-audit-remediation-consume-order-single-barrier.md)) | `consume_ticket_once_marks_consumed_before_press_so_failed_press_cannot_retry`, `consume_ticket_once_stale_does_not_consume_or_press` |
+| R2 | REQUIRED | `Predicted::{observation_fingerprint, text_fingerprint}` were write-only: implied a second pre-ticket barrier that did not exist | removed; `Predicted` doc states the ticket is the single barrier (ADR 0005 §2) | compile-time (fields gone); executor props |
+| R3 | REQUIRED | `AGENTS.md` still said "not an agent / no click / MCP is the surface" | rewritten to PRD / ADR 0001 with the anti-drift block | review |
+| R4 | USEFUL | this file described the pre-pivot path | superseded by this note | — |
+| R5 | USEFUL | no boundary test for `NEIGHBOR_RADIUS_PX`, no focus-only test under `of_target`, stale vs consumed unpinned | property + adversarial tests | `guard/tests/ticket_props.rs`, `agent/tests/props.rs` |
+| R6 | USEFUL | no mutation testing on the safety boundary | nightly + manual cargo-mutants workflow | `.github/workflows/mutants.yml` |
+
+Intentional, not a finding: MCP ranked `guard()` keeps the float `0.55` /
+`0.05` gate for the historical A5 / A6 arms. The agent path never calls it.
+It retires with A5 / A6.
+
+## Failure class and owner (agent path)
+
+| Failure class | Owner |
+| --- | --- |
+| Executed target not from the decided observation's action space | `agent.rs` off-menu / kind-mismatch guard; `adversarial.rs` |
+| Hidden / disabled / readonly / occluded / front-layer / offscreen target executes | `gate.rs` unit tests; executor re-gate on fresh region |
+| Target substituted or operation swapped at the executor | `executor.rs` `operation_swap_is_refused_without_input`; `props.rs` substitution prop |
+| Stale ticket executes (rerender, modal, target gone, nearby peer) | `props.rs` `stale_never_executes_and_target_cannot_be_substituted`; `executor.rs` modal / mutated tests |
+| Ticket replayed after success, page rejection, or failed press | `executor.rs` `executes_exact_ticket_target_once`, `page_rejection_consumes_ticket`; `props.rs` `consumed_beats_stale_at_the_executor`; R1 tests in `ticket.rs` |
+| Spent lease misread as stale (silent retry) | `props.rs` `is_stale_is_exactly_world_or_target_drift`; `ticket_props.rs` `consumed_ticket_is_never_classified_stale` |
+| Neighborhood radius off-by-one (159 / 160 / 161) | `ticket_props.rs` boundary test + `neighborhood_inclusion_is_distance_le_radius`, `new_peer_is_stale_iff_inside_radius` |
+| Parented neighborhood (same-parent sibling far away, foreign row nearby) | `ticket_props.rs` parented tests |
+| Focus-only change not detected under `of_target` | `ticket_props.rs` `focus_only_change_is_world_changed_under_of_target` |
+| Ticket attribute check weakened (role / label / fingerprint) | `ticket.rs` `revalidate_checks_role_label_and_fingerprint_independently` |
+| World fingerprint collisions | `ticket.rs` `world_fingerprint_has_no_collisions_across_distinct_worlds` |
+| PUA abstention becomes input | `props.rs` `abstain_never_executes` |
+| Text payload from PUA / wrong context | `policy/src/text.rs` tests; agent context-fingerprint check |
+| Remote reply carries selector / coordinates / script / off-menu id | `policy/src/remote.rs` tests (feature `remote`) |
+| Concurrency, crash recovery, unsafe | none needed (single-threaded blocking CDP, no recovery protocol, no `unsafe`) |
+
+## Mutation testing
+
+Targets (R6): `crates/hyper-use-guard/src/gate.rs`, `ticket.rs`,
+`crates/hyper-use-agent/src/executor.rs`, and in
+`crates/hyper-use-guard/src/world.rs` only `of_target` / `neighborhood_of` /
+`nearby`. cargo-mutants 27.1.0, default test scope (the mutated file's
+package).
+
+| Run | Mutants | Caught | Missed | Unviable |
+| --- | --- | --- | --- | --- |
+| gate + ticket + executor, at `87ffc2d` + R1/R2 | 37 | 25 | 8 | 4 |
+| gate + ticket + executor, after R5 tests | 36 (1 excluded) | 32 | 0 | 4 |
+| world `of_target` set, at `87ffc2d` | 14 | 8 | 4 | 2 |
+| world `of_target` set, after R5 tests | 13 | 11 | 0 | 2 |
+
+Misses closed: `ExecError` / `ConsumeError` `Display` and `source` (exact
+string tests); `revalidate` `||` → `&&` (independent role / label /
+fingerprint checks); FNV per-byte `^=` → `|=` and separator `^=` → `&=`
+(no-collision test); same-parent sibling match guard (parented neighborhood
+tests). The redundant `(None, None) => {}` arm in `neighborhood_of` was an
+equivalent mutant and was removed.
+
+Excluded as equivalent (`.cargo/mutants.toml`): the `mix` segment separator
+`*hash ^= 0xff` → `|= 0xff`. It is still a separator; distinguishing it needs
+a 64-bit collision no cheap deterministic test can build.
+
+Run locally (output outside the tree; ~2–3 min on 8 cores):
+
+```sh
+cargo install cargo-mutants --locked   # once
+cargo mutants --no-shuffle -j 3 --timeout 180 -o /tmp/hu-mut-a \
+  -f crates/hyper-use-guard/src/gate.rs \
+  -f crates/hyper-use-guard/src/ticket.rs \
+  -f crates/hyper-use-agent/src/executor.rs
+cargo mutants --no-shuffle -j 3 --timeout 180 -o /tmp/hu-mut-b \
+  -f crates/hyper-use-guard/src/world.rs --re 'of_target|neighborhood_of|nearby'
+```
+
+Exit code 0 = all caught; 2 = missed mutants (see `mutants.out/missed.txt`);
+3 = timeouts. CI: `.github/workflows/mutants.yml` runs both sets nightly at
+02:00 Asia/Manila and on `workflow_dispatch`; it is **not** a PR check
+(it rebuilds per mutant). Results upload as the `mutants-*` artifacts.
 
 ## What was run
 
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace` before every commit.
-- `cargo check -p hyper-use-cli --features jev`: ok.
-- `cargo deny check advisories` (cargo-deny 0.20.2, all features): `advisories ok`.
-- cargo-mutants 27.1.0 on `observe/src/history.rs`, `observe/src/identity.rs`,
-  and `executor/src/lib.rs` (`--timeout 120 --jobs 2`, output outside the tree),
-  and again on the live-drive fixes (files listed under the table).
-
-## Mutants, before and after
-
-| Run | Mutants | Caught | Missed | Unviable | Timeout |
-| --- | --- | --- | --- | --- | --- |
-| Before (at `9baa21e`) | 181 | 111 | 19 | 49 | 2 |
-| After | 143 | 97 | 2 | 44 | 0 |
-| Live-drive fixes, before (at `7395922`) | 180 | 118 | 45 | 17 | 0 |
-| Live-drive fixes, after | 180 | 163 | 0 | 17 | 0 |
-
-The live-drive rows cover `resonance/src/lib.rs`, `resonance/src/state.rs`,
-`mcp/src/repeat.rs`, `mcp/src/server.rs`, and the `locate`,
-`repeated_query_json`, and `state_json` mutants in `mcp/src/tools.rs`. Of the
-45 misses, 42 were HGRA score parts no test pinned (pre-existing), two were
-`Snapshot::origin` in loop detection, and one was `take_session`'s retain.
-
-For the first two rows, the count dropped because the dead `signature_jaccard` (11 of the 19 misses)
-was deleted. The two remaining misses are equivalent mutants, not gaps:
-
-- `executor/src/lib.rs` `margin < MIN_ACT_MARGIN - MARGIN_EPSILON` to `<=`:
-  with `top >= 0.55`, `top - runner_up` is a multiple of an ulp near 1e-16 and
-  cannot equal `0.05 - 1e-9` exactly.
-- `select_act_executor` filter `&&` to `||`: `DEFAULT_POLICY_ORDER` already
-  omits Browser Use and CUA, so the filter is defensive.
-
-The "after" row is the full run on the final tests, with the last two kills
-confirmed by a targeted re-run of `gate_ranked_confidence`.
-
-## Unreachable error variants
-
-- `CompareError::TransportCalledBelowThreshold`: the gate runs before press,
-  so no test can reach it without changing the product.
-- `ToolError::Ranker`: `WeightedMatcher` never errors and HGRA dimensions are
-  validated before ranking.
-
-These have no exact test. A fake test would not prove anything.
+  `cargo test --workspace` (287 passed, 36 ignored).
+- `cargo test -p hyper-use-resonance --features hgra`,
+  `cargo check -p hyper-use-cli --features jev`,
+  `cargo test -p hyper-use-policy -p hyper-use-agent --features hyper-use-agent/remote,hyper-use-policy/remote`.
+- cargo-mutants as above.
 
 ## Deliberately skipped
 
-- Miri, sanitizers, Loom, Kani, TLA+, Lean: no `unsafe` and no concurrent
-  core.
-- cargo-fuzz: not a CI job. The structured proptests and the garbage
-  proptests own parse and tools/call shapes at small case counts.
-- cargo-public-api and valgrind: not installed on the audit machine; not
-  installed for this audit.
-- cargo-semver-checks: not justified until a crate is published.
-- `iai-callgrind` and wall-clock regression gates: the 2000-region test is a
-  smoke check, not a benchmark of Browser Use or CUA.
-- Live Chrome stays `#[ignore]`. Browser Use and CUA stay replay fixtures.
-- Region storage stays array-of-structs. macOS accessibility stays
-  `NotImplemented`.
+- Loom, Kani, TLA+, Miri, Lean: **NOT JUSTIFIED** for this path. No `unsafe`;
+  the only atomic is the ticket-id counter (`Relaxed`, uniqueness only); the
+  CDP client is blocking and single-threaded; there is no recovery protocol.
+- cargo-fuzz: not a CI job. Structured and garbage proptests own CDP JSON and
+  tools/call shapes at small case counts.
+- cargo-semver-checks / cargo-public-api: not justified until a crate is
+  published. R2 removes two public fields; API is 0.1.
+- Live Chrome and paid remote stay `#[ignore]`; CI uses CDP replay fixtures.
 
-## Known limits
+## Deferred (out of scope for R1–R6)
 
-See "Known limits, not fixed" in `docs/DECISIONS.md`: identity map growth,
-no loopback check, no CDP connect timeout, O(n*m) `match_regions`, and the
-identity step that does not check role on a reused backend id.
+- Live A/B/C/D on pinned main (needs jev-ultrafast / paid remote).
+- Model-backed `TextResolver`.
+- iframes, shadow DOM, virtualized lists, autocomplete.
+- Retiring the MCP float gate with A5 / A6.
+- Known limits in `docs/DECISIONS.md` ("Known limits, not fixed").

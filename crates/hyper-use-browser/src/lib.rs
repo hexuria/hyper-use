@@ -282,6 +282,44 @@ mod phase2 {
     }
 
     #[test]
+    fn observe_records_the_nearest_dom_parent() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let calls = value["calls"].as_array_mut().unwrap();
+        let buttons = calls[1]["result"]["root"]["children"].take();
+        calls[1]["result"]["root"]["children"] = serde_json::json!([{
+            "nodeId": 5,
+            "backendNodeId": 50,
+            "nodeType": 1,
+            "nodeName": "NAV",
+            "attributes": ["aria-label", "Account"],
+            "children": buttons
+        }]);
+        calls.insert(
+            3,
+            serde_json::json!({
+                "method": "DOM.getBoxModel",
+                "params": {"nodeId": 5},
+                "result": {"model": {"content": [380, 280, 500, 280, 500, 400, 380, 400]}}
+            }),
+        );
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert_eq!(manifold.len(), 3);
+        let parent = |id: &str| {
+            manifold
+                .get_str(id)
+                .unwrap()
+                .parent()
+                .map(|parent| parent.to_string())
+        };
+        assert_eq!(parent("n100").as_deref(), Some("n50"));
+        assert_eq!(parent("n200").as_deref(), Some("n50"));
+        assert_eq!(parent("n50"), None);
+    }
+
+    #[test]
     fn single_observation_ids_are_unchanged() {
         let transport =
             ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();

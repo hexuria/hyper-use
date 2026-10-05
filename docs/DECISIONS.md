@@ -123,9 +123,10 @@ model of the same score without a conformance fixture.
 - Live CDP does not launch Chrome. `wss://` is refused. Occlusion is not
   detected. Unlabeled generic DOM containers are not regions unless they are
   a known control tag or carry a label or an explicit role.
-- Fusion can merge two same-label controls whose centers are within 8px even
-  when IoU is low. A duplicate accessibility node for one DOM node is left
-  as its own region.
+- The heuristic fusion pass can merge two same-label controls whose centers
+  are within 8px even when IoU is low. It only sees nodes with no backend-id
+  partner. A second accessibility node for one DOM node is left as its own
+  region.
 - CDP snapshots store `captured_at_ms = 0`. The ranker does not read a clock.
 - No learned embeddings and no LLM. Symbols are the fixed encoder.
 - A bundle component that sums to exactly 0 becomes `+1`. There is no other
@@ -200,7 +201,8 @@ through, so a short fixture cannot become a silent coordinate click.
 
 Fusion v1: label Jaccard >= 0.5 or either label empty; roles equal or either
 generic; IoU >= 0.5 or centroid distance <= 8px. Greedy, highest IoU. The
-stored rect is the DOM rect. The id is `n{backendNodeId}`.
+stored rect is the DOM rect. The id is `n{backendNodeId}`. Fusion v2 (below)
+adds a backend-id join ahead of this heuristic.
 
 `ComputerTask` has constructors `locate` and `act` only. Constraints and
 expected outcome are data. There is no planner.
@@ -608,3 +610,33 @@ resolves node 90, not 10), `distant_same_label_does_not_inherit_identity`,
 `single_observation_ids_are_unchanged`,
 `a_rerender_inherits_and_a_reused_backend_id_is_minted_fresh`, and the 16-case
 proptest `reobserving_an_identical_manifold_keeps_every_id`.
+
+## Fusion v2: backend join first, and DOM parents
+
+Chrome gives a DOM node a `backendNodeId` and its accessibility node a
+`backendDOMNodeId`. Fusion v1 ignored that key and paired the two trees by
+label overlap and geometry. A link whose accessible name adds screen-reader
+text ("Read more" vs "Read more about our pricing plans") split into two
+regions, `n{b}` and `ax{b}`, that then competed in the ranker. Fusion v2 joins
+on the backend id first; the v1 heuristic runs only on nodes with no backend
+partner. The merge itself is unchanged: the accessibility label wins when it is
+not empty, a generic DOM role takes the accessibility role, and the stored rect
+is the DOM rect. Fusion is still the only DOM/accessibility merge.
+
+The DOM walk now records kept ancestors. A region's `parent` is the nearest
+kept ancestor that is itself a region in the manifold (an ancestor with no box
+is skipped). Accessibility-only regions have no parent. `contextual_score` and
+the HGRA signature read parents; no current fixture has a nested control, so
+no existing total moves.
+
+Downside accepted: a page that reuses one backend id for two accessibility
+nodes keeps the second as a separate region, as before. Occlusion and CSS
+visibility still need `DOMSnapshot.captureSnapshot`, which would also replace
+one `DOM.getBoxModel` round trip per node. That is a later change because it
+rewrites every CDP fixture.
+
+Verifiers: `same_backend_node_joins_even_when_labels_differ`,
+`heuristic_pass_only_sees_unjoined_nodes`,
+`parent_is_the_nearest_ancestor_that_is_a_region`,
+`observe_records_the_nearest_dom_parent`, and the updated
+`one_pixel_shift_merges_and_different_labels_do_not`.

@@ -16,6 +16,8 @@ pub(crate) struct DomElement {
     pub actions: Vec<Action>,
     pub disabled: bool,
     pub hidden: bool,
+    /// Backend ids of kept ancestors, nearest first.
+    pub ancestors: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -49,7 +51,8 @@ pub(crate) fn dom_elements(document_json: &str) -> Result<Vec<DomElement>, Brows
         })
     })?;
     let mut out = Vec::new();
-    walk_dom(root, &mut out);
+    let mut ancestors = Vec::new();
+    walk_dom(root, &mut ancestors, &mut out);
     Ok(out)
 }
 
@@ -150,17 +153,26 @@ pub(crate) fn call_threw(call_json: &str) -> Result<bool, BrowserError> {
     Ok(value.get("exceptionDetails").is_some())
 }
 
-fn walk_dom(node: &Value, out: &mut Vec<DomElement>) {
+/// `ancestors` holds the backend ids of kept elements above `node`, outermost
+/// first. Each element records them nearest first.
+fn walk_dom(node: &Value, ancestors: &mut Vec<i64>, out: &mut Vec<DomElement>) {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(1);
+    let mut pushed = false;
     if node_type == 1 {
-        if let Some(element) = element_from(node) {
+        if let Some(mut element) = element_from(node) {
+            element.ancestors = ancestors.iter().rev().copied().collect();
+            ancestors.push(element.backend_node_id);
+            pushed = true;
             out.push(element);
         }
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {
         for child in children {
-            walk_dom(child, out);
+            walk_dom(child, ancestors, out);
         }
+    }
+    if pushed {
+        ancestors.pop();
     }
 }
 
@@ -204,6 +216,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         actions: actions_for_role(role),
         disabled,
         hidden,
+        ancestors: Vec::new(),
     })
 }
 

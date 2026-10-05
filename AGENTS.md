@@ -44,7 +44,7 @@ Verification impact
 [ ] No verification architecture impact
 
 Reason: Phase 2 adds weighted ranking, CDP parse/fusion/press/verify, and the JEV task types. Replay is a fixture, not crash recovery. The websocket client is one blocking call stream, so no system model was added.
-Affected invariants: default locate is weighted; HGRA remains selectable; fusion merges a 1px DOM/AX pair and refuses different labels; press prefers a DOM click; verify fails with ExpectedTextMissing; confidence below 550 millis does not click; a region id survives move, enabled change, and press.
+Affected invariants: default locate is weighted; HGRA remains selectable; fusion joins a DOM/AX pair with the same backend id, merges a 1px pair, and refuses different labels on different nodes; press prefers a DOM click; verify fails with ExpectedTextMissing; confidence below 550 millis does not click; a region id survives move, enabled change, and press.
 Tests or proofs updated: resonance matcher tests, browser fusion and session tests, executor confidence test, CLI command tests, observe identity test, protocol contract test. No second formal model.
 ```
 
@@ -193,4 +193,27 @@ Verification impact
 Reason: identity assignment is a pure function of the previous observation, the fresh observation, and the session map. Observe is one blocking call stream, so no system model was added.
 Affected invariants: a first observation keeps fused ids; a re-rendered control with the same role, label, and nearby position keeps its id and the press uses the new node; a distant same-label control gets a new id; a stable id is never reused for another control; re-observing an identical page keeps every id.
 Tests or proofs updated: identity unit tests and a 16-case proptest, browser session re-render and distance tests. No second identity service and no second similarity metric.
+```
+
+
+## Fusion v2 and DOM parents
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[ ] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: fusion and the DOM walk are pure functions of the CDP results. No system model was added.
+Affected invariants: a DOM node and an accessibility node with the same backend id are one region even when labels differ; the heuristic pass only sees unjoined nodes; a region's parent is its nearest DOM ancestor that is a region.
+Tests or proofs updated: fusion unit tests and a browser observe test with a nested control. Fusion is still the only DOM/accessibility merge.
 ```

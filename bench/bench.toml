@@ -1,0 +1,31 @@
+# Uniform hyper-use benchmark config. `bench/bench run --config bench/bench.toml --seed 42`
+[run]
+seed = 42
+reps = 1          # runs per arm per task (n=1 by design for this pass)
+max_tries = 3     # fresh attempts per task, stop at the first strict pass
+arms = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"]
+scenarios = ["acme-mail", "shop-checkout", "admin-table", "booking-calendar", "hard-dom", "travel-search"]
+
+[caps]            # enforced by the harness from outside every arm, per attempt
+steps = 20
+model_calls = 40
+wall_s = 180
+stuck_repeats = 3
+page_acts = 40    # backstop: page-observed actions (one arm step can be 2, e.g. click + fill)
+
+[models]
+luna = "gpt-6-luna"
+luna_effort = "low"
+jev = "jev-latest"
+
+[viewport]
+width = 1280
+height = 800
+# Headless (same Chrome binary): the Mac runs AeroSpace, a tiling window manager that
+# resizes every new headed window, so a headed 1280x800 viewport cannot be held.
+headless = true
+
+[ports]
+server = 8765
+proxy = 8766
+chrome = 9333

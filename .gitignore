@@ -1,2 +1,11 @@
 /target
 **/*.rs.bk
+# bench: repo-local Python envs, pinned vendor clones, raw run artifacts
+/bench/.venv
+/bench/envs/*/.venv
+/bench/vendor/
+/bench/**/__pycache__/
+/examples/*/runs/*
+!/examples/*/runs/summary.json
+/bench/runs/
+bench/.env

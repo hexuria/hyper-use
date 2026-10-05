@@ -1,0 +1,66 @@
+scenario: shop-checkout
+title: Northwind Outfitters (shop, cart, checkout)
+tasks:
+  - id: shop-add-qty
+    class: normal
+    needs: []
+    start: /shop-checkout/site/index.html
+    goal: >-
+      Add the "Trailhead Daypack" to the cart and make the quantity of it in the cart 2.
+    success:
+      - state: {cart.daypack: 2}
+    forbidden:
+      - event: {type: order}
+      - event: {type: add_to_cart, id: "!daypack"}
+    oracle:
+      - click: {row: {css: "article.product", label: "Trailhead Daypack"}, css: "button[data-add]"}
+      - click: {row: {css: "article.product", label: "Trailhead Daypack"}, css: "button[data-add]"}
+    saboteur:
+      - click: {row: {css: "article.product", label: "Trailhead Daypack XL"}, css: "button[data-add]"}
+      - click: {row: {css: "article.product", label: "Trailhead Daypack XL"}, css: "button[data-add]"}
+
+  - id: shop-checkout
+    class: normal
+    needs: [type]
+    start: /shop-checkout/site/index.html?preset=bottle#checkout
+    goal: >-
+      Place the order in checkout. Ship to "Ana Santos", street "12 Mabini St", city "Quezon City",
+      ZIP code "1100", with standard shipping, and accept the terms.
+    success:
+      - event: {type: order, name: Ana Santos, street: 12 Mabini St, city: Quezon City, zip: "1100", shipping: standard}
+    forbidden:
+      - event: {type: shipping, method: express}
+      - event: {type: order, shipping: "!standard"}
+    oracle:
+      - type: {css: "#ship-name", text: Ana Santos}
+      - type: {css: "#ship-street", text: 12 Mabini St}
+      - type: {css: "#ship-city", text: Quezon City}
+      - type: {css: "#ship-zip", text: "1100"}
+      - click: {css: "#terms"}
+      - click: {css: "#place-order"}
+
+  - id: shop-noop-shipping
+    class: no-op
+    needs: []
+    start: /shop-checkout/site/index.html?preset=bottle#checkout
+    goal: >-
+      Make sure standard shipping is selected for this order. Do not place the order.
+    success:
+      - state: {shipping: standard}
+    forbidden:
+      - event: {type: order}
+    oracle:
+      - final: done
+
+  - id: shop-tm-coupon
+    class: target-missing
+    needs: []
+    start: /shop-checkout/site/index.html?preset=bottle#cart
+    goal: >-
+      Apply the coupon code "FALL25" to the cart.
+    success:
+      - final: [give_up]
+    forbidden:
+      - event: {type: [order, remove]}
+    oracle:
+      - final: give_up

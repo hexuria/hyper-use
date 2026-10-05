@@ -1,5 +1,58 @@
 # Decisions
 
+## Product pivot: browser action firewall (2026-10-05)
+
+Hyper-Use is an independent action-verification layer for browser agents. It
+resolves what an agent is about to interact with, refuses ambiguous or unsafe
+actions, and verifies the resulting state change.
+
+**Discarded alternatives**
+
+- Hyper-Use as a Browser Use / CUA replacement. Uniform bench (`bench/uniform`,
+  PR #2): Luna + Browser Use 91% first-try; Hyper-Use alone 43%; JEV + Hyper-Use
+  30%. The winning combo uses Hyper-Use around Browser Use, not instead of it.
+- Keeping `hyper-use-browser-use`, `hyper-use-cua`, `hyper-use-macos`, and
+  `hyper-use-executor` in the product graph. A8 attaches real Browser Use to
+  Chrome; the Rust replay crates were representations of integrations that the
+  winning arm did not use.
+- Synthetic DOM `this.click()` / coordinate press on the public MCP path. A
+  safety layer must not execute less-realistic clicks than Browser Use
+  (`isTrusted=false` can reach controls a person could not). Actuation leaves
+  Hyper-Use; `GuardDecision` is the product output.
+- Shipping HGRA / `hyper-use-hyper` on the default path. It has not been shown
+  to beat `WeightedMatcher`. Quarantined under `experiments/hgra/`.
+- Implementing typing / select / scroll inside Hyper-Use. Browser Use already
+  does those; adding them recreates a worse Browser Use.
+
+**Accepted downsides**
+
+- Hosts must perform the click themselves after `Allow`. Hyper-Use alone cannot
+  finish a press-only task end-to-end.
+- Bench arms A5–A8 that drove MCP `act` must move to `guard` + host actuation
+  (or stay on `bench/uniform` as historical evidence).
+- Removing executor crates breaks the old `--executor browser-use|cua` CLI/MCP
+  surface. That is intentional.
+- Contextual row/card/dialog resolution moves from `bench/arms/combo.py` into
+  Rust; until that lands, look-alike rows still need host-supplied context or
+  escalation.
+
+
+## Deferred: contextual target resolution (follow-up)
+
+Port the row/card/dialog ancestor context logic from `bench/arms/combo.py`
+into the Rust resolver (`TargetIntent { label, role, context: Context { contains, container } }`)
+so look-alike buttons (Suspend × N rows) disambiguate without JEV. Intentionally
+not in this deletion/refocus PR so the cut stays reviewable. Track as the next
+commit on `refactor/action-firewall` or a follow-up PR.
+
+**Act / press status**
+
+`BrowserSession::press` and MCP/CLI `act` that click are going away from the
+product path. Prefer `guard` → host acts → `verify`. Any remaining press in
+browser fixtures is internal / transitional, not the public contract.
+
+---
+
 ## Product name
 
 The technique may be discussed as HGRA. The shipped product, crates, binary,
@@ -25,9 +78,11 @@ Penalty flags are not mixed into the vector. They subtract after the weighted
 sum so a disabled twin drops by exactly the versioned penalty (detached also
 drops contextual consistency).
 
-The hypervector term is the mean cosine of the query probes against that
-signature, not a second learned model. Probe resonance keeps a single field
-visible after bundling. Weights are [`ResonanceModel::V1`] basis points.
+The hypervector term is one cosine of the bundled query against that
+signature, not a second learned model. The query bundles one bound probe per
+constraint (role, each label token, position, action) at equal weight. It was
+the mean of per-probe cosines until "HGRA semantic parity and bundled query".
+Weights are [`ResonanceModel::V1`] basis points.
 
 ## Geometry
 
@@ -42,7 +97,9 @@ Near means a gap of at most 0.08 viewport units. Aligned means centers within
 `diff` is id-based (added, removed, changed). `match_regions` pairs identical
 ids first, then greedy similarity at or above 0.85. A rename is therefore both
 an id-level remove+add and a similarity pair. Same label on opposite sides of
-the viewport scores 0.8 and does not merge.
+the viewport scores 0.8 and does not merge. A browser session now runs
+`match_regions` itself when it observes (see "Session identity map"), so a
+re-rendered control keeps its id and `diff` sees it as unchanged.
 
 ## Dependencies
 
@@ -121,9 +178,10 @@ model of the same score without a conformance fixture.
 - Live CDP does not launch Chrome. `wss://` is refused. Occlusion is not
   detected. Unlabeled generic DOM containers are not regions unless they are
   a known control tag or carry a label or an explicit role.
-- Fusion can merge two same-label controls whose centers are within 8px even
-  when IoU is low. A duplicate accessibility node for one DOM node is left
-  as its own region.
+- The heuristic fusion pass can merge two same-label controls whose centers
+  are within 8px even when IoU is low. It only sees nodes with no backend-id
+  partner. A second accessibility node for one DOM node is left as its own
+  region.
 - CDP snapshots store `captured_at_ms = 0`. The ranker does not read a clock.
 - No learned embeddings and no LLM. Symbols are the fixed encoder.
 - A bundle component that sums to exactly 0 becomes `+1`. There is no other
@@ -176,7 +234,7 @@ remain the HGRA entry points so existing penalty tests keep their meaning.
 The CLI default is weighted. `--matcher hgra` selects the other. No benchmark
 says which is better. Do not add a third score that averages them.
 
-Act confidence gate: scored totals below 550 millis (0.55) return
+Act confidence gate: scored totals whose raw `f64` is below 0.55 return
 `ExecutorError::ConfidenceBelowThreshold` and do not touch the transport.
 `ActConfidence::Inspected` is the operator naming a region id. Those two
 states are an enum, not a bool plus an optional score. The refusal is also
@@ -186,9 +244,13 @@ value is a journal record, not a second executor. CUA is not invoked.
 CDP methods, in order, for one observation: `Page.getLayoutMetrics`,
 `DOM.getDocument` depth -1, `Accessibility.getFullAXTree`, then
 `DOM.getBoxModel` per DOM node id, then `DOM.getBoxModel` per accessibility
-backend id. Press, when a DOM node id exists: `DOM.resolveNode` then
-`Runtime.callFunctionOn` of `function(){this.click()}`. A CDP error on that
-call falls through to `DOM.focus`, then to `Input.dispatchMouseEvent`.
+backend id, then one `Page.getNavigationHistory`. A `DOM.getBoxModel` CDP
+error omits that node. A protocol error on `Page.getNavigationHistory` omits
+the url and title; any other failure of that call aborts observe. Press:
+`DOM.resolveNode` then `Runtime.callFunctionOn` of `function(){this.click()}`,
+by node id and then by backend node id. A CDP error, or `exceptionDetails` in
+the call result, falls through to the next tier and finally to
+`Input.dispatchMouseEvent`.
 A missing script entry is `CdpError::NoScriptedResponse` and does not fall
 through, so a short fixture cannot become a silent coordinate click.
 `press` in the CLI is `Action::Click`. Other actions return
@@ -196,7 +258,8 @@ through, so a short fixture cannot become a silent coordinate click.
 
 Fusion v1: label Jaccard >= 0.5 or either label empty; roles equal or either
 generic; IoU >= 0.5 or centroid distance <= 8px. Greedy, highest IoU. The
-stored rect is the DOM rect. The id is `n{backendNodeId}`.
+stored rect is the DOM rect. The id is `n{backendNodeId}`. Fusion v2 (below)
+adds a backend-id join ahead of this heuristic.
 
 `ComputerTask` has constructors `locate` and `act` only. Constraints and
 expected outcome are data. There is no planner.
@@ -247,15 +310,16 @@ Those keys stay on `act`, and on `verify` (`verified` is the check,
 include both keys. A locate is not encoded as `ComputerResult`.
 
 `act` calls `BrowserExecutor`. DOM semantic click stays ahead of coordinates.
-A scored confidence below 550 millis returns a tool result with
+A scored raw confidence below 0.55 returns a tool result with
 `executed: false`, `fallback: "low-confidence"`, and no mechanism. It does not
 return a JSON-RPC error and it does not press. The proof is the
 `sign-in.cdp.json` fixture, which has no press responses: a click would be
 `Browser`, and the test expects `executed: false`. An inspected act (no
 confidence) still presses. `act` against a manifold fixture is
-`ActNeedsCdp`, because that file has no DOM node. The result does not include
-a fresh state delta. Call `diff` or `verify` for that. Live `cdp` is accepted
-and is not required by tests.
+`ActNeedsCdp`, because that file has no DOM node. With an expectation, or on a
+live `cdp` session, the result includes a fresh state delta (see
+"MCP session and snapshot ring"). Live `cdp` is accepted and is not required
+by tests.
 
 Tool failures are `isError: true` with a JSON object whose `variant` matches
 `ToolError`. Protocol failures (`ParseError`, `InvalidRequest`,
@@ -295,8 +359,8 @@ press fixture through `BrowserExecutor` and `ReplayTransport`.
 `press-only.cdp.json` is omitted because it has no observation. Sign-in is not
 diffed against welcome. `HgraMatcher` is not ranked here.
 
-`executed` is true only after an action receipt. A scored confidence below 550
-millis does not call the transport, and `executed` is false. A manifold file
+`executed` is true only after an action receipt. A scored raw confidence below
+0.55 does not call the transport, and `executed` is false. A manifold file
 cannot act, so the sidebar case has no `executed` field. The JSON is not a
 `ComputerResult`: that type always carries `executed` and `verified`, which
 would make a locate look like a fake refusal.
@@ -339,8 +403,8 @@ The request is a `SemanticRequest`: region id, role, label, and action.
 `to_wire` writes only those four keys. A fixture that carries `goal`, `url`,
 `x`, `y`, `coordinates`, `navigate`, `task`, `screenshot`, `tokens`, `latency`,
 or `retries` is `BrowserUseError::BadScript`. There is no coordinate click on
-this path. The CDP press order (DOM semantic, then `DOM.focus`, then a
-coordinate click) is unchanged.
+this path. The CDP press order (DOM semantic by node id, then by backend
+node id, then a coordinate click) is unchanged.
 
 `ReplayTransport` is the only transport. It records every `submit` and then
 either returns a `TransportReceipt` or `BrowserUseError::Rejected`. It does
@@ -349,7 +413,7 @@ not start a process. A receipt whose id or action differs from the request is
 not panic. macOS stays unimplemented (`ExecutorError::NotImplemented`; no AX). `CuaStub` pixel actuation stays unimplemented. The opt-in `cua-replay` semantic handoff has landed: region id, role, label, and action through a replay fixture. It is not a live process and it is not a benchmark.
 
 The confidence gate runs after the region id and the action match, and before
-`submit`. A scored total below 550 millis returns
+`submit`. A scored raw total below 0.55 returns
 `ConfidenceBelowThreshold` and leaves the transport log empty. An unknown
 region returns `UnknownRegion` and also does not submit.
 
@@ -360,7 +424,7 @@ over. That is intentional. This is not a success rate, a token count, a
 screenshot comparison, a retry policy, a latency, or a win over CDP.
 
 Verifier: unit tests own the wire keys, the exact `Rejected` and `BadScript`
-and `ParamsMismatch` variants, and "the log stays empty below 550 millis".
+and `ParamsMismatch` variants, and "the log stays empty below 0.55".
 A 16-case proptest owns the key set for generated labels, and a 16-case
 proptest owns the gate for integer millis in `0..550`. CLI and MCP tests own
 selection: high confidence records `browser-use-semantic`, low confidence on
@@ -391,7 +455,7 @@ every `submit` and then either returns a `TransportReceipt` or
 `CuaError::Rejected`. It does not start a process. A receipt whose id or
 action differs from the request is `ParamsMismatch` after the call. The
 region id and the action are checked before the confidence gate, so an unknown
-region or a different action does not submit. A scored total below 550 millis
+region or a different action does not submit. A scored raw total below 0.55
 returns `ConfidenceBelowThreshold` and leaves the transport log empty.
 `StubExecutor` for `cua` still returns `NotImplemented` and does not panic.
 macOS stays `NotImplemented`. `CuaStub::status` stays the pixel-driver
@@ -411,7 +475,7 @@ Browser Use. `to_wire` returns a `String`. `serde_json::Value` is not part of
 the public signature. No ranker crate depends on it.
 
 Verifier: unit tests own the wire keys, the exact `Rejected`, `BadScript`, and
-`ParamsMismatch` variants, and "the log stays empty below 550 millis". A
+`ParamsMismatch` variants, and "the log stays empty below 0.55". A
 16-case proptest owns the key set for generated labels, and a 16-case proptest
 owns the gate for integer millis in `0..550`. CLI and MCP tests own selection:
 high confidence records `cua-semantic`, low confidence on a rejecting script
@@ -432,3 +496,603 @@ called `Result::unwrap_err()` on an `Ok` value: SemanticRequest { region_id: Reg
 The return was restored. The test then asserts
 `Err(CuaError::BadScript { message: "label must not be empty" })`, not `is_err()`.
 
+
+## Box model errors omit a node
+
+Chrome answers `DOM.getBoxModel` with "Could not compute box model." for a
+`display:none` node. Hidden menus and dialogs are on most real pages, so
+propagating that error made `observe` fail on them. A CDP `error` on that call
+now means the node has no box and is left out, which is the same outcome as a
+box model with no content quad. `NoScriptedResponse`, `ParamsMismatch`,
+`BadJson`, and `Transport` stay fatal, so a short replay script still fails.
+
+Downside accepted: a `display:none` control is absent from the manifold, so
+`verify --expect-absent` passes for it. That is the intended meaning of gone.
+
+Verifiers: `observe_omits_a_node_whose_box_model_is_a_protocol_error` on
+`fixtures/hidden-node.cdp.json`, `observe_still_fails_when_the_box_model_step_is_missing`,
+and `box_model_params_mismatch_is_still_fatal`.
+
+## Press has no focus tier
+
+`press` used to return `CdpElement` after `DOM.focus` succeeded. The caller was
+told a click happened when only a focus did. A click now tries
+`Runtime.callFunctionOn` by node id, then by backend node id (a backend id
+survives node id invalidation, which is the usual reason `DOM.resolveNode`
+fails), then a coordinate click. `ActMechanism::CdpElement` is removed. A
+click function that reports `exceptionDetails` (an SVG element has no
+`click`) is a tier failure, not a `DomSemantic` success.
+
+Downside accepted: when both semantic tiers fail, a coordinate click can land
+on whatever is at that point now. Returning an error instead was rejected to
+keep the documented third tier. This is a judgement call.
+
+Verifiers: `node_id_failure_retries_by_backend_id_before_coordinates`,
+`both_semantic_tiers_fail_then_coordinates`, and
+`click_exception_is_a_tier_failure`. Each asserts that `DOM.focus` is never
+sent.
+
+## Label precision in the weighted text term
+
+The weighted text term was `token_recall(query, label)`: the share of query
+tokens found in the label. Extra label tokens cost nothing, so "Send",
+"Send feedback", and "Send to device" all scored 1.0 for "Send" and the id
+tie-break picked "Send feedback". The term is now
+`recall * (0.5 + 0.5 * precision)`, where precision is the share of label
+tokens found in the query (`token_precision`). On
+`fixtures/send-buttons.manifold` the totals are 1.0, 0.875, and 0.8333, in
+that order.
+
+The formula was picked over F1 so that a full-recall superset label keeps at
+least half the text credit: "Account Settings" for "Settings" scores 0.75,
+not 0.667. `token_recall` is unchanged because `verify` and the HGRA semantic
+term use it. The HGRA semantic term is not changed; it already orders this
+fixture correctly and there is no benchmark to justify moving its totals.
+
+Downside accepted: a long query against a slightly longer label differs by
+little (a 5-token query against a 6-token superset is about 42 millis apart),
+so the act margin gate refuses that case rather than guessing.
+
+Verifiers: `exact_label_outranks_superset_labels_with_lower_ids` asserts the
+three totals, the 16-case proptest
+`extra_label_tokens_strictly_lower_the_weighted_total`, the CLI test
+`locate_send_prefers_the_exact_label`, and the regression pin
+`hgra_send_order_is_unchanged`. No second model of `WeightedMatcher::rank`.
+
+## Act ambiguity margin
+
+A high top total is not enough when a second candidate is almost as high. Act
+now takes an optional runner-up total from the same ranking and refuses with
+`ExecutorError::AmbiguousTarget` when the raw gap is below
+`MIN_ACT_MARGIN` (0.05). `MIN_ACT_MARGIN_MILLIS` (50) is display only. `ActConfidence` gains a `Ranked { top,
+runner_up }` variant beside `Inspected` and `Scored`; it stays an enum, not a
+score with an optional runner-up. `gate_confidence` is the single gate, and
+all four executors call it. The order is non-finite, then the 0.55 threshold,
+then the margin, so a low top is reported as low confidence even when it is
+also ambiguous. A runner-up above the top also refuses. The journal fallback is
+`FallbackReason::Ambiguous` ("ambiguous").
+
+MCP `act` takes `runner_up: {id, confidence}`, the same shape as locate
+`candidates[1]`. A `runner_up` without `confidence` is
+`RunnerUpNeedsConfidence`, so it cannot fall to the ungated inspected path.
+A runner-up naming the pressed region is `RunnerUpIsTarget`. The CLI flag is
+`--runner-up`. The fixture comparison passes the real runner-up, so it applies
+the product gate.
+
+Downside accepted: a caller that omits `runner_up` bypasses the margin. The
+MCP session in the next phase can derive it. 0.05 is not calibrated across
+matchers; the HGRA order on `send-buttons.manifold` is about 0.02 apart
+and is refused. This is not `RegionFlags::ambiguous`, which is a ranking
+penalty that the browser observer does not set.
+
+Verifiers: `ambiguous_ranked_act_does_not_click_and_refusal_is_typed` (empty
+transport log), `low_confidence_wins_over_ambiguity`,
+`inspected_act_ignores_the_margin`, the 16-case proptests
+`ranked_within_margin_does_not_submit` (Browser Use and CUA) and
+`ranked_outside_margin_passes_the_gate`, MCP and CLI act tests, and
+`below_margin_does_not_execute_and_does_not_call_transport`.
+
+## MCP session and snapshot ring
+
+The MCP server used to be free functions: every call reconnected, observed
+from scratch, and dropped the result. Nothing could compare the state before
+an act with the state after it. `serve_stdio` now owns one `Server`:
+
+- a `SnapshotRing` (in `hyper-use-observe::history`) of the last 16
+  observations, with ids that only increase and are never reused. Every tool
+  that observes returns `snapshot`. `diff` accepts `before_snapshot` and
+  `after_snapshot` as well as file paths, but not a mix
+  (`MixedDiffSources`). An evicted id is `SnapshotEvicted { id, oldest }`.
+- up to `MAX_LIVE_SESSIONS` (4) live CDP sessions keyed by endpoint. A live
+  call that fails drops its session. There is no retry and no reconnect loop;
+  the next call opens a new socket. Fixture origins open a fresh replay
+  transport per call, so calling `observe` twice on one fixture still works.
+
+`act` is now one closed loop: observe (or reuse the live session's latest
+observation, so the bindings match what the caller located), gate, press,
+then observe again when `observe_after` is set, diff, and verify an optional
+`expect_text` or `expect_absent`. `observe_after` defaults to true with an
+expectation or on a live session. The result carries `state_delta`,
+`verified`, `before_snapshot`, and `after_snapshot`. A failed postcondition is
+`executed: true`, `verified: false`, `fallback: "verify-failed"`, and a
+`verify_error` object. `act` can also take the locate fields (text, role,
+position): it ranks its own observation with the same `RegionMatcher`,
+derives the ranked confidence and runner-up, and refuses with `TargetNotTop`
+when `region` is not first. That closes the margin bypass for callers that use
+it. It is not a second ranker.
+
+The free `call_tool` and `handle_line` build a new `Server` per call, so they
+keep their old stateless meaning.
+
+Downside accepted: on a live page the reused before-snapshot can be stale if
+the page changed between calls. Persistence is not involved: the ring is in
+memory and lost when the process exits.
+
+Verifiers: `ring_evicts_oldest_and_ids_never_repeat`, the 16-case proptest
+`snapshot_ids_are_strictly_increasing`,
+`act_closed_loop_reports_delta_and_verifies_welcome` on
+`fixtures/sign-in-loop.cdp.json`,
+`act_closed_loop_verify_failure_is_executed_true_verified_false`,
+`act_with_locate_fields_derives_the_ranked_gate`,
+`diff_by_snapshot_ids_matches_diff_by_paths`, `evicted_snapshot_is_exact`,
+`stateless_call_tool_is_unchanged`, and the stdio subprocess test
+`observe_then_act_then_diff_by_snapshot_in_one_process`.
+
+## Session identity map
+
+A region id used to be the backend node id, so a framework that re-rendered a
+button (same control, new DOM node) produced removed plus added, the same as
+a different button. `BrowserSession` now owns an `IdentityMap` and applies it
+on every observe:
+
+1. A fused id seen in the previous observation keeps its stable id.
+2. The rest are paired with the previous observation by `match_regions` with
+   `structural_similarity` at 0.85. A pair inherits the previous stable id.
+3. Anything left is minted as its fused id, or `{fused}-{k}` when that id
+   already named another control in this session. Stable ids are never reused.
+
+A first observation has exactly the fused ids, so fixtures, the Browser Use and
+CUA scripts, and existing tests are unchanged. After a re-render the id is
+opaque: `n100` can name a node whose backend id is 900. The binding used to
+press always holds the current node id and backend id. Parent references are
+rewritten through the same map. `hyper-use-observe` is now a normal dependency
+of the browser crate; observe depends only on core, so there is no cycle.
+
+Downside accepted: a wrong similarity pair would give a different control the
+old id. The 0.85 threshold already refuses the far-duplicate case, and the act
+margin gate still applies.
+
+Verifiers: `rerendered_button_keeps_its_id_with_a_new_backend_node` (the press
+resolves node 90, not 10), `distant_same_label_does_not_inherit_identity`,
+`single_observation_ids_are_unchanged`,
+`a_rerender_inherits_and_a_reused_backend_id_is_minted_fresh`, and the 16-case
+proptest `reobserving_an_identical_manifold_keeps_every_id`.
+
+## Fusion v2: backend join first, and DOM parents
+
+Chrome gives a DOM node a `backendNodeId` and its accessibility node a
+`backendDOMNodeId`. Fusion v1 ignored that key and paired the two trees by
+label overlap and geometry. A link whose accessible name adds screen-reader
+text ("Read more" vs "Read more about our pricing plans") split into two
+regions, `n{b}` and `ax{b}`, that then competed in the ranker. Fusion v2 joins
+on the backend id first; the v1 heuristic runs only on nodes with no backend
+partner. The merge itself is unchanged: the accessibility label wins when it is
+not empty, a generic DOM role takes the accessibility role, and the stored rect
+is the DOM rect. Fusion is still the only DOM/accessibility merge.
+
+The DOM walk now records kept ancestors. A region's `parent` is the nearest
+kept ancestor that is itself a region in the manifold (an ancestor with no box
+is skipped). Accessibility-only regions have no parent. `contextual_score` and
+the HGRA signature read parents; no current fixture has a nested control, so
+no existing total moves.
+
+Downside accepted: a page that reuses one backend id for two accessibility
+nodes keeps the second as a separate region, as before. Occlusion and CSS
+visibility still need `DOMSnapshot.captureSnapshot`, which would also replace
+one `DOM.getBoxModel` round trip per node. That is a later change because it
+rewrites every CDP fixture.
+
+Verifiers: `same_backend_node_joins_even_when_labels_differ`,
+`heuristic_pass_only_sees_unjoined_nodes`,
+`parent_is_the_nearest_ancestor_that_is_a_region`,
+`observe_records_the_nearest_dom_parent`, and the updated
+`one_pixel_shift_merges_and_different_labels_do_not`.
+
+
+## Page state, richer diff, and no-effect verify
+
+An observation now ends with one `Page.getNavigationHistory` call. The current
+history entry supplies `PageState` url and title. The payload has no time, so
+`captured_at_ms` stays 0, the same value fusion already stored. `focused` is
+the stable id of the accessibility node whose `focused` property is true, after
+the identity map renames it. It is not read from the history call.
+
+A CDP protocol error on the history call leaves the url and title unknown and
+observe continues. That is the same split as `DOM.getBoxModel`:
+`CdpError::Protocol` omits, and `NoScriptedResponse`, `ParamsMismatch`,
+`BadJson`, and `Transport` stay fatal. Unknown is `None`, not the empty string
+(superseded 2026-10-05, see "Unknown page state is not empty"). It does not
+invent a timestamp. A missing script entry is still
+`CdpError::NoScriptedResponse`.
+
+`ManifoldDiff::moved` and `relabeled` read the existing id diff. Moved means
+the id survived and the rectangle is the only changed field. The fingerprint may also differ, because it hashes the rectangle; that is not a second change. Relabeled means
+the id survived with a different label. They are not a second diff.
+`StateDelta` gains `moved`, `text_changed`, `focus_changed`, and `url_changed`
+through builders, so `StateDelta::new` still takes only the three id lists.
+The field is `url_changed`. There is no navigate tool and no navigate intent.
+
+`verify_delta` checks `Appeared`, `Disappeared`, and `UrlChanged`. It returns
+`VerifyError::NoEffect` when the region diff is empty and the page state is
+unchanged, before the specific expectation. The host string is
+`FallbackReason::NoEffect`, `"no-effect"`. An act that asked for `expect_text`
+or `expect_absent` still reports `verify-failed` when that postcondition
+fails, including when the page did not change.
+
+Downside accepted: `captured_at_ms` is still not a clock. (The earlier
+downside, that a protocol error and an empty URL looked the same, is removed:
+see "Unknown page state is not empty".)
+
+Verifiers: `moved_only_rect_is_moved_not_relabeled`,
+`url_change_is_reported_without_a_region_change`,
+`focus_moves_to_the_text_field`, `executed_act_with_no_delta_is_no_effect`,
+`navigation_history_protocol_error_omits_url_and_title` (now asserts `None`), and
+`missing_navigation_history_step_is_fatal`. No second formal model.
+
+## Temporal signals are data, and the corpus names no winner
+
+`StateSignature` is the sorted multiset of `(role, label)` on one manifold.
+Rectangles, ids, and flags are not in it. `detect` compares signatures already
+stored in the snapshot ring. `NoOp` means the after signature equals the before
+signature. `LoopDetected` means the after signature equals an older snapshot
+of the same origin among the four ring entries immediately before it, not
+counting `before`. Both can be present. MCP `act` returns them as `signals`.
+There is no retry, no navigate tool, and no second ranker.
+
+An empty region diff with an unchanged page is still `VerifyError::NoEffect`
+and `fallback` `"no-effect"`. A no-op signal does not replace that path and
+does not schedule another press.
+
+`eval_corpus` reads `evals/locate/cases.tsv` and ranks each row with
+`WeightedMatcher` and `HgraMatcher`. The report has each top id, the margin in
+millis, and whether the existing act gate would refuse. It has no winner.
+The product default stays `WeightedMatcher`. `expected_id` is the region that
+matcher ranks first. An HGRA disagreement is recorded and is not a corpus
+failure. This does not invent a Browser Use score, a token count, or a latency.
+
+Downside accepted: a rectangle-only move is still `NoOp`, because the signature
+ignores geometry. `NoEffect` remains the diff-and-page check, so the two can
+disagree. A loop older than the four preceding entries is not reported.
+
+Verifiers: `no_op_when_after_equals_before`,
+`loop_when_after_equals_an_older_snapshot`, and
+`eval_corpus_reports_both_matchers_without_a_winner`. No second formal model.
+
+## Raw gate: compare f64, not rounded millis
+
+Status: 2026-10-05 (Asia/Manila). Replaces the millis comparison in "Phase 2
+browser and matchers" and "Act ambiguity margin".
+
+The gate compared `display_millis(confidence)` against 550, so 0.5496 rounded
+to 550 and clicked, and a margin of 0.0491 rounded to 49 or 50 depending on the
+inputs. `gate_confidence` now compares the raw `f64`: below
+`MIN_ACT_CONFIDENCE` (0.55) is `ConfidenceBelowThreshold`, and a margin below
+`MIN_ACT_MARGIN` (0.05) is `AmbiguousTarget`. The margin check subtracts
+`MARGIN_EPSILON` (1e-9), because `0.6 - 0.55` is `0.04999999999999993` in
+`f64`; without it a clean 0.05 gap would refuse. The threshold check has no
+epsilon. A non-finite margin (for example `MAX - (-MAX)`) refuses as
+ambiguous. The millis constants and `margin_millis` remain for display and
+journal text. A refused display is capped (549 and 49) so a refusal never
+prints the threshold it failed.
+
+Caller confidence is a probability. MCP `confidence` and
+`runner_up.confidence` outside `[0, 1]` are
+`ToolError::ConfidenceOutOfRange` (`{"variant","value"}`).
+`MatcherConfidence::try_unit` enforces the range; `try_new` still accepts
+negatives because ranker totals can be negative.
+
+Downside accepted: a caller that forwards a negative locate total (a penalized
+candidate) as `runner_up.confidence` now gets `ConfidenceOutOfRange` instead
+of a passing margin. Clamp or omit it. 0.55 and 0.05 are still not
+calibrated across matchers.
+
+Verifiers: executor gate unit tests (0.5496 refused, 0.0491 refused, 0.6/0.55
+passes, extreme inputs), a 64-case gate proptest, MCP
+`caller_confidence_outside_zero_to_one_is_exact` and
+`raw_confidence_just_below_the_gate_does_not_press`, and the 32-case
+`structured_tool_calls_are_typed` proptest.
+
+## Stale observation after a press
+
+Status: 2026-10-05.
+
+`run_act` reused the session's stored manifold as `before` whenever one
+existed. After an act with `observe_after: false`, the next act reused the
+pre-press snapshot, so its diff compared against a page that no longer
+existed. `BrowserSession` now sets `stale` once a press reaches the CDP click
+calls (even if a tier fails), and `observe` clears it. Act reuses only
+`fresh_manifold()`, so a stale session observes again first. `manifold()` still
+returns the last view for inspect.
+
+Downside accepted: a press whose click calls all failed before reaching the
+page still marks the session stale. That costs one extra observe; it never
+reuses a wrong before.
+
+Verifiers: `press_marks_the_observation_stale_and_observe_clears_it` and
+`stale_before_is_not_reused_after_a_press_without_observe_after`.
+
+## Unknown page state is not empty
+
+Status: 2026-10-05. Supersedes the empty-string url/title in "Page state,
+richer diff, and no-effect verify".
+
+`PageState::url` and `title` return `Option<&str>`. A history protocol error,
+a missing `entries` array, or a `currentIndex` with no entry is
+`PageState::unknown(focused)`. `PageState::blank()` is unknown. An empty URL in
+a real history entry is a known `""`. `page_delta` reports `url_changed` or
+`title_changed` only when both sides are known and differ.
+`PageDelta::is_known` is true only when both sides know both fields.
+`verify_delta` returns `NoEffect` only for an empty region diff, an unchanged
+page, and a known page delta. MCP `state_delta` gains `title_changed`.
+
+Downside accepted: with an unknown page state an empty diff reports the
+specific expectation failure (for example `UrlUnchanged`), not `NoEffect`.
+Unknown is not evidence of no effect.
+
+Verifiers: `unknown_on_either_side_is_never_a_change_and_never_known`,
+`unknown_page_state_is_never_no_effect`,
+`executed_act_with_no_delta_is_no_effect` (now on a known page), and the
+history-kind arm of `structured_cdp_pages_observe_with_unique_ids`.
+
+## Duplicate AX-only backend ids
+
+Status: 2026-10-05.
+
+Two accessibility nodes with the same backend id and no DOM partner both
+became `ax{id}`, and observe failed with `DuplicateRegion`. Fusion now keeps
+the first as `ax{id}` and mints `ax{id}-2`, `ax{id}-3`. Two DOM nodes with
+one backend id still fail with `DuplicateRegion`: that would be a broken
+Chrome response, not a second accessibility view.
+
+Downside accepted: the suffix follows AX tree order, so it is stable only
+while that order is. The identity map still pairs regions across observations.
+
+Verifier: `two_ax_nodes_with_one_backend_id_stay_separate`,
+`two_dom_nodes_with_one_backend_id_are_the_exact_duplicate_error`.
+
+## signature_jaccard removed
+
+Status: 2026-10-05. `signature_jaccard` had no production caller and 11 of
+the 19 surviving mutants in the audit. `detect` compares signatures by
+equality. It was deleted rather than tested. Verifier: none needed; the
+compiler owns the absence.
+
+## Known limits, not fixed
+
+Status: 2026-10-05. Recorded so they are not mistaken for verified behavior.
+
+- `IdentityMap.minted` grows for the life of a session. Sessions are capped at
+  four and dropped on failure, so this is bounded per session, not globally.
+- No loopback check on the CDP endpoint. A caller can point the server at a
+  remote `ws://` host. `wss://` is rejected.
+- No timeout on the CDP WebSocket's TCP connect or handshake. After connect,
+  reads and writes time out after 5 seconds (`ws.rs`), so a hung Chrome
+  fails the call instead of hanging it, but an unreachable host can still
+  stall the connect.
+- `match_regions` builds an O(n*m) score table. The 2000-region smoke test
+  passes; it is not a memory bound.
+- Identity step 1 keeps a fused stable id across observations without
+  checking role or label. A different control that reuses the same backend id
+  inherits the stable id. A role check needs a cross-navigation policy and was
+  deferred.
+- `ToolError::Ranker` and `CompareError::TransportCalledBelowThreshold` have no
+  exact test: the first is unreachable with the shipped matchers, the second
+  because the gate runs before press.
+
+Verifier: none. These are limits, not claims.
+
+## RUSTSEC advisories in CI
+
+Status: 2026-10-05. The MCP server opens a CDP WebSocket, so the graph is
+network-facing. CI runs `cargo deny check advisories` with a `deny.toml` that
+checks advisories only, with all features (including `jev`) and no ignores.
+Licenses, bans, and sources are not checked: `publish = false` and there is no
+policy yet. CI also runs `cargo check -p hyper-use-cli --features jev`.
+
+Downside accepted: a new advisory can fail CI with no code change. That is the
+point.
+
+Verifier: the `deny` CI job. Local run on 2026-10-05: `advisories ok`.
+
+## Mock environment before any live drive
+
+Status: 2026-10-05.
+
+Unit tests check one function at a time. They did not catch the stale
+`before` or the empty-URL false delta, because both only show up across
+calls. The mock environment runs caller flows across calls on one `Server`.
+
+`Server::with_connector` takes `FnMut(&str) -> Result<Box<dyn CdpTransport>,
+CdpError>`. `Server::new` passes `WebSocketTransport::connect`, so the stdio
+binary is unchanged. `Box<T: CdpTransport>` implements `CdpTransport`. Tests
+pass a connector that returns a `ReplayTransport` from `ScriptBuilder`,
+wrapped to log each CDP method. `Server::live_sessions` exposes the kept
+endpoints, oldest first.
+
+What the mock environment owns:
+
+- the observe, locate, inspect, act, diff, verify flow, with each call built
+  from the previous reply, as a caller would;
+- whether a press happened, from the CDP call log;
+- session reuse, the stale flag, reconnect after a dropped session, and the
+  four-session LRU cap;
+- the raw 0.55 gate, the 0.05 margin, and caller `runner_up`;
+- ring diff, eviction, NoEffect, and no-op signals as data;
+- unknown page history.
+
+What it does not own, and the manual live drive covers:
+
+- Chrome's real response shapes, ordering, and timing;
+- what a real page does after a click (navigation, re-render, async load);
+- websocket failures and slow or hung sockets (reads and writes time out
+  after 5 seconds; the connect does not);
+- whether an agent driving the tool picks good queries and reads refusals
+  correctly.
+
+The live drive (`examples/live-drive/`) is manual and opt-in: JEV picks the
+calls against a local Gmail-style test page in a throwaway Chrome. It is not a
+benchmark. Its first run found that an `http://` CDP endpoint resolved to the
+browser target, which has no `Page` domain; the resolver now picks the first
+page target from `/json/list`.
+It is not a benchmark of Browser Use or CUA, and no success rate is claimed
+from the mock suite.
+
+Downside accepted: a script emits only what the extractors read, in the order
+the code calls. If Chrome changes a shape, the mock still passes. That is the
+live drive's job.
+
+Verifiers: the tests in `crates/hyper-use-mcp/tests/mock_env.rs`, the
+Acme Mail replica in `crates/hyper-use-mcp/tests/acme_mail.rs`, and
+`an_mcp_client_drives_the_closed_loop_over_stdio` in
+`crates/hyper-use-cli/tests/mcp_stdio_mock.rs`. Reverting the
+stale-observation fix fails
+`act_without_observe_after_then_next_act_does_not_reuse_stale_before`;
+reverting the unknown-page fix fails
+`page_history_failure_is_unknown_not_a_false_delta`.
+
+## Text-miss cap
+
+Status: 2026-10-05 (Asia/Manila). From live drive t7.
+
+JEV asked locate for "Send" as a link on the Acme Mail thread. No link is
+named Send, so every candidate missed. The weighted V1 total for a miss was
+still 0.50: semantic is `min(text, role)` = 0, but geometry scores 1 when no
+position is asked (0.30) and actionability scores 1 when no action is asked
+and the region has any action (0.20); every extracted region has at least
+Focus. The role does not contribute. All 63 candidates tied at 0.50, and an
+unnamed AX node (`ax11`) won on region id because `ax…` sorts before `n…`.
+
+Both matchers now clamp a region's total to `TEXT_MISS_CAP` (0.45) when the
+query has text and the label shares none of its tokens (`token_recall` is
+0). WeightedMatcher applies it in `weighted_total`; HGRA applies it in
+`score_parts`, so `locate`, `locate_with`, and `HgraMatcher` all carry it.
+0.45 is strictly below the 0.55 act gate for any weights, so a nameless or
+unrelated region can never be clicked from a text query. It is 0.05 below
+the 0.50 a label hit with the wrong role gets under V1, so that control
+ranks above every text miss. A `const` assert in the MCP crate ties the cap
+to `MIN_ACT_CONFIDENCE`.
+
+Eval corpus: weighted tops, margins, and gate decisions did not move. HGRA
+margins on `twins.manifold` rose (Export 184 to 223, Admin 195 to 231, Undo
+184 to 231 millis); HGRA tops and gate decisions did not move.
+
+Downside accepted: a query whose text the label does not contain at all
+(a typo, a synonym, an icon button with no accessible name) can no longer
+reach the gate from text, even if role and position point at the right
+control. The caller must fix the text or act on an inspected region. The
+cap is a constant, not calibrated, and HGRA totals are still not comparable
+to weighted ones.
+
+Verifiers: the 256-case proptest
+`a_nameless_region_never_reaches_the_act_gate_for_a_text_query` (arbitrary
+role, query role, position, action, geometry, flag, and weights; both
+matchers), `text_miss_is_not_rescued_by_a_role_hit`,
+`a_label_hit_with_the_wrong_role_outranks_a_nameless_region`,
+`the_cap_only_lowers_and_only_on_a_text_miss`,
+`eval_corpus_reports_both_matchers_without_a_winner`, and the replica test
+`t7_send_as_a_link_ranks_the_named_send_above_unnamed_nodes_and_does_not_click`.
+
+## Region state in observe, inspect, and locate
+
+Status: 2026-10-05. From the live drive: observe returned only id, role,
+and label, so a caller could not tell the disabled Save from the enabled one
+without running locate (which penalized the disabled one).
+
+`RegionState` (hyper-use-resonance) is `Availability` (enabled, disabled)
+and `Visibility`, a ladder where the most limiting condition wins: hidden,
+then offscreen, then occluded, then visible. Offscreen is the offscreen flag
+or a rect fully outside the viewport, the same test the locate penalty uses.
+MCP observe regions, the inspect target, and locate candidates carry
+`"state": {"availability": ..., "visibility": ...}`.
+
+Downside accepted: zero size, stale, ambiguous, and detached are not in the
+state; locate still penalizes them. `display:none` nodes are omitted by the
+extractor, so `hidden` only shows for regions that arrive with the hidden
+flag. Responses are a little larger.
+
+Verifiers: `flags_and_geometry_map_onto_the_ladder`,
+`the_most_limiting_visibility_wins`, and MCP
+`observe_alone_tells_the_disabled_save_from_the_enabled_one`
+(`fixtures/settings-saves.manifold`).
+
+## Repeated locate query signal
+
+Status: 2026-10-05. From live drive t8: after the twin Send refused as
+ambiguous, JEV asked the same locate eight more times on an unchanged page.
+`detect` compares snapshots around an act and could not see this.
+
+The MCP `Server` remembers the last 8 locate calls (`REPEAT_WINDOW`) as
+(origin, page `StateSignature`, normalized query). Text is normalized to its
+lower-case tokens; role, position, action, matcher, and dims are kept. From
+the 2nd identical call (`REPEAT_THRESHOLD`), locate's `signals` carries
+`{"kind": "repeated_query", "count", "top": {"id", "suggested_position"},
+"runner_up": {"id", "suggested_position"}}`. `suggested_position` is the
+first zone (left, right, top, bottom, center) one candidate is in and the
+other is not (`separating_zone`), or null.
+
+N = 2 because locate is deterministic: the same query on the same state
+returns the same ranking, so the first repeat already told the caller
+nothing new. N = 3 would only let one more empty call through. The signal is
+data: ranking, target, and candidates are unchanged, nothing is refused or
+retried, and the stateless `call_tool` keeps nothing and never signals.
+
+Downside accepted: the signature ignores geometry, so a page that only moved
+counts as unchanged. A repeat older than 8 locate calls (across all origins)
+is not reported. A suggested position can be null when the two candidates
+share every zone.
+
+Verifiers: `same_origin_signature_and_query_count_up`,
+`text_is_normalized_but_every_other_part_counts`,
+`a_changed_page_or_another_origin_starts_over`,
+`calls_older_than_the_window_are_forgotten`,
+`separating_zone_names_a_zone_only_the_target_is_in`, MCP
+`a_repeated_identical_locate_carries_repeated_query_and_still_ranks`, and the
+replica test `t8_twin_send_refuses_then_repeated_query_names_a_separating_position`.
+
+## HGRA semantic parity and bundled query
+
+Status: 2026-10-05 (Asia/Manila). Numbers in
+`crates/hyper-use-resonance/HGRA_REMEASURE.md`.
+
+HGRA's semantic term was `mean(token_recall, role_hit)`. It never got the
+precision factor the weighted matcher gained in "Exact label over superset",
+so "Send" and "Send feedback" both scored semantic 1.0 for "Send" and HGRA's
+margin on `send-buttons.manifold` was 0.0277, refused by the 0.05 act margin.
+HGRA now calls the weighted matcher's `weighted_semantic`:
+`min(recall * (0.5 + 0.5 * precision), role_hit)`. One function, no drift.
+This supersedes "The HGRA semantic term is not changed" in that section; the
+pin `hgra_send_order_is_unchanged` is replaced by
+`hgra_exact_label_outranks_superset_labels_with_lower_ids`.
+
+The hypervector term was the mean of one cosine per query probe. It is now
+`cosine(bundle(probes, weight 1 each), signature)`: the query is composed with
+the same `bind` and `bundle` as the signature and compared once. Equal weight
+keeps the probe set the mean used. The signature itself is unchanged.
+
+Result on the 5-case locate corpus: HGRA tops unchanged (5/5, 5/5 agreement
+with weighted); the Send margin goes 0.0277 to 0.0859 and the gate now allows
+it, so gate decisions agree with weighted on 5/5 (was 4/5). Ablation:
+parity alone gives Send 0.0777; the bundle alone gives 0.0359; the bundle adds
+0.039 on the 3-constraint sidebar query.
+
+Downside accepted: with min, a wrong-role label hit scores semantic 0 in HGRA
+(it was 0.5), as it already did in weighted. A two-probe query bundles with
+many zero-sum components that tie to `+1`, so the bundle helps little there.
+HGRA totals are still not calibrated to weighted totals, and HGRA is still not
+the product default; the live suite has not been rerun with `matcher: "hgra"`.
+
+Verifiers: `hgra_exact_label_outranks_superset_labels_with_lower_ids`,
+`bundled_query_is_one_cosine_and_widens_the_send_margin_over_probe_mean`,
+`hgra_label_hit_with_the_wrong_role_outranks_a_nameless_region`,
+`hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum`, and the
+printing test `remeasure_hgra_against_weighted_on_the_locate_corpus`.

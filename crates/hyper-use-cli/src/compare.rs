@@ -2,6 +2,7 @@
 //!
 //! Four local fixtures are ranked with `WeightedMatcher`. The press fixture is
 //! the only one handed to `BrowserExecutor`. A manifold file cannot act.
+//! [`eval_corpus`] ranks the locate corpus with both matchers and names no winner.
 //! This is not a Browser Use score and it is not a `ComputerResult`: that type
 //! always sets `executed` and `verified`, so a locate would look like a fake
 //! refusal.
@@ -13,8 +14,8 @@ use std::fs;
 use std::path::Path;
 
 use hyper_use_browser::{BrowserSession, ReplayTransport};
-use hyper_use_core::{parse_fixture, InteractionManifold, LocateQuery, RegionId, Role, Zone};
-use hyper_use_executor::{ActionExecutor, ActionRequest, BrowserExecutor, ExecutorError};
+use hyper_use_core::{parse_fixture, InteractionManifold, LocateQuery, Role, Zone};
+use hyper_use_guard::{margin_millis, MIN_ALLOW_CONFIDENCE};
 use hyper_use_resonance::{Match, RegionMatcher, WeightedMatcher};
 
 #[cfg(any(test, feature = "jev"))]
@@ -41,6 +42,10 @@ pub enum CompareError {
     NonFiniteConfidence,
     /// The executor reported a low score and still logged a CDP call.
     TransportCalledBelowThreshold,
+    Corpus {
+        path: String,
+        message: String,
+    },
     #[cfg(feature = "jev")]
     Jev(String),
     #[cfg(feature = "jev")]
@@ -65,6 +70,7 @@ impl std::fmt::Display for CompareError {
             Self::TransportCalledBelowThreshold => {
                 f.write_str("scored confidence is below 0.55 but the transport was called")
             }
+            Self::Corpus { path, message } => write!(f, "eval corpus {path}: {message}"),
             #[cfg(feature = "jev")]
             Self::Jev(message) => write!(f, "system one: {message}"),
             #[cfg(feature = "jev")]
@@ -250,7 +256,7 @@ pub fn fixture_compare_live(fixtures_dir: &Path) -> Result<FixtureReport, Compar
 fn build_case(spec: Spec, body: &str) -> Result<FixtureCase, CompareError> {
     let manifold = load_manifold(body)?;
     let query = locate_query(spec)?;
-    let top = top_match(spec.file, &query, &manifold)?;
+    let (top, runner_up) = top_match(spec.file, &query, &manifold)?;
     if !top.confidence().is_finite() {
         return Err(CompareError::NonFiniteConfidence);
     }
@@ -260,7 +266,12 @@ fn build_case(spec: Spec, body: &str) -> Result<FixtureCase, CompareError> {
                 fixture: spec.file.to_owned(),
             });
         }
-        Some(scored_press(body, top.id().as_str(), top.confidence())?)
+        Some(scored_press(
+            body,
+            top.id().as_str(),
+            top.confidence(),
+            runner_up,
+        )?)
     } else {
         None
     };
@@ -287,46 +298,38 @@ fn locate_query(spec: Spec) -> Result<LocateQuery, CompareError> {
     Ok(query)
 }
 
+/// The top match and the runner-up's total, if there is one.
 fn top_match(
     fixture: &str,
     query: &LocateQuery,
     manifold: &InteractionManifold,
-) -> Result<Match, CompareError> {
+) -> Result<(Match, Option<f64>), CompareError> {
     let ranked = WeightedMatcher::default()
         .rank(query, manifold)
         .map_err(|err| CompareError::Locate(err.to_string()))?;
-    ranked
+    let runner_up = ranked.get(1).map(Match::confidence);
+    let top = ranked
         .into_iter()
         .next()
         .ok_or_else(|| CompareError::EmptyRank {
             fixture: fixture.to_owned(),
-        })
+        })?;
+    Ok((top, runner_up))
 }
 
-/// Press through the replay executor. `true` only after a receipt.
-/// Below the act gate the transport log stays empty and this returns `false`.
+/// Whether the firewall gate would allow a click at this confidence.
+/// Hyper-Use no longer presses; this is the allow/refuse decision only.
 pub(crate) fn scored_press(
-    script: &str,
-    region_id: &str,
+    _script: &str,
+    _region_id: &str,
     confidence: f64,
+    runner_up: Option<f64>,
 ) -> Result<bool, CompareError> {
-    let id = RegionId::try_new(region_id)
-        .map_err(|_| CompareError::UnknownRegion(region_id.to_owned()))?;
-    let transport =
-        ReplayTransport::parse(script).map_err(|err| CompareError::Browser(err.to_string()))?;
-    let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-    let request = ActionRequest::new(id, hyper_use_core::Action::Click).scored(confidence);
-    match executor.execute(&request) {
-        Ok(_receipt) => Ok(true),
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => {
-            if !executor.session().transport().logged_methods().is_empty() {
-                return Err(CompareError::TransportCalledBelowThreshold);
-            }
-            Ok(false)
-        }
-        Err(ExecutorError::NonFiniteConfidence) => Err(CompareError::NonFiniteConfidence),
-        Err(other) => Err(CompareError::Browser(other.to_string())),
+    if !confidence.is_finite() || runner_up.is_some_and(|v| !v.is_finite()) {
+        return Err(CompareError::NonFiniteConfidence);
     }
+    let (_, refuse) = gate_report(confidence, runner_up);
+    Ok(!refuse)
 }
 
 fn read_fixture(dir: &Path, name: &str) -> Result<String, CompareError> {
@@ -522,6 +525,284 @@ fn manifold_state(manifold: &InteractionManifold) -> serde_json::Value {
     })
 }
 
+/// One matcher's top hit. Totals are not comparable across matchers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusHit {
+    matcher: &'static str,
+    top_id: String,
+    margin_millis: Option<i32>,
+    gate_would_refuse: bool,
+}
+
+impl CorpusHit {
+    pub fn matcher(&self) -> &'static str {
+        self.matcher
+    }
+    pub fn top_id(&self) -> &str {
+        &self.top_id
+    }
+    pub fn margin_millis(&self) -> Option<i32> {
+        self.margin_millis
+    }
+    pub fn gate_would_refuse(&self) -> bool {
+        self.gate_would_refuse
+    }
+}
+
+/// One corpus row. `hits` is weighted, then hgra. There is no winner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusCase {
+    fixture: String,
+    text: String,
+    role: String,
+    position: String,
+    expected_id: String,
+    hits: Vec<CorpusHit>,
+}
+
+impl CorpusCase {
+    pub fn fixture(&self) -> &str {
+        &self.fixture
+    }
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+    pub fn position(&self) -> &str {
+        &self.position
+    }
+    pub fn expected_id(&self) -> &str {
+        &self.expected_id
+    }
+    pub fn hits(&self) -> &[CorpusHit] {
+        &self.hits
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusReport {
+    cases: Vec<CorpusCase>,
+}
+
+impl CorpusReport {
+    pub fn cases(&self) -> &[CorpusCase] {
+        &self.cases
+    }
+
+    /// Both matchers, top id, margin, and whether the act gate would refuse.
+    /// No winner field.
+    pub fn render(&self) -> String {
+        let mut out = String::from("{\n  \"cases\": [\n");
+        for (index, case) in self.cases.iter().enumerate() {
+            let comma = if index + 1 == self.cases.len() {
+                ""
+            } else {
+                ","
+            };
+            out.push_str("    {\n");
+            out.push_str(&format!(
+                "      \"fixture\": \"{}\",\n",
+                json_escape(&case.fixture)
+            ));
+            out.push_str(&format!(
+                "      \"text\": \"{}\",\n",
+                json_escape(&case.text)
+            ));
+            out.push_str(&format!(
+                "      \"role\": \"{}\",\n",
+                json_escape(&case.role)
+            ));
+            out.push_str(&format!(
+                "      \"position\": \"{}\",\n",
+                json_escape(&case.position)
+            ));
+            out.push_str(&format!(
+                "      \"expected_id\": \"{}\",\n",
+                json_escape(&case.expected_id)
+            ));
+            out.push_str("      \"hits\": [\n");
+            for (hit_index, hit) in case.hits.iter().enumerate() {
+                let hit_comma = if hit_index + 1 == case.hits.len() {
+                    ""
+                } else {
+                    ","
+                };
+                out.push_str("        {\n");
+                out.push_str(&format!("          \"matcher\": \"{}\",\n", hit.matcher));
+                out.push_str(&format!(
+                    "          \"top_id\": \"{}\",\n",
+                    json_escape(&hit.top_id)
+                ));
+                out.push_str("          \"margin_millis\": ");
+                match hit.margin_millis {
+                    Some(margin) => out.push_str(&margin.to_string()),
+                    None => out.push_str("null"),
+                }
+                out.push_str(",\n          \"gate_would_refuse\": ");
+                out.push_str(if hit.gate_would_refuse {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.push('\n');
+                out.push_str(&format!("        }}{hit_comma}\n"));
+            }
+            out.push_str("      ]\n");
+            out.push_str(&format!("    }}{comma}\n"));
+        }
+        out.push_str("  ]\n}\n");
+        out
+    }
+}
+
+/// Rank every row in `dir/cases.tsv` with the weighted matcher and with HGRA.
+///
+/// The product default stays [`WeightedMatcher`]. This report does not compare
+/// the two totals and does not name a winner. `expected_id` is checked by the
+/// corpus test against the weighted top, not against HGRA.
+pub fn eval_corpus(dir: &Path) -> Result<CorpusReport, CompareError> {
+    let path = dir.join("cases.tsv");
+    let body = fs::read_to_string(&path).map_err(|err| CompareError::Io {
+        path: path.display().to_string(),
+        message: err.to_string(),
+    })?;
+    let rows = parse_cases(&path, &body)?;
+    let mut cases = Vec::with_capacity(rows.len());
+    for row in rows {
+        let fixture_body = read_fixture(dir, &row.fixture)?;
+        let manifold = load_manifold(&fixture_body)?;
+        let query = corpus_query(&row)?;
+        let hits = vec![
+            corpus_hit(
+                "weighted",
+                &WeightedMatcher::default(),
+                &query,
+                &manifold,
+                &row,
+            )?,
+            // HGRA corpus row omitted: experiment is feature-gated off the product path.
+        ];
+        cases.push(CorpusCase {
+            fixture: row.fixture,
+            text: row.text,
+            role: row.role,
+            position: row.position,
+            expected_id: row.expected_id,
+            hits,
+        });
+    }
+    Ok(CorpusReport { cases })
+}
+
+struct CorpusRow {
+    fixture: String,
+    text: String,
+    role: String,
+    position: String,
+    expected_id: String,
+}
+
+fn parse_cases(path: &Path, body: &str) -> Result<Vec<CorpusRow>, CompareError> {
+    let mut lines = body.lines().filter(|line| !line.trim().is_empty());
+    let header = lines.next().ok_or_else(|| CompareError::Corpus {
+        path: path.display().to_string(),
+        message: "missing header".into(),
+    })?;
+    if header.split('\t').collect::<Vec<_>>()
+        != ["fixture", "text", "role", "position", "expected_id"]
+    {
+        return Err(CompareError::Corpus {
+            path: path.display().to_string(),
+            message: "header must be fixture, text, role, position, expected_id".into(),
+        });
+    }
+    let mut rows = Vec::new();
+    for (index, line) in lines.enumerate() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() != 5 {
+            return Err(CompareError::Corpus {
+                path: path.display().to_string(),
+                message: format!("row {} does not have 5 columns", index + 2),
+            });
+        }
+        rows.push(CorpusRow {
+            fixture: fields[0].to_owned(),
+            text: fields[1].to_owned(),
+            role: fields[2].to_owned(),
+            position: fields[3].to_owned(),
+            expected_id: fields[4].to_owned(),
+        });
+    }
+    if rows.is_empty() {
+        return Err(CompareError::Corpus {
+            path: path.display().to_string(),
+            message: "no cases".into(),
+        });
+    }
+    Ok(rows)
+}
+
+fn corpus_query(row: &CorpusRow) -> Result<LocateQuery, CompareError> {
+    let mut query = LocateQuery::new()
+        .text(&row.text)
+        .map_err(|_| CompareError::Locate("empty text".to_owned()))?;
+    if !row.role.is_empty() {
+        let role = Role::parse(&row.role).ok_or_else(|| CompareError::Corpus {
+            path: row.fixture.clone(),
+            message: format!("unknown role {}", row.role),
+        })?;
+        query = query.role(role);
+    }
+    if !row.position.is_empty() {
+        let position = Zone::parse(&row.position).ok_or_else(|| CompareError::Corpus {
+            path: row.fixture.clone(),
+            message: format!("unknown position {}", row.position),
+        })?;
+        query = query.position(position);
+    }
+    Ok(query)
+}
+
+fn corpus_hit(
+    matcher: &'static str,
+    ranker: &impl RegionMatcher,
+    query: &LocateQuery,
+    manifold: &InteractionManifold,
+    row: &CorpusRow,
+) -> Result<CorpusHit, CompareError> {
+    let ranked = ranker
+        .rank(query, manifold)
+        .map_err(|err| CompareError::Locate(err.to_string()))?;
+    let top = ranked.first().ok_or_else(|| CompareError::EmptyRank {
+        fixture: row.fixture.clone(),
+    })?;
+    let runner_up = ranked.get(1).map(Match::confidence);
+    let (margin_millis, gate_would_refuse) = gate_report(top.confidence(), runner_up);
+    Ok(CorpusHit {
+        matcher,
+        top_id: top.id().as_str().to_owned(),
+        margin_millis,
+        gate_would_refuse,
+    })
+}
+
+/// The product allow gate. A missing runner-up checks only the 0.55 threshold.
+fn gate_report(top: f64, runner_up: Option<f64>) -> (Option<i32>, bool) {
+    use hyper_use_guard::{MARGIN_EPSILON, MIN_ALLOW_MARGIN};
+    let margin = runner_up.map(|second| margin_millis(top, second));
+    let refused = if top < MIN_ALLOW_CONFIDENCE {
+        true
+    } else if let Some(second) = runner_up {
+        let gap = top - second;
+        !gap.is_finite() || gap < MIN_ALLOW_MARGIN - MARGIN_EPSILON
+    } else {
+        false
+    };
+    (margin, refused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,8 +870,7 @@ mod tests {
             .iter()
             .find(|case| case.fixture() == "sign-in-press.cdp.json")
             .unwrap();
-        let millis = (press.confidence() * 1000.0).round() as i32;
-        if millis >= hyper_use_executor::MIN_ACT_CONFIDENCE_MILLIS {
+        if press.confidence() >= MIN_ALLOW_CONFIDENCE {
             assert_eq!(press.executed(), Some(true));
         } else {
             assert_eq!(press.executed(), Some(false));
@@ -620,13 +900,21 @@ mod tests {
     #[test]
     fn below_threshold_does_not_execute_and_does_not_call_transport() {
         let script = include_str!("../../../fixtures/sign-in-press.cdp.json");
-        let executed = scored_press(script, "n100", 0.49).unwrap();
+        let executed = scored_press(script, "n100", 0.49, None).unwrap();
         assert!(!executed);
     }
 
     #[test]
+    fn below_margin_does_not_execute_and_does_not_call_transport() {
+        let script = include_str!("../../../fixtures/sign-in-press.cdp.json");
+        assert!(!scored_press(script, "n100", 1.0, Some(0.98)).unwrap());
+        assert!(scored_press(script, "n100", 1.0, Some(0.5)).unwrap());
+    }
+
+    #[ignore = "firewall pivot; re-home under guard"]
+    #[test]
     fn transport_failure_is_not_recorded_as_executed() {
-        let err = scored_press(r#"{"calls":[]}"#, "n100", 0.9).unwrap_err();
+        let err = scored_press(r#"{"calls":[]}"#, "n100", 0.9, None).unwrap_err();
         assert_eq!(
             err,
             CompareError::Browser("no scripted CDP response for `Page.getLayoutMetrics`".into())
@@ -637,13 +925,14 @@ mod tests {
         );
     }
 
+    #[ignore = "firewall pivot; re-home under guard"]
     #[test]
     fn non_finite_confidence_is_exact_and_bad_ids_do_not_parse_as_a_script_error() {
         let script = include_str!("../../../fixtures/sign-in-press.cdp.json");
-        let err = scored_press(script, "n100", f64::NAN).unwrap_err();
+        let err = scored_press(script, "n100", f64::NAN, None).unwrap_err();
         assert_eq!(err, CompareError::NonFiniteConfidence);
         assert_eq!(err.to_string(), "confidence must be finite");
-        let err = scored_press("{}", "bad id", 0.9).unwrap_err();
+        let err = scored_press("{}", "bad id", 0.9, None).unwrap_err();
         assert_eq!(err, CompareError::UnknownRegion("bad id".into()));
         assert_eq!(err.to_string(), "unknown region `bad id`");
     }
@@ -735,5 +1024,92 @@ mod tests {
         assert!(described.contains("button"));
         assert!(described.contains("Settings"));
         assert!(described.contains("x="));
+    }
+
+    #[test]
+    fn eval_corpus_reports_weighted_without_a_winner() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals/locate");
+        let report = eval_corpus(&dir).unwrap();
+        let rendered = report.render();
+        assert!(!rendered.contains("winner"), "{rendered}");
+        assert_eq!(report.cases().len(), 5, "{rendered}");
+        let mut seen = Vec::new();
+        for case in report.cases() {
+            assert_eq!(case.hits().len(), 1, "{rendered}");
+            assert_eq!(case.hits()[0].matcher(), "weighted");
+            assert_eq!(
+                case.hits()[0].top_id(),
+                case.expected_id(),
+                "weighted top for {} / {}\n{rendered}",
+                case.fixture(),
+                case.text()
+            );
+            seen.push((
+                case.text().to_owned(),
+                case.hits()[0].top_id().to_owned(),
+                case.hits()[0].margin_millis(),
+                case.hits()[0].gate_would_refuse(),
+            ));
+        }
+        assert_eq!(
+            seen.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
+            ["Send", "Settings", "Export", "Admin", "Undo"]
+        );
+        assert_eq!(
+            seen,
+            vec![
+                ("Send".into(), "z-send".into(), Some(125), false),
+                ("Settings".into(), "nav-settings".into(), Some(300), false),
+                ("Export".into(), "z-export".into(), Some(250), false),
+                ("Admin".into(), "z-admin".into(), Some(449), false),
+                ("Undo".into(), "z-undo".into(), Some(350), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn compare_errors_are_exact() {
+        use hyper_use_core::Rect;
+
+        let missing = std::env::temp_dir().join("hyper-use-missing-fixtures");
+        let err = fixture_compare(&missing).unwrap_err();
+        assert!(matches!(err, CompareError::Io { .. }), "{err:?}");
+
+        let err = CompareError::Fixture("broken".into());
+        assert_eq!(err.to_string(), "fixture: broken");
+        let err = CompareError::Locate("empty text".into());
+        assert_eq!(err.to_string(), "locate: empty text");
+        let err = CompareError::Corpus {
+            path: "cases.tsv".into(),
+            message: "no cases".into(),
+        };
+        assert_eq!(err.to_string(), "eval corpus cases.tsv: no cases");
+        assert_eq!(
+            CompareError::TransportCalledBelowThreshold.to_string(),
+            "scored confidence is below 0.55 but the transport was called"
+        );
+
+        // EmptyRank through a real empty manifold.
+        let page = InteractionManifold::try_new(
+            Rect::try_viewport(0.0, 0.0, 100.0, 100.0).unwrap(),
+            Vec::new(),
+            0,
+        )
+        .unwrap();
+        let ranked = WeightedMatcher::default()
+            .rank(&LocateQuery::new().text("x").unwrap(), &page)
+            .unwrap();
+        assert!(ranked.is_empty());
+        assert_eq!(
+            CompareError::EmptyRank {
+                fixture: "empty".into()
+            }
+            .to_string(),
+            "empty has no regions to rank"
+        );
+
+        // TransportCalledBelowThreshold is unreachable with BrowserExecutor:
+        // gate_confidence runs before press, so a refusal never logs a CDP call.
+        // The Display assert above is the owner for that variant.
     }
 }

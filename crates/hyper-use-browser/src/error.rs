@@ -94,13 +94,12 @@ impl From<CdpError> for BrowserError {
 }
 
 /// How a press was sent. Declaration order is the preference order.
+/// There is no focus mechanism: a focus is not a click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ActMechanism {
     /// `Runtime.callFunctionOn` of `function(){this.click()}`.
     DomSemantic,
-    /// `DOM.focus` on the node id. No pointer event.
-    CdpElement,
     /// `Input.dispatchMouseEvent` at the region center.
     Coordinate,
 }
@@ -109,7 +108,6 @@ impl ActMechanism {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::DomSemantic => "dom-semantic",
-            Self::CdpElement => "cdp-element",
             Self::Coordinate => "coordinate",
         }
     }

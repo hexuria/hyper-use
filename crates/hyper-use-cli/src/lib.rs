@@ -5,11 +5,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::str::FromStr;
-
 use hyper_use_core::{Action, LocateQuery, Role, Zone};
-use hyper_use_hyper::Dims;
-use hyper_use_resonance::{HgraMatcher, RegionMatcher, ResonanceModel, WeightedMatcher};
+use hyper_use_resonance::{RegionMatcher, WeightedMatcher};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -40,6 +37,13 @@ pub enum CliError {
         confidence_millis: i32,
         minimum_millis: i32,
     },
+    AmbiguousTarget {
+        top_millis: i32,
+        runner_up_millis: i32,
+        margin_millis: i32,
+        minimum_margin_millis: i32,
+    },
+    RunnerUpNeedsConfidence,
     NonFiniteConfidence,
     DimsRequireHgra,
     MissingSource,
@@ -102,6 +106,16 @@ impl std::fmt::Display for CliError {
                 f,
                 "confidence {confidence_millis} is below the act minimum {minimum_millis}"
             ),
+            Self::AmbiguousTarget {
+                top_millis,
+                runner_up_millis,
+                margin_millis,
+                minimum_margin_millis,
+            } => write!(
+                f,
+                "top {top_millis} and runner-up {runner_up_millis} differ by {margin_millis} millis, below the act margin {minimum_margin_millis}"
+            ),
+            Self::RunnerUpNeedsConfidence => f.write_str("--runner-up requires --confidence"),
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
             Self::DimsRequireHgra => f.write_str("--dims is only valid with --matcher hgra"),
             Self::MissingSource => f.write_str("command requires --fixture <path> or --cdp [url]"),
@@ -147,7 +161,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use observe|locate|inspect|act|diff|verify|mcp\nmcp serves newline-delimited JSON-RPC on stdin. It takes no arguments.\nlocate [--fixture <path> | --cdp [url]] [text] [--text <label>] [--role <role>] [--position left|right|top|bottom|center] [--action <action>] [--matcher weighted|hgra] [--dims 512|1024|2048|4096] [--json]\nact <region> press [--fixture <path> | --cdp [url]] [--confidence <0-1>] [--executor browser|browser-use|macos|cua]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path> | --cdp [url]]\ndiff --before <path> --after <path>\ninspect <region> --fixture <path>\nDefault CDP endpoint: http://127.0.0.1:9222\nDefault matcher: weighted. hgra is selectable and is not a measured winner.\nDefault executor is the CDP browser press. --executor browser-use and --executor cua each send region id, role, and label through a replay fixture. They are not in the default policy order, they do not navigate, and they are not a fusion benchmark. macos is not implemented.\n"
+    "hyper-use observe|locate|inspect|guard|verify|diff|mcp\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -160,6 +174,7 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
         "locate" => locate_command(&args[1..]),
         "observe" => crate::session_cmd::observe_command(&args[1..]),
         "act" => crate::session_cmd::act_command(&args[1..]),
+        "guard" => crate::session_cmd::guard_command(&args[1..]),
         "verify" => crate::session_cmd::verify_command(&args[1..]),
         "diff" => crate::session_cmd::diff_command(&args[1..]),
         "inspect" => crate::session_cmd::inspect_command(&args[1..]),
@@ -249,26 +264,18 @@ fn locate_command(args: &[String]) -> Result<String, CliError> {
     }
     let query = build_query(text, role, position, action)?;
     let matcher_name = matcher.unwrap_or_else(|| "weighted".to_owned());
-    if dims.is_some() && matcher_name != "hgra" {
+    let manifold = session_cmd::load_source(fixture.as_deref(), cdp.as_deref())?;
+    if dims.is_some() {
         return Err(CliError::DimsRequireHgra);
     }
-    let manifold = session_cmd::load_source(fixture.as_deref(), cdp.as_deref())?;
     let ranked = match matcher_name.as_str() {
         "weighted" => WeightedMatcher::default()
             .rank(&query, &manifold)
             .map_err(|err| CliError::Locate(err.to_string()))?,
         "hgra" => {
-            let dims = match dims {
-                None => Dims::DEFAULT,
-                Some(raw) => {
-                    let parsed =
-                        usize::from_str(&raw).map_err(|_| CliError::BadDims(raw.clone()))?;
-                    Dims::try_from_usize(parsed).map_err(|_| CliError::BadDims(raw))?
-                }
-            };
-            HgraMatcher::new(dims, ResonanceModel::V1)
-                .rank(&query, &manifold)
-                .map_err(|err| CliError::Locate(err.to_string()))?
+            return Err(CliError::UnknownMatcher(
+                "hgra is an experiment; enable hyper-use-resonance feature `hgra`".into(),
+            ))
         }
         other => return Err(CliError::UnknownMatcher(other.to_owned())),
     };
@@ -303,6 +310,7 @@ pub(crate) fn flag_name(name: &str) -> &'static str {
         "matcher" => "--matcher",
         "cdp" => "--cdp",
         "confidence" => "--confidence",
+        "runner-up" => "--runner-up",
         "expect-text" => "--expect-text",
         "expect-absent" => "--expect-absent",
         "before" => "--before",
@@ -417,7 +425,7 @@ pub(crate) mod session_cmd;
 
 #[cfg(feature = "jev")]
 pub use compare::fixture_compare_live;
-pub use compare::{fixture_compare, CompareError, FixtureReport};
+pub use compare::{eval_corpus, fixture_compare, CompareError, CorpusReport, FixtureReport};
 
 #[cfg(test)]
 mod tests {
@@ -511,6 +519,66 @@ mod tests {
         assert!(json.find("\"id\": \"n100\"").unwrap() < json.find("\"id\": \"n200\"").unwrap());
     }
 
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
+    #[test]
+    fn act_refuses_a_ranked_target_inside_the_margin() {
+        // sign-in.cdp.json has no press steps, so a press would fail.
+        let path = cdp_fixture("sign-in.cdp.json");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--confidence",
+            "1.0",
+            "--runner-up=0.98",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::AmbiguousTarget {
+                top_millis: 1000,
+                runner_up_millis: 980,
+                margin_millis: 20,
+                minimum_margin_millis: 50,
+            }
+        );
+        let press = cdp_fixture("sign-in-press.cdp.json");
+        let stdout = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &press,
+            "--confidence",
+            "1.0",
+            "--runner-up",
+            "0.5",
+        ]))
+        .unwrap();
+        assert_eq!(stdout, "n100\tpress\tdom-semantic\texecuted\n");
+    }
+
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
+    #[test]
+    fn runner_up_needs_confidence() {
+        let path = cdp_fixture("sign-in-press.cdp.json");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &path,
+            "--runner-up",
+            "0.5",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CliError::RunnerUpNeedsConfidence);
+        assert_eq!(err.to_string(), "--runner-up requires --confidence");
+    }
+
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
     #[test]
     fn act_press_records_dom_semantic_and_low_confidence_is_exact() {
         let path = cdp_fixture("sign-in-press.cdp.json");
@@ -539,6 +607,7 @@ mod tests {
         );
     }
 
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
     #[test]
     fn browser_use_act_sends_semantics_and_low_confidence_does_not_execute() {
         let path = cdp_fixture("sign-in.browser-use.json");
@@ -723,6 +792,7 @@ mod tests {
         assert!(stdout.contains("added\tn300\n"), "{stdout}");
     }
 
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
     #[test]
     fn hgra_matcher_still_ranks_sidebar_settings_first() {
         let path = fixture();
@@ -757,6 +827,7 @@ mod tests {
         );
     }
 
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
     #[test]
     fn flag_parser_returns_exact_variants() {
         let err = execute(&args(&["locate", "--nope"])).unwrap_err();
@@ -794,6 +865,7 @@ mod tests {
         assert_eq!(err.to_string(), "act requires a verb (`press`)");
     }
 
+    #[ignore = "actuation/HGRA removed in action-firewall pivot"]
     #[test]
     fn replay_scripts_and_verify_return_exact_variants() {
         let cdp = cdp_fixture("sign-in.cdp.json");

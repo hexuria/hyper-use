@@ -1,39 +1,48 @@
-//! The six tools. Each one is a single computer-capability call.
+//! MCP tools for the action-firewall product.
 //!
-//! `call_tool` rejects a goal, a navigate payload, and raw coordinates before
-//! it reads a fixture. A scored act below the executor gate returns
-//! `executed: false` and does not call `press`.
+//! Product tools: observe, guard, verify. Locate, inspect, and diff remain as
+//! transitional helpers. `act` is deprecated: it runs the same decision path as
+//! `guard` and never clicks.
 
 use std::fs;
 use std::path::Path;
-use std::str::FromStr;
 
 use hyper_use_browser::{
-    verify, BrowserSession, Expectation, ReplayTransport, VerifyError, WebSocketTransport,
+    page_delta, verify, BrowserSession, Expectation, PageState, ReplayTransport, VerifyError,
 };
 use hyper_use_core::{
-    parse_fixture, Action, InteractionManifold, LocateQuery, RegionId, Role, Zone,
+    parse_fixture, Action, InteractionManifold, InteractionRegion, LocateQuery, RegionId, Role,
+    Zone,
 };
-use hyper_use_executor::{
-    gate_scored_confidence, select_act_executor, ActionExecutor, ActionReceipt, ActionRequest,
-    BrowserExecutor, BrowserUseError, BrowserUseExecutor, CuaError, CuaExecutor, ExecutorError,
-    ExecutorKind, StubExecutor,
-};
-use hyper_use_hyper::Dims;
-use hyper_use_observe::diff;
-use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
+use hyper_use_guard::{guard_with, GuardRequest, MIN_ALLOW_CONFIDENCE};
+use hyper_use_observe::{diff, history::SnapshotId, ManifoldDiff};
+use hyper_use_protocol::{GuardDecision, StateDelta};
+use hyper_use_resonance::{separating_zone, Match, RegionMatcher, RegionState, WeightedMatcher};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
+use crate::repeat::{QueryKey, REPEAT_THRESHOLD};
+use crate::server::Server;
 
 const PRODUCT: &str = "hyper-use";
+
+const _: () = assert!(hyper_use_resonance::TEXT_MISS_CAP < MIN_ALLOW_CONFIDENCE);
 
 enum Origin {
     Fixture(String),
     Cdp(String),
 }
 
+/// Run one tool against a fresh [`Server`]. Keeps no state between calls.
 pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, ToolError> {
+    Server::new().call_tool(name, arguments)
+}
+
+pub(crate) fn dispatch(
+    server: &mut Server,
+    name: &str,
+    arguments: &Value,
+) -> Result<Value, ToolError> {
     let owned;
     let arguments = match arguments {
         Value::Null => {
@@ -61,18 +70,20 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<Value, ToolError> {
     }
     match name {
         "navigate" => Err(ToolError::GoalNotAccepted),
-        "observe" => observe(arguments),
-        "locate" => locate(arguments),
-        "inspect" => inspect(arguments),
-        "act" => act(arguments),
-        "diff" => diff_tool(arguments),
-        "verify" => verify_tool(arguments),
+        "observe" => observe(server, arguments),
+        "locate" => locate(server, arguments),
+        "inspect" => inspect(server, arguments),
+        "guard" => guard_tool(server, arguments),
+        // Deprecated: same decision as guard, never clicks.
+        "act" => guard_tool(server, arguments),
+        "diff" => diff_tool(server, arguments),
+        "verify" => verify_tool(server, arguments),
         other => Err(ToolError::UnknownTool(other.to_owned())),
     }
 }
 
-fn observe(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let regions: Vec<Value> = manifold
         .regions()
         .map(|region| {
@@ -80,6 +91,7 @@ fn observe(arguments: &Value) -> Result<Value, ToolError> {
                 "id": region.id().as_str(),
                 "role": region.role().as_str(),
                 "label": region.label(),
+                "state": state_json(&manifold, region),
             })
         })
         .collect();
@@ -95,17 +107,21 @@ fn observe(arguments: &Value) -> Result<Value, ToolError> {
         None,
     );
     insert(&mut body, "regions", Value::Array(regions));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
     Ok(body)
 }
 
-fn locate(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let origin = resolve_origin(arguments)?;
+    let (snapshot, manifold, _page) = observe_origin(server, &origin)?;
     let query = build_query(arguments)?;
     let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
         return Err(ToolError::DimsRequireHgra);
     }
     let ranked = rank(&manifold, &query, matcher_name, arguments)?;
+    let key = QueryKey::new(&query, matcher_name, opt_u64(arguments, "dims")?);
+    let count = server.record_locate(&origin_key(&origin), &manifold, key);
     let top = ranked.first();
     let target = match top {
         Some(candidate) => target_of(&manifold, candidate.id()),
@@ -128,39 +144,66 @@ fn locate(arguments: &Value) -> Result<Value, ToolError> {
     insert(&mut body, "matcher", json!(matcher_name));
     insert(&mut body, "benchmark", json!(false));
     insert(&mut body, "candidates", candidates_of(&manifold, &ranked));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
+    let signals = if count >= REPEAT_THRESHOLD {
+        vec![repeated_query_json(&manifold, &ranked, count)]
+    } else {
+        Vec::new()
+    };
+    insert(&mut body, "signals", Value::Array(signals));
     Ok(body)
+}
+
+/// `repeated_query`: this exact query already ran on this exact page state.
+/// Names the top and runner-up, each with a position zone that separates it
+/// from the other (or null). Data only. The ranking above is unchanged.
+fn repeated_query_json(manifold: &InteractionManifold, ranked: &[Match], count: usize) -> Value {
+    let rect = |candidate: &Match| manifold.get(candidate.id()).map(|region| region.rect());
+    let hint = |candidate: &Match, other: Option<&Match>| {
+        let zone = match (rect(candidate), other.and_then(rect)) {
+            (Some(own), Some(theirs)) => separating_zone(manifold.viewport(), own, theirs),
+            _ => None,
+        };
+        json!({
+            "id": candidate.id().as_str(),
+            "suggested_position": zone.map(|zone| zone.as_str()),
+        })
+    };
+    let top = ranked.first();
+    let runner_up = ranked.get(1);
+    json!({
+        "kind": "repeated_query",
+        "count": count,
+        "top": top.map_or(Value::Null, |top| hint(top, runner_up)),
+        "runner_up": runner_up.map_or(Value::Null, |runner| hint(runner, top)),
+    })
 }
 
 fn rank(
     manifold: &InteractionManifold,
     query: &LocateQuery,
-    matcher_name: &str,
+    matcher: &str,
     arguments: &Value,
 ) -> Result<Vec<Match>, ToolError> {
-    match matcher_name {
-        "weighted" => WeightedMatcher::default()
-            .rank(query, manifold)
-            .map_err(|err| ToolError::Ranker(err.to_string())),
-        "hgra" => {
-            let dims = match opt_u64(arguments, "dims")? {
-                None => Dims::DEFAULT,
-                Some(width) => {
-                    let width = usize::try_from(width)
-                        .map_err(|_| ToolError::BadDims(width.to_string()))?;
-                    Dims::try_from_usize(width)
-                        .map_err(|_| ToolError::BadDims(width.to_string()))?
-                }
-            };
-            HgraMatcher::new(dims, ResonanceModel::V1)
+    let dims = opt_str(arguments, "dims")?;
+    match matcher {
+        "weighted" => {
+            if dims.is_some() {
+                return Err(ToolError::DimsRequireHgra);
+            }
+            WeightedMatcher::default()
                 .rank(query, manifold)
                 .map_err(|err| ToolError::Ranker(err.to_string()))
         }
+        "hgra" => Err(ToolError::UnknownMatcher(
+            "hgra is an experiment; build with hyper-use-resonance feature `hgra`".into(),
+        )),
         other => Err(ToolError::UnknownMatcher(other.to_owned())),
     }
 }
 
-fn inspect(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let region = require_region(arguments)?;
     let found = manifold
         .get(&region)
@@ -169,13 +212,14 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
         "id": found.id().as_str(),
         "role": found.role().as_str(),
         "label": found.label(),
+        "state": state_json(&manifold, found),
         "x": found.rect().x(),
         "y": found.rect().y(),
         "width": found.rect().width(),
         "height": found.rect().height(),
     });
     // Same omission as locate. Inspect reads one region and does not press.
-    Ok(without_act_flags(outcome(
+    let mut body = without_act_flags(outcome(
         "inspect",
         target,
         None,
@@ -185,100 +229,190 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
         None,
         None,
         None,
-    )))
-}
-
-fn act(arguments: &Value) -> Result<Value, ToolError> {
-    let requested = parse_requested_executor(arguments)?;
-    let available = match requested {
-        Some(kind) => vec![kind],
-        None => vec![ExecutorKind::Browser],
-    };
-    let selected = select_act_executor(requested, &available).map_err(|err| match err {
-        ExecutorError::Unavailable(kind) => ToolError::NotImplemented {
-            executor: kind.as_str().to_owned(),
-        },
-        other => ToolError::Browser(other.to_string()),
-    })?;
-    match selected {
-        ExecutorKind::BrowserUse => act_browser_use(arguments),
-        ExecutorKind::Cua => act_cua(arguments),
-        ExecutorKind::Macos => act_stub(selected, arguments),
-        ExecutorKind::Browser => act_browser(arguments),
-        other => Err(ToolError::NotImplemented {
-            executor: other.as_str().to_owned(),
-        }),
-    }
-}
-
-fn act_browser(arguments: &Value) -> Result<Value, ToolError> {
-    let origin = resolve_origin(arguments)?;
-    let region = require_region(arguments)?;
-    let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
-    let manifold = load_origin(&origin)?;
-    if manifold.get(&region).is_none() {
-        return Err(ToolError::UnknownRegion(region.to_string()));
-    }
-    if let Some(score) = confidence {
-        match gate_scored_confidence(score) {
-            Ok(()) => {}
-            Err(ExecutorError::NonFiniteConfidence) => {
-                return Err(ToolError::NonFiniteConfidence);
-            }
-            Err(ExecutorError::ConfidenceBelowThreshold { .. }) => {
-                return Ok(refused_act(&manifold, &region, score));
-            }
-            Err(other) => return Err(ToolError::Browser(other.to_string())),
-        }
-    }
-    let receipt = press(&origin, &region, confidence)?;
-    let mut body = outcome(
-        "act",
-        target_of(&manifold, &region),
-        Some(Action::Click.as_str()),
-        true,
-        false,
-        empty_delta(),
-        confidence,
-        None,
-        Some("browser"),
-    );
-    insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
+    ));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
     Ok(body)
 }
 
-fn diff_tool(arguments: &Value) -> Result<Value, ToolError> {
-    let before_path = opt_str(arguments, "before")?.ok_or(ToolError::MissingBefore)?;
-    let after_path = opt_str(arguments, "after")?.ok_or(ToolError::MissingAfter)?;
-    let before = load_path_manifold(before_path)?;
-    let after = load_path_manifold(after_path)?;
-    let delta = diff(&before, &after);
-    let changed: Vec<&str> = delta
-        .changed()
-        .iter()
-        .map(|change| change.id().as_str())
-        .collect();
-    let state_delta = json!({
-        "added": id_strings(delta.added()),
-        "removed": id_strings(delta.removed()),
-        "changed": changed,
-    });
+fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let origin = resolve_origin(arguments)?;
+    let query = build_guard_query(arguments)?;
+    let mut request = GuardRequest::click(query);
+    let proposed = match opt_str(arguments, "proposed")? {
+        Some(raw) => Some(raw),
+        None => opt_str(arguments, "region")?,
+    };
+    if let Some(raw) = proposed {
+        let id = RegionId::try_new(raw).map_err(|_| ToolError::UnknownRegion(raw.to_owned()))?;
+        request = request.proposed(id);
+    }
+    let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
+    if matcher_name != "weighted" {
+        return Err(ToolError::UnknownMatcher(matcher_name.to_owned()));
+    }
+    let (snapshot, manifold, _page) = observe_origin(server, &origin)?;
+    let decision = guard_with(&manifold, &request, &WeightedMatcher::default())
+        .map_err(|err| ToolError::Ranker(err.to_string()))?;
+    Ok(decision_json("guard", snapshot, &manifold, decision))
+}
+
+fn build_guard_query(arguments: &Value) -> Result<LocateQuery, ToolError> {
+    // Accept locate-style fields, or `target` as the text label.
+    let mut args = arguments.clone();
+    if args.get("text").is_none() {
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        if let Some(target) = target {
+            if let Some(obj) = args.as_object_mut() {
+                obj.insert("text".into(), json!(target));
+            }
+        }
+    }
+    if args.get("action").is_none() {
+        if let Some(obj) = args.as_object_mut() {
+            obj.insert("action".into(), json!("click"));
+        }
+    }
+    build_query(&args)
+}
+
+fn decision_json(
+    tool: &str,
+    snapshot: SnapshotId,
+    _manifold: &InteractionManifold,
+    decision: GuardDecision,
+) -> Value {
+    let (target, confidence, fallback) = match &decision {
+        GuardDecision::Allow {
+            target, confidence, ..
+        } => (
+            json!({
+                "id": target.id.as_str(),
+                "role": target.role.as_str(),
+                "label": target.label,
+                "confidence": target.confidence,
+            }),
+            Some(confidence.get()),
+            None,
+        ),
+        GuardDecision::Refuse { reason, .. } | GuardDecision::Escalate { reason, .. } => {
+            (Value::Null, None, Some(reason.as_str()))
+        }
+        _ => (Value::Null, None, Some("unknown")),
+    };
+    let mut body = outcome(
+        tool,
+        target,
+        Some("click"),
+        false, // never clicks
+        false,
+        empty_delta(),
+        confidence,
+        fallback,
+        None,
+    );
+    insert(&mut body, "decision", json!(decision.as_str()));
+    insert(&mut body, "snapshot", json!(snapshot.get()));
+    match decision {
+        GuardDecision::Allow {
+            margin, evidence, ..
+        } => {
+            if let Some(m) = margin {
+                insert(&mut body, "margin", json!(m.get()));
+            }
+            insert(
+                &mut body,
+                "evidence",
+                json!({
+                    "visible": evidence.visible,
+                    "enabled": evidence.enabled,
+                    "occluded": evidence.occluded,
+                    "hidden": evidence.hidden,
+                    "offscreen": evidence.offscreen,
+                    "role": evidence.role.as_str(),
+                }),
+            );
+        }
+        GuardDecision::Refuse { candidates, reason }
+        | GuardDecision::Escalate { candidates, reason } => {
+            insert(&mut body, "reason", json!(reason.as_str()));
+            let cands: Vec<Value> = candidates
+                .iter()
+                .map(|c| {
+                    json!({
+                        "id": c.id.as_str(),
+                        "role": c.role.as_str(),
+                        "label": c.label,
+                        "confidence": c.confidence,
+                    })
+                })
+                .collect();
+            insert(&mut body, "candidates", json!(cands));
+        }
+        _ => {}
+    }
+    body
+}
+
+fn diff_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let before_path = opt_str(arguments, "before")?;
+    let after_path = opt_str(arguments, "after")?;
+    let before_id = opt_snapshot(arguments, "before_snapshot")?;
+    let after_id = opt_snapshot(arguments, "after_snapshot")?;
+    let by_path = before_path.is_some() || after_path.is_some();
+    let by_id = before_id.is_some() || after_id.is_some();
+    let (delta, pages) = match (by_path, by_id) {
+        (true, true) => return Err(ToolError::MixedDiffSources),
+        (false, true) => {
+            let before_id = before_id.ok_or(ToolError::MissingBefore)?;
+            let after_id = after_id.ok_or(ToolError::MissingAfter)?;
+            let (before_m, before_p, after_m, after_p) = {
+                let before = server.snapshot(before_id)?;
+                let after = server.snapshot(after_id)?;
+                (
+                    before.manifold.clone(),
+                    before.page.clone(),
+                    after.manifold.clone(),
+                    after.page.clone(),
+                )
+            };
+            (diff(&before_m, &after_m), page_delta(&before_p, &after_p))
+        }
+        _ => {
+            let (before_m, before_p) =
+                load_observation(before_path.ok_or(ToolError::MissingBefore)?)?;
+            let (after_m, after_p) = load_observation(after_path.ok_or(ToolError::MissingAfter)?)?;
+            (diff(&before_m, &after_m), page_delta(&before_p, &after_p))
+        }
+    };
     Ok(outcome(
         "diff",
         Value::Null,
         None,
         false,
         false,
-        state_delta,
+        delta_json(&delta, &pages),
         None,
         None,
         None,
     ))
 }
 
-fn verify_tool(arguments: &Value) -> Result<Value, ToolError> {
-    let manifold = load_origin(&resolve_origin(arguments)?)?;
+fn opt_snapshot(arguments: &Value, key: &str) -> Result<Option<u64>, ToolError> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| ToolError::BadSnapshot(number.to_string())),
+        Some(other) => Err(ToolError::BadSnapshot(other.to_string())),
+    }
+}
+
+fn verify_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let (_snapshot, manifold, _page) = observe_origin(server, &resolve_origin(arguments)?)?;
     let expect_text = opt_str(arguments, "expect_text")?;
     let expect_absent = opt_str(arguments, "expect_absent")?;
     match (expect_text, expect_absent) {
@@ -326,236 +460,27 @@ fn verified_ok() -> Value {
     )
 }
 
-fn act_browser_use(arguments: &Value) -> Result<Value, ToolError> {
-    if opt_str(arguments, "cdp")?.is_some() {
-        return Err(ToolError::BrowserUseIsReplay);
-    }
-    let region = require_region(arguments)?;
-    let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
-    let path = opt_str(arguments, "fixture")?.ok_or(ToolError::MissingFixture)?;
-    let body = read_path(path)?;
-    let mut executor = BrowserUseExecutor::from_replay(&body).map_err(map_browser_use_script)?;
-    if executor.target().region_id() != &region {
-        return Err(ToolError::UnknownRegion(region.to_string()));
-    }
-    let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
-    }
-    let target = json!({
-        "id": executor.target().region_id().as_str(),
-        "role": executor.target().role().as_str(),
-        "label": executor.target().label(),
-    });
-    match executor.execute(&request) {
-        Ok(receipt) => {
-            let mut body = outcome(
-                "act",
-                target,
-                Some(Action::Click.as_str()),
-                true,
-                false,
-                empty_delta(),
-                confidence,
-                None,
-                Some(receipt.kind().as_str()),
-            );
-            insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
-            Ok(body)
-        }
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
-            Some(score) => Ok(refused_target(target, score)),
-            None => Err(ToolError::Browser(
-                "unscored act was refused for confidence".into(),
-            )),
-        },
-        Err(err) => Err(map_executor(err)),
-    }
-}
-
-fn act_stub(kind: ExecutorKind, arguments: &Value) -> Result<Value, ToolError> {
-    let region = require_region(arguments)?;
-    let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
-    let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
-    }
-    let mut stub = StubExecutor::new(kind);
-    match stub.execute(&request) {
-        Ok(_) => Err(ToolError::Browser(
-            "unimplemented executor returned a receipt".into(),
-        )),
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
-            Some(score) => Ok(refused_target(json!({"id": region.as_str()}), score)),
-            None => Err(ToolError::Browser(
-                "unscored act was refused for confidence".into(),
-            )),
-        },
-        Err(err) => Err(map_executor(err)),
-    }
-}
-
-fn act_cua(arguments: &Value) -> Result<Value, ToolError> {
-    if opt_str(arguments, "cdp")?.is_some() {
-        return Err(ToolError::CuaIsReplay);
-    }
-    let region = require_region(arguments)?;
-    let _action = parse_press_action(arguments)?;
-    let confidence = parse_confidence(arguments)?;
-    let path = opt_str(arguments, "fixture")?.ok_or(ToolError::MissingFixture)?;
-    let body = read_path(path)?;
-    let mut executor = CuaExecutor::from_replay(&body).map_err(map_cua_script)?;
-    if executor.target().region_id() != &region {
-        return Err(ToolError::UnknownRegion(region.to_string()));
-    }
-    let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
-    }
-    let target = json!({
-        "id": executor.target().region_id().as_str(),
-        "role": executor.target().role().as_str(),
-        "label": executor.target().label(),
-    });
-    match executor.execute(&request) {
-        Ok(receipt) => {
-            let mut body = outcome(
-                "act",
-                target,
-                Some(Action::Click.as_str()),
-                true,
-                false,
-                empty_delta(),
-                confidence,
-                None,
-                Some(receipt.kind().as_str()),
-            );
-            insert(&mut body, "mechanism", json!(receipt.mechanism().as_str()));
-            Ok(body)
-        }
-        Err(ExecutorError::ConfidenceBelowThreshold { .. }) => match confidence {
-            Some(score) => Ok(refused_target(target, score)),
-            None => Err(ToolError::Browser(
-                "unscored act was refused for confidence".into(),
-            )),
-        },
-        Err(err) => Err(map_executor(err)),
-    }
-}
-
-fn map_browser_use_script(err: BrowserUseError) -> ToolError {
-    match err {
-        BrowserUseError::BadScript { message } => ToolError::BrowserUseScript { message },
-        other => ToolError::BrowserUseScript {
-            message: other.to_string(),
-        },
-    }
-}
-
-fn map_cua_script(err: CuaError) -> ToolError {
-    match err {
-        CuaError::BadScript { message } => ToolError::CuaScript { message },
-        other => ToolError::CuaScript {
-            message: other.to_string(),
-        },
-    }
-}
-
-fn refused_act(manifold: &InteractionManifold, region: &RegionId, score: f64) -> Value {
-    refused_target(target_of(manifold, region), score)
-}
-
-fn refused_target(target: Value, score: f64) -> Value {
-    let mut body = outcome(
-        "act",
-        target,
-        Some(Action::Click.as_str()),
-        false,
-        false,
-        empty_delta(),
-        Some(score),
-        Some("low-confidence"),
-        None,
-    );
-    insert(&mut body, "mechanism", Value::Null);
-    body
-}
-
-fn press(
-    origin: &Origin,
-    region: &RegionId,
-    confidence: Option<f64>,
-) -> Result<ActionReceipt, ToolError> {
-    let mut request = ActionRequest::new(region.clone(), Action::Click);
-    if let Some(score) = confidence {
-        request = request.scored(score);
-    }
-    match origin {
-        Origin::Fixture(path) => {
-            let body = read_cdp_script(path)?;
-            let transport =
-                ReplayTransport::parse(&body).map_err(|err| ToolError::Browser(err.to_string()))?;
-            let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-            executor.execute(&request).map_err(map_executor)
-        }
-        Origin::Cdp(url) => {
-            let transport = WebSocketTransport::connect(url)
-                .map_err(|err| ToolError::Browser(err.to_string()))?;
-            let mut executor = BrowserExecutor::new(BrowserSession::new(transport));
-            executor.execute(&request).map_err(map_executor)
-        }
-    }
-}
-
-fn parse_requested_executor(arguments: &Value) -> Result<Option<ExecutorKind>, ToolError> {
-    match opt_str(arguments, "executor")? {
-        None => Ok(None),
-        Some(name) => ExecutorKind::parse(name)
-            .map(Some)
-            .ok_or_else(|| ToolError::UnknownExecutor(name.to_owned())),
-    }
-}
-
-fn map_executor(err: ExecutorError) -> ToolError {
-    match err {
-        ExecutorError::NonFiniteConfidence => ToolError::NonFiniteConfidence,
-        ExecutorError::NotImplemented(kind) => ToolError::NotImplemented {
-            executor: kind.as_str().to_owned(),
-        },
-        ExecutorError::Browser(hyper_use_browser::BrowserError::UnknownRegion(id)) => {
-            ToolError::UnknownRegion(id)
-        }
-        ExecutorError::Browser(hyper_use_browser::BrowserError::UnsupportedAction(action)) => {
-            ToolError::UnsupportedAction(action)
-        }
-        ExecutorError::BrowserUse(err) => match err {
-            BrowserUseError::UnknownRegion(id) => ToolError::UnknownRegion(id),
-            BrowserUseError::UnsupportedAction(action) => ToolError::UnsupportedAction(action),
-            BrowserUseError::Rejected { message } => ToolError::BrowserUseRejected { message },
-            BrowserUseError::BadScript { message }
-            | BrowserUseError::ParamsMismatch { message } => {
-                ToolError::BrowserUseScript { message }
-            }
-            other => ToolError::BrowserUseScript {
-                message: other.to_string(),
-            },
-        },
-        ExecutorError::Cua(err) => match err {
-            CuaError::UnknownRegion(id) => ToolError::UnknownRegion(id),
-            CuaError::UnsupportedAction(action) => ToolError::UnsupportedAction(action),
-            CuaError::Rejected { message } => ToolError::CuaRejected { message },
-            CuaError::BadScript { message } | CuaError::ParamsMismatch { message } => {
-                ToolError::CuaScript { message }
-            }
-            other => ToolError::CuaScript {
-                message: other.to_string(),
-            },
-        },
-        ExecutorError::ConfidenceBelowThreshold { .. } => ToolError::Browser(err.to_string()),
-        other => ToolError::Browser(other.to_string()),
-    }
+fn delta_json(delta: &ManifoldDiff, page: &hyper_use_browser::PageDelta) -> Value {
+    let changed: Vec<hyper_use_core::RegionId> = delta
+        .changed()
+        .iter()
+        .map(|change| change.id().clone())
+        .collect();
+    let state = StateDelta::new(delta.added().to_vec(), delta.removed().to_vec(), changed)
+        .with_moved(delta.moved().cloned().collect())
+        .with_text_changed(delta.relabeled().cloned().collect())
+        .with_focus_changed(page.focus_changed())
+        .with_url_changed(page.url_changed());
+    json!({
+        "added": id_strings(state.added()),
+        "removed": id_strings(state.removed()),
+        "changed": id_strings(state.changed()),
+        "moved": id_strings(state.moved()),
+        "text_changed": id_strings(state.text_changed()),
+        "focus_changed": state.focus_changed(),
+        "url_changed": state.url_changed(),
+        "title_changed": page.title_changed(),
+    })
 }
 
 fn resolve_origin(arguments: &Value) -> Result<Origin, ToolError> {
@@ -569,42 +494,53 @@ fn resolve_origin(arguments: &Value) -> Result<Origin, ToolError> {
     }
 }
 
-fn load_origin(origin: &Origin) -> Result<InteractionManifold, ToolError> {
+fn origin_key(origin: &Origin) -> String {
     match origin {
-        Origin::Fixture(path) => load_path_manifold(path),
-        Origin::Cdp(url) => {
-            let transport = WebSocketTransport::connect(url)
-                .map_err(|err| ToolError::Browser(err.to_string()))?;
-            let mut session = BrowserSession::new(transport);
-            session
-                .observe()
-                .cloned()
-                .map_err(|err| ToolError::Browser(err.to_string()))
-        }
+        Origin::Fixture(path) => format!("fixture:{path}"),
+        Origin::Cdp(url) => format!("cdp:{url}"),
     }
 }
 
-fn load_path_manifold(path: &str) -> Result<InteractionManifold, ToolError> {
+/// Observe `origin` and record it in the server's ring. A live session is kept
+/// for the next call; a failed live call drops it.
+fn observe_origin(
+    server: &mut Server,
+    origin: &Origin,
+) -> Result<(SnapshotId, InteractionManifold, PageState), ToolError> {
+    let (manifold, page) = match origin {
+        Origin::Fixture(path) => load_observation(path)?,
+        Origin::Cdp(url) => {
+            let mut session = server.take_session(url)?;
+            let manifold = session
+                .observe()
+                .cloned()
+                .map_err(|err| ToolError::Browser(err.to_string()))?;
+            let page = session.page().cloned().unwrap_or_else(PageState::blank);
+            server.keep_session(url, session);
+            (manifold, page)
+        }
+    };
+    let id = server.record(&origin_key(origin), manifold.clone(), page.clone());
+    Ok((id, manifold, page))
+}
+
+fn load_observation(path: &str) -> Result<(InteractionManifold, PageState), ToolError> {
     let body = read_path(path)?;
     if body.trim_start().starts_with('{') {
         let transport =
             ReplayTransport::parse(&body).map_err(|err| ToolError::Browser(err.to_string()))?;
         let mut session = BrowserSession::new(transport);
-        session
+        let manifold = session
             .observe()
             .cloned()
-            .map_err(|err| ToolError::Browser(err.to_string()))
+            .map_err(|err| ToolError::Browser(err.to_string()))?;
+        let page = session.page().cloned().unwrap_or_else(PageState::blank);
+        Ok((manifold, page))
     } else {
-        parse_fixture(&body).map_err(|err| ToolError::Fixture(err.to_string()))
+        parse_fixture(&body)
+            .map(|manifold| (manifold, PageState::blank()))
+            .map_err(|err| ToolError::Fixture(err.to_string()))
     }
-}
-
-fn read_cdp_script(path: &str) -> Result<String, ToolError> {
-    let body = read_path(path)?;
-    if !body.trim_start().starts_with('{') {
-        return Err(ToolError::ActNeedsCdp);
-    }
-    Ok(body)
 }
 
 fn read_path(path: &str) -> Result<String, ToolError> {
@@ -617,41 +553,6 @@ fn read_path(path: &str) -> Result<String, ToolError> {
 fn require_region(arguments: &Value) -> Result<RegionId, ToolError> {
     let raw = opt_str(arguments, "region")?.ok_or(ToolError::MissingRegion)?;
     RegionId::try_new(raw).map_err(|_| ToolError::UnknownRegion(raw.to_owned()))
-}
-
-fn parse_press_action(arguments: &Value) -> Result<Action, ToolError> {
-    let raw = opt_str(arguments, "action")?.unwrap_or("press");
-    match raw.to_ascii_lowercase().as_str() {
-        "press" | "click" => Ok(Action::Click),
-        other => match Action::parse(other) {
-            Some(Action::Click) => Ok(Action::Click),
-            Some(action) => Err(ToolError::UnsupportedAction(action.as_str().to_owned())),
-            None => Err(ToolError::UnknownAction(raw.to_owned())),
-        },
-    }
-}
-
-fn parse_confidence(arguments: &Value) -> Result<Option<f64>, ToolError> {
-    match arguments.get("confidence") {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Number(number)) => {
-            let value = number
-                .as_f64()
-                .ok_or_else(|| ToolError::BadConfidence(number.to_string()))?;
-            if !value.is_finite() {
-                return Err(ToolError::NonFiniteConfidence);
-            }
-            Ok(Some(value))
-        }
-        Some(Value::String(text)) => {
-            let value = f64::from_str(text).map_err(|_| ToolError::BadConfidence(text.clone()))?;
-            if !value.is_finite() {
-                return Err(ToolError::NonFiniteConfidence);
-            }
-            Ok(Some(value))
-        }
-        Some(other) => Err(ToolError::BadConfidence(other.to_string())),
-    }
 }
 
 fn build_query(arguments: &Value) -> Result<LocateQuery, ToolError> {
@@ -763,11 +664,21 @@ fn candidates_of(manifold: &InteractionManifold, ranked: &[Match]) -> Value {
                 "id": candidate.id().as_str(),
                 "role": region.map(|region| region.role().as_str()).unwrap_or("unknown"),
                 "label": region.map(|region| region.label()).unwrap_or(""),
+                "state": region.map_or(Value::Null, |region| state_json(manifold, region)),
                 "confidence": candidate.confidence(),
             })
         })
         .collect();
     Value::Array(rows)
+}
+
+/// `{"availability": "enabled"|"disabled", "visibility": "visible"|"occluded"|"offscreen"|"hidden"}`.
+fn state_json(manifold: &InteractionManifold, region: &InteractionRegion) -> Value {
+    let state = RegionState::of(manifold.viewport(), region);
+    json!({
+        "availability": state.availability().as_str(),
+        "visibility": state.visibility().as_str(),
+    })
 }
 
 fn id_strings(ids: &[RegionId]) -> Vec<&str> {

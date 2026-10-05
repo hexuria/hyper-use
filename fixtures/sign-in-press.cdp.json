@@ -172,6 +172,20 @@
       }
     },
     {
+      "method": "Page.getNavigationHistory",
+      "params": {},
+      "result": {
+        "currentIndex": 0,
+        "entries": [
+          {
+            "id": 1,
+            "url": "https://example.test/sign-in",
+            "title": "Sign in"
+          }
+        ]
+      }
+    },
+    {
       "method": "DOM.resolveNode",
       "params": {
         "nodeId": 10

@@ -2,68 +2,98 @@
 //!
 //! The product default is [`WeightedMatcher`]: semantic match, geometry,
 //! actionability, and the versioned penalties. It does not build hypervectors.
-//! [`locate`] and [`HgraMatcher`] keep the hyperdimensional ranker. Neither
-//! matcher is a measured winner; there is no benchmark that says so.
 //!
-//! [`locate`] builds a bipolar signature for every region, probes it with the
-//! structured [`LocateQuery`], and combines that cosine with semantic, source,
-//! geometric, actionability, temporal, and contextual terms. Penalties are
-//! subtracted afterwards. Nothing in this path reads a clock or a random
-//! source. The same manifold and the same query produce the same order,
-//! including the region-id tie-break.
+//! The hyperdimensional ranker (`locate` / [`HgraMatcher`]) lives behind the
+//! `hgra` feature and the algebra crate under `experiments/hgra/`. It is not
+//! the product default and has not been shown to beat WeightedMatcher.
 //!
-//! Model [`ResonanceModel::V1`] weights:
-//! hypervector 0.35, semantic 0.20, source agreement 0.15, geometric 0.10,
-//! actionability 0.10, temporal stability 0.05, contextual consistency 0.05.
-//! Penalties: disabled 0.25, hidden 0.45, occluded 0.20, offscreen 0.35,
-//! stale 0.15, ambiguous 0.12, detached 0.20, zero-size 0.40.
+//! Text-miss cap: when the query has text and a region's label shares no
+//! token with it, both matchers clamp that region's total to at most
+//! [`TEXT_MISS_CAP`] (0.45).
 
 #![forbid(unsafe_code)]
 
 mod error;
 mod matcher;
 mod model;
+#[cfg(feature = "hgra")]
 mod signature;
+mod state;
 
+#[cfg(feature = "hgra")]
+pub use matcher::HgraMatcher;
 pub use matcher::{
-    default_matcher, HgraMatcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher,
-    WeightedModel,
+    default_matcher, Match, RegionMatcher, WeightedBasisPoints, WeightedMatcher, WeightedModel,
 };
 
-use hyper_use_core::{
-    token_recall, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionId, SourceMask,
-};
+use hyper_use_core::{token_recall, InteractionRegion, LocateQuery, Rect};
+#[cfg(feature = "hgra")]
+use hyper_use_core::{InteractionManifold, RegionId, SourceMask};
 use hyper_use_geometry::{is_fully_offscreen, normalize, zones};
+#[cfg(feature = "hgra")]
 use hyper_use_hyper::{cosine, Dims, Encoder};
 
 pub use error::ResonanceError;
+#[cfg(feature = "hgra")]
 pub use hyper_use_hyper::BipolarVector;
 pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
+pub use state::{separating_zone, Availability, RegionState, Visibility};
 
-use signature::{query_probes, region_signature as compose_signature, Memory};
+#[cfg(all(test, feature = "hgra"))]
+use signature::query_probes;
+#[cfg(feature = "hgra")]
+use signature::{query_vector, region_signature as compose_signature, Memory};
+
+/// Highest total any matcher gives a region whose label shares no token with
+/// a non-empty text query.
+///
+/// Why 0.45: it is strictly below the executor's 0.55 act gate, so a nameless
+/// or unrelated region can never be clicked from a text query, whatever the
+/// weights. It is also 0.05 below the 0.50 that the weighted V1 model gives a
+/// label hit with the wrong role, so under V1 a right-named control of the
+/// wrong kind still ranks above every text miss instead of tying with them
+/// and losing on region id.
+pub const TEXT_MISS_CAP: f64 = 0.45;
+
+/// Clamp `total` to [`TEXT_MISS_CAP`] when the query has text and `label`
+/// shares none of its tokens. A query without text, or text with no tokens,
+/// is unchanged.
+pub(crate) fn cap_text_miss(query: &LocateQuery, label: &str, total: f64) -> f64 {
+    match query.text_ref() {
+        Some(text) if token_recall(text, label) == 0.0 => total.min(TEXT_MISS_CAP),
+        _ => total,
+    }
+}
 
 /// One ranked region. `rank` is 1-based after the deterministic sort.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg(feature = "hgra")]
 pub struct RankedCandidate {
     rank: usize,
     id: RegionId,
     score: ResonanceScore,
 }
 
+#[cfg(feature = "hgra")]
 impl RankedCandidate {
+    #[cfg(feature = "hgra")]
     pub fn rank(&self) -> usize {
         self.rank
     }
+    #[cfg(feature = "hgra")]
     pub fn id(&self) -> &RegionId {
         &self.id
     }
+    #[cfg(feature = "hgra")]
     pub fn score(&self) -> &ResonanceScore {
         &self.score
     }
 }
 
-/// Breakdown of one region's resonance. `total = weighted positives - penalty`.
+/// Breakdown of one region's resonance. `total = weighted positives - penalty`,
+/// then clamped to [`TEXT_MISS_CAP`] on a text miss.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg(feature = "hgra")]
 pub struct ResonanceScore {
     hypervector: f64,
     semantic: f64,
@@ -76,37 +106,48 @@ pub struct ResonanceScore {
     total: f64,
 }
 
+#[cfg(feature = "hgra")]
 impl ResonanceScore {
+    #[cfg(feature = "hgra")]
     pub fn hypervector(&self) -> f64 {
         self.hypervector
     }
+    #[cfg(feature = "hgra")]
     pub fn semantic(&self) -> f64 {
         self.semantic
     }
+    #[cfg(feature = "hgra")]
     pub fn source_agreement(&self) -> f64 {
         self.source_agreement
     }
+    #[cfg(feature = "hgra")]
     pub fn geometric(&self) -> f64 {
         self.geometric
     }
+    #[cfg(feature = "hgra")]
     pub fn actionability(&self) -> f64 {
         self.actionability
     }
+    #[cfg(feature = "hgra")]
     pub fn temporal_stability(&self) -> f64 {
         self.temporal_stability
     }
+    #[cfg(feature = "hgra")]
     pub fn contextual_consistency(&self) -> f64 {
         self.contextual_consistency
     }
+    #[cfg(feature = "hgra")]
     pub fn penalty(&self) -> f64 {
         self.penalty
     }
+    #[cfg(feature = "hgra")]
     pub fn total(&self) -> f64 {
         self.total
     }
 }
 
 /// Locate with the default 2048-dimensional encoder and [`ResonanceModel::V1`].
+#[cfg(feature = "hgra")]
 pub fn locate(
     manifold: &InteractionManifold,
     query: &LocateQuery,
@@ -119,6 +160,7 @@ pub fn locate(
     )
 }
 
+#[cfg(feature = "hgra")]
 pub fn locate_with(
     manifold: &InteractionManifold,
     query: &LocateQuery,
@@ -126,11 +168,11 @@ pub fn locate_with(
     model: ResonanceModel,
 ) -> Result<Vec<RankedCandidate>, ResonanceError> {
     let mut memory = Memory::new(encoder);
-    let probes = query_probes(query, &mut memory)?;
+    let query_hv = query_vector(query, &mut memory)?;
     let mut ranked = Vec::with_capacity(manifold.len());
     for region in manifold.regions() {
         let signature = compose_signature(manifold, region, &mut memory)?;
-        let hypervector = probe_similarity(&probes, &signature)?;
+        let hypervector = query_similarity(query_hv.as_ref(), &signature)?;
         let score = score_parts(manifold, region, query, hypervector, model);
         debug_assert!(score.total.is_finite());
         ranked.push(RankedCandidate {
@@ -153,6 +195,7 @@ pub fn locate_with(
 }
 
 /// Public signature so other crates can compare regions without re-ranking.
+#[cfg(feature = "hgra")]
 pub fn region_signature(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
@@ -162,7 +205,25 @@ pub fn region_signature(
     compose_signature(manifold, region, &mut memory)
 }
 
-fn probe_similarity(
+/// Hypervector term: one cosine of the bundled query against the region
+/// signature. A query with no constraint scores `1` (nothing was asked).
+///
+/// This replaced the mean of per-probe cosines. See `HGRA_REMEASURE.md`.
+#[cfg(feature = "hgra")]
+fn query_similarity(
+    query_hv: Option<&BipolarVector>,
+    signature: &BipolarVector,
+) -> Result<f64, ResonanceError> {
+    match query_hv {
+        None => Ok(1.0),
+        Some(query_hv) => Ok(cosine(query_hv, signature)?),
+    }
+}
+
+/// The retired hypervector term, kept only so tests can ablate it against
+/// [`query_similarity`]: the mean of one cosine per probe.
+#[cfg(all(test, feature = "hgra"))]
+fn probe_mean_similarity(
     probes: &[BipolarVector],
     signature: &BipolarVector,
 ) -> Result<f64, ResonanceError> {
@@ -176,6 +237,7 @@ fn probe_similarity(
     Ok(sum / probes.len() as f64)
 }
 
+#[cfg(feature = "hgra")]
 fn score_parts(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
@@ -206,29 +268,21 @@ fn score_parts(
         temporal_stability,
         contextual_consistency,
         penalty,
-        total: positive - penalty,
+        total: cap_text_miss(query, region.label(), positive - penalty),
     }
 }
 
+/// HGRA semantic term. Identical to the weighted matcher's: text is
+/// `recall * (0.5 + 0.5 * precision)`, combined with the role hit by minimum,
+/// and an absent constraint scores `1`. Before parity the HGRA text term was
+/// recall alone, averaged with the role, so "Send" and "Send feedback" both
+/// scored 1.0 for "Send".
+#[cfg(feature = "hgra")]
 fn semantic_score(query: &LocateQuery, region: &InteractionRegion) -> f64 {
-    let mut parts = 0.0;
-    let mut total = 0.0;
-    if let Some(text) = query.text_ref() {
-        parts += 1.0;
-        total += token_recall(text, region.label());
-    }
-    if let Some(role) = query.role_ref() {
-        parts += 1.0;
-        total += if region.role() == role { 1.0 } else { 0.0 };
-    }
-    if parts == 0.0 {
-        1.0
-    } else {
-        total / parts
-    }
+    matcher::weighted_semantic(query, region)
 }
 
-fn geometric_score(viewport: Rect, rect: Rect, query: &LocateQuery) -> f64 {
+pub(crate) fn geometric_score(viewport: Rect, rect: Rect, query: &LocateQuery) -> f64 {
     let Some(wanted) = query.position_ref() else {
         return 1.0;
     };
@@ -244,7 +298,7 @@ fn geometric_score(viewport: Rect, rect: Rect, query: &LocateQuery) -> f64 {
     }
 }
 
-fn actionability_score(region: &InteractionRegion, query: &LocateQuery) -> f64 {
+pub(crate) fn actionability_score(region: &InteractionRegion, query: &LocateQuery) -> f64 {
     match query.action_ref() {
         Some(action) => {
             if region.actions().contains(&action) {
@@ -263,7 +317,8 @@ fn actionability_score(region: &InteractionRegion, query: &LocateQuery) -> f64 {
     }
 }
 
-fn contextual_score(manifold: &InteractionManifold, region: &InteractionRegion) -> f64 {
+#[cfg(feature = "hgra")]
+pub(crate) fn contextual_score(manifold: &InteractionManifold, region: &InteractionRegion) -> f64 {
     if region.flags().detached() {
         return 0.0;
     }
@@ -279,7 +334,11 @@ fn contextual_score(manifold: &InteractionManifold, region: &InteractionRegion) 
     }
 }
 
-fn penalty_total(viewport: Rect, region: &InteractionRegion, model: ResonanceModel) -> f64 {
+pub(crate) fn penalty_total(
+    viewport: Rect,
+    region: &InteractionRegion,
+    model: ResonanceModel,
+) -> f64 {
     let flags = region.flags();
     let mut penalty = 0.0;
     if flags.disabled() {
@@ -309,13 +368,14 @@ fn penalty_total(viewport: Rect, region: &InteractionRegion, model: ResonanceMod
     penalty
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "hgra"))]
 mod tests {
     use super::*;
     use hyper_use_core::{
         parse_fixture, Action, InteractionRegion, Rect, RegionFlags, RegionId, RegionParts, Role,
         SourceMask, UnitInterval, Zone,
     };
+    #[cfg(feature = "hgra")]
     use hyper_use_hyper::HyperError;
 
     fn sample(id: &str, label: &str, x: f64, flags: RegionFlags, width: f64) -> InteractionRegion {
@@ -623,6 +683,100 @@ mod tests {
     }
 
     #[test]
+    fn hgra_exact_label_outranks_superset_labels_with_lower_ids() {
+        // Semantic parity: HGRA's semantic term is the weighted one, so the
+        // exact label wins on text precision and not only on the hypervector.
+        let manifold =
+            parse_fixture(include_str!("../../../fixtures/send-buttons.manifold")).unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Button);
+        let ranked = locate(&manifold, &query).unwrap();
+        let ids: Vec<_> = ranked.iter().map(|c| c.id().as_str()).collect();
+        assert_eq!(ids, ["z-send", "a-feedback", "b-device"]);
+        for candidate in &ranked {
+            let region = manifold.get(candidate.id()).unwrap();
+            assert_eq!(
+                candidate.score().semantic(),
+                matcher::weighted_semantic(&query, region),
+                "{}",
+                candidate.id().as_str()
+            );
+        }
+        assert_eq!(ranked[0].score().semantic(), 1.0);
+        assert_eq!(ranked[1].score().semantic(), 0.75);
+        assert!((ranked[2].score().semantic() - 2.0 / 3.0).abs() < 1e-12);
+        // Before parity and the bundled query this margin was 0.0277 and the
+        // 0.05 act margin refused it. It is now above that margin.
+        let margin = ranked[0].score().total() - ranked[1].score().total();
+        assert!(margin > 0.05, "{margin}");
+        let matched = HgraMatcher::default().rank(&query, &manifold).unwrap();
+        let matched_ids: Vec<_> = matched.iter().map(|m| m.id().as_str()).collect();
+        assert_eq!(matched_ids, ids);
+    }
+
+    #[test]
+    fn hgra_label_hit_with_the_wrong_role_outranks_a_nameless_region() {
+        // Live drive t7 under HGRA. With min(text, role) the wrong-role label
+        // hit has semantic 0, the same as the nameless node; the text-miss
+        // cap and the label token in the hypervector must still separate them.
+        let viewport = Rect::try_viewport(0.0, 0.0, 400.0, 400.0).unwrap();
+        let mut nameless = sample("ax11", "", 16.0, RegionFlags::none(), 80.0).to_parts();
+        nameless.role = Role::Image;
+        let manifold = InteractionManifold::try_new(
+            viewport,
+            vec![
+                InteractionRegion::try_new(nameless).unwrap(),
+                sample("n714", "Send", 16.0, RegionFlags::none(), 80.0),
+            ],
+            0,
+        )
+        .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Link);
+        let ranked = HgraMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "n714");
+        assert!(ranked[0].confidence() > ranked[1].confidence());
+        assert!(ranked[1].confidence() <= TEXT_MISS_CAP);
+    }
+
+    /// Ablation on the same semantic term: the bundled query against the
+    /// retired probe mean. The bundle is one cosine and a different number;
+    /// on `send-buttons.manifold` it widens the exact-vs-superset margin.
+    #[test]
+    fn bundled_query_is_one_cosine_and_widens_the_send_margin_over_probe_mean() {
+        let manifold =
+            parse_fixture(include_str!("../../../fixtures/send-buttons.manifold")).unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Button);
+        let encoder = Encoder::new(Dims::DEFAULT);
+        let model = ResonanceModel::V1;
+        let mut memory = Memory::new(&encoder);
+        let probes = query_probes(&query, &mut memory).unwrap();
+        assert_eq!(probes.len(), 2);
+        let bundled = query_vector(&query, &mut memory).unwrap().unwrap();
+        let ranked = locate_with(&manifold, &query, &encoder, model).unwrap();
+        let mut bundled_total = std::collections::BTreeMap::new();
+        let mut mean_total = std::collections::BTreeMap::new();
+        for candidate in &ranked {
+            let region = manifold.get(candidate.id()).unwrap();
+            let signature = compose_signature(&manifold, region, &mut memory).unwrap();
+            let hv = cosine(&bundled, &signature).unwrap();
+            assert_eq!(candidate.score().hypervector(), hv);
+            let mean = probe_mean_similarity(&probes, &signature).unwrap();
+            let id = candidate.id().as_str();
+            bundled_total.insert(id, score_parts(&manifold, region, &query, hv, model).total);
+            mean_total.insert(
+                id,
+                score_parts(&manifold, region, &query, mean, model).total,
+            );
+        }
+        let bundled_margin = bundled_total["z-send"] - bundled_total["a-feedback"];
+        let mean_margin = mean_total["z-send"] - mean_total["a-feedback"];
+        assert!(
+            bundled_margin > mean_margin,
+            "bundled {bundled_margin} probe-mean {mean_margin}"
+        );
+        assert!(mean_total["z-send"] > mean_total["a-feedback"]);
+    }
+
+    #[test]
     fn weighted_and_hgra_both_rank_sidebar_settings_first() {
         let manifold = parse_fixture(include_str!("../../../fixtures/sidebar.manifold")).unwrap();
         let query = settings_query();
@@ -641,5 +795,98 @@ mod tests {
         // No benchmark compares these totals. Do not treat a higher number as a win.
         assert!(weighted[0].confidence().is_finite());
         assert!(hgra[0].confidence().is_finite());
+    }
+
+    /// Every HGRA score part pinned, so a changed weight, operator, or
+    /// accessor shows up. Two regions: one with a role miss, a dangling parent,
+    /// and an action miss; one on the wrong side with the asked action.
+    #[test]
+    fn hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum() {
+        let region =
+            |id: &str, x: f64, actions: Vec<Action>, sources, parent: Option<&str>, stability| {
+                InteractionRegion::try_new(RegionParts {
+                    id: RegionId::try_new(id).unwrap(),
+                    role: Role::Button,
+                    label: "Settings".into(),
+                    rect: Rect::try_new(x, 40.0, 80.0, 20.0).unwrap(),
+                    actions,
+                    parent: parent.map(|p| RegionId::try_new(p).unwrap()),
+                    sources,
+                    flags: RegionFlags::none(),
+                    temporal_stability: UnitInterval::try_new(stability).unwrap(),
+                })
+                .unwrap()
+            };
+        let both = SourceMask::DOM.union(SourceMask::ACCESSIBILITY);
+        let manifold = manifold(vec![
+            region("left", 16.0, vec![Action::Click], both, Some("gone"), 0.9),
+            region(
+                "right",
+                1300.0,
+                vec![Action::Click, Action::Type],
+                SourceMask::DOM,
+                None,
+                0.6,
+            ),
+        ]);
+        let query = LocateQuery::new()
+            .text("Settings")
+            .unwrap()
+            .role(Role::Link)
+            .position(Zone::Left)
+            .action(Action::Type);
+        let encoder = Encoder::new(Dims::D512);
+        let ranked = locate_with(&manifold, &query, &encoder, ResonanceModel::V1).unwrap();
+        let score = |id: &str| {
+            ranked
+                .iter()
+                .find(|candidate| candidate.id().as_str() == id)
+                .unwrap()
+                .score()
+                .clone()
+        };
+        let mut memory = Memory::new(&encoder);
+        let probes = query_probes(&query, &mut memory).unwrap();
+        assert_eq!(probes.len(), 4);
+        let bundled = query_vector(&query, &mut memory).unwrap().unwrap();
+        let model = ResonanceModel::V1;
+        // (id, semantic, source, geometric, actionability, temporal, contextual)
+        for (id, semantic, source, geometric, actionability, temporal, contextual) in [
+            // Semantic is min(text, role): the Link query misses the Button
+            // role, so both score 0 even though the label matches.
+            ("left", 0.0, 0.5, 1.0, 0.0, 0.9, 0.5),
+            ("right", 0.0, 0.25, 0.0, 1.0, 0.6, 1.0),
+        ] {
+            let parts = score(id);
+            assert_eq!(parts.semantic(), semantic, "{id}");
+            assert_eq!(parts.source_agreement(), source, "{id}");
+            assert_eq!(parts.geometric(), geometric, "{id}");
+            assert_eq!(parts.actionability(), actionability, "{id}");
+            assert!((parts.temporal_stability() - temporal).abs() < 1e-6, "{id}");
+            assert_eq!(parts.contextual_consistency(), contextual, "{id}");
+            assert_eq!(parts.penalty(), 0.0, "{id}");
+            let hv = parts.hypervector();
+            assert!((-1.0..=1.0).contains(&hv), "{id} {hv}");
+            // One probe per constraint, bundled into one query vector; the
+            // hypervector term is a single cosine against the signature, not
+            // the mean of the four probe cosines.
+            let signature =
+                compose_signature(&manifold, manifold.get_str(id).unwrap(), &mut memory).unwrap();
+            assert_eq!(hv, cosine(&bundled, &signature).unwrap(), "{id}");
+            let mean = probe_mean_similarity(&probes, &signature).unwrap();
+            assert_ne!(hv, mean, "{id}");
+            let expected = model.hypervector() * hv
+                + model.semantic() * semantic
+                + model.source_agreement() * source
+                + model.geometric() * geometric
+                + model.actionability() * actionability
+                + model.temporal_stability() * parts.temporal_stability()
+                + model.contextual_consistency() * contextual;
+            assert!(
+                (parts.total() - expected).abs() < 1e-12,
+                "{id} {} {expected}",
+                parts.total()
+            );
+        }
     }
 }

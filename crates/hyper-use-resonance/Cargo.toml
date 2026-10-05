@@ -10,7 +10,12 @@ description = "Deterministic locate ranking for a static hyper-use manifold"
 [dependencies]
 hyper-use-core = { path = "../hyper-use-core" }
 hyper-use-geometry = { path = "../hyper-use-geometry" }
-hyper-use-hyper = { path = "../hyper-use-hyper" }
+hyper-use-hyper = { path = "../../experiments/hgra/hyper-use-hyper", optional = true }
+
+[features]
+default = []
+# Experimental HGRA matcher. Not the product default.
+hgra = ["dep:hyper-use-hyper"]
 
 [dev-dependencies]
 proptest = "1.7"

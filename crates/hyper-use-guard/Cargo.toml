@@ -1,0 +1,16 @@
+[package]
+name = "hyper-use-guard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Allow / refuse / escalate decisions for hyper-use"
+
+[dependencies]
+hyper-use-core = { path = "../hyper-use-core" }
+hyper-use-protocol = { path = "../hyper-use-protocol" }
+hyper-use-resonance = { path = "../hyper-use-resonance" }
+
+[dev-dependencies]
+proptest = "1.11"

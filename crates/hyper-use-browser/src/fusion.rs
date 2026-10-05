@@ -1,23 +1,33 @@
 //! Fuse a DOM node and an accessibility node that describe one control.
 //!
-//! Version 1 merges when all of these hold:
-//! - label Jaccard is at least [`MIN_LABEL_JACCARD`], or either label is empty
-//! - roles are equal, or either role is [`Role::Generic`]
-//! - intersection-over-union is at least [`MIN_IOU`], or centers are at most
-//!   [`MAX_CENTROID_PX`] pixels apart
+//! Version 2 runs two passes.
 //!
-//! Pairing is greedy: each DOM node takes the compatible accessibility node
+//! 1. A DOM node and an accessibility node with the same backend node id are
+//!    the same control and always merge. Chrome gives both trees that key.
+//! 2. Only nodes left over from pass 1 are paired heuristically, when all of
+//!    these hold:
+//!    - label Jaccard is at least [`MIN_LABEL_JACCARD`], or either label is empty
+//!    - roles are equal, or either role is [`Role::Generic`]
+//!    - intersection-over-union is at least [`MIN_IOU`], or centers are at most
+//!      [`MAX_CENTROID_PX`] pixels apart
+//!
+//! Pass 2 is greedy: each DOM node takes the compatible accessibility node
 //! with the highest IoU, then the smaller centroid distance, then the lower
-//! index. Leftovers stay separate. The stored rectangle is the DOM rectangle
+//! index. Leftovers stay separate.
+//!
+//! A DOM region's parent is its nearest kept DOM ancestor that is also a
+//! region in this manifold. The stored rectangle is the DOM rectangle
 //! when both exist, so a one-pixel accessibility shift does not move the region.
-//! The region id is `n{backendNodeId}` from the DOM node. It is not derived
+//! The fused id is `n{backendNodeId}` from the DOM node. The session's identity
+//! map may carry an earlier stable id over it. It is not derived
 //! from the rectangle, the enabled bit, or the label.
 //!
 //! Accepted downside: two same-label, same-role controls whose centers are
 //! within 8px can fuse even when IoU is low. A second accessibility node for
-//! the same DOM node is left over; it is not deleted.
+//! the same DOM node is left over; it is not deleted. Two AX-only nodes that
+//! share a backend id are kept as `ax{id}` and `ax{id}-{k}`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyper_use_core::{
     token_jaccard, InteractionManifold, InteractionRegion, Rect, RegionFlags, RegionId,
@@ -44,6 +54,8 @@ pub(crate) struct RawNode {
     pub hidden: bool,
     pub from_dom: bool,
     pub from_ax: bool,
+    /// Backend ids of kept DOM ancestors, nearest first.
+    pub ancestors: Vec<i64>,
 }
 
 impl RawNode {
@@ -59,6 +71,7 @@ impl RawNode {
             hidden: element.hidden,
             from_dom: true,
             from_ax: false,
+            ancestors: element.ancestors.clone(),
         }
     }
 
@@ -74,6 +87,7 @@ impl RawNode {
             hidden: false,
             from_dom: false,
             from_ax: true,
+            ancestors: Vec::new(),
         }
     }
 }
@@ -92,8 +106,26 @@ pub(crate) fn fuse(
     ax_nodes: &[RawNode],
 ) -> Result<(InteractionManifold, BTreeMap<RegionId, NodeBinding>), BrowserError> {
     let mut used = vec![false; ax_nodes.len()];
+    let mut joined: Vec<Option<usize>> = vec![None; dom_nodes.len()];
+    for (dom_index, dom) in dom_nodes.iter().enumerate() {
+        let Some(backend) = dom.backend_node_id else {
+            continue;
+        };
+        if let Some(ax_index) = ax_nodes
+            .iter()
+            .enumerate()
+            .position(|(index, ax)| !used[index] && ax.backend_node_id == Some(backend))
+        {
+            used[ax_index] = true;
+            joined[dom_index] = Some(ax_index);
+        }
+    }
     let mut fused = Vec::new();
-    for dom in dom_nodes {
+    for (dom_index, dom) in dom_nodes.iter().enumerate() {
+        if let Some(ax_index) = joined[dom_index] {
+            fused.push(merge(dom, &ax_nodes[ax_index]));
+            continue;
+        }
         let mut best: Option<(usize, f64, f64)> = None;
         for (index, ax) in ax_nodes.iter().enumerate() {
             if used[index] || !compatible(dom, ax) {
@@ -125,11 +157,22 @@ pub(crate) fn fuse(
         }
     }
 
+    let mut ids = Vec::with_capacity(fused.len());
+    let mut used: BTreeSet<RegionId> = BTreeSet::new();
+    for node in &fused {
+        ids.push(unique_region_id(node, &mut used)?);
+    }
+    let present: std::collections::BTreeSet<&RegionId> = ids.iter().collect();
     let mut regions = Vec::new();
     let mut bindings = BTreeMap::new();
-    for node in fused {
-        let id = region_id(&node)?;
-        let region = to_region(&id, &node, viewport)?;
+    for (node, id) in fused.iter().zip(&ids) {
+        let parent = node
+            .ancestors
+            .iter()
+            .filter_map(|backend| RegionId::try_new(format!("n{backend}")).ok())
+            .find(|candidate| present.contains(candidate));
+        let id = id.clone();
+        let region = to_region(&id, node, viewport, parent)?;
         let center = region.rect().center();
         bindings.insert(
             id.clone(),
@@ -170,6 +213,7 @@ fn merge(dom: &RawNode, ax: &RawNode) -> RawNode {
         hidden: dom.hidden || ax.hidden,
         from_dom: true,
         from_ax: true,
+        ancestors: dom.ancestors.clone(),
     }
 }
 
@@ -208,8 +252,8 @@ fn iou(left: Rect, right: Rect) -> f64 {
     }
 }
 
-fn region_id(node: &RawNode) -> Result<RegionId, BrowserError> {
-    let raw = if node.from_dom {
+fn preferred_id(node: &RawNode) -> String {
+    if node.from_dom {
         match node.backend_node_id {
             Some(id) => format!("n{id}"),
             None => match node.dom_node_id {
@@ -222,14 +266,44 @@ fn region_id(node: &RawNode) -> Result<RegionId, BrowserError> {
             Some(id) => format!("ax{id}"),
             None => "ax-unknown".to_owned(),
         }
-    };
-    RegionId::try_new(raw).map_err(|err| BrowserError::DuplicateRegion(err.to_string()))
+    }
+}
+
+/// Prefer `n{backend}` / `ax{backend}`. A second AX-only node that would
+/// collide is minted as `{preferred}-{k}` so observe does not fail. Two DOM
+/// nodes with one backend are still a duplicate: that is a Chrome bug, not a
+/// second AX node.
+fn unique_region_id(
+    node: &RawNode,
+    used: &mut BTreeSet<RegionId>,
+) -> Result<RegionId, BrowserError> {
+    let preferred = preferred_id(node);
+    let mut candidate = RegionId::try_new(&preferred)
+        .map_err(|err| BrowserError::DuplicateRegion(err.to_string()))?;
+    if used.insert(candidate.clone()) {
+        return Ok(candidate);
+    }
+    if node.from_dom {
+        return Err(BrowserError::DuplicateRegion(format!(
+            "duplicate region id `{preferred}`"
+        )));
+    }
+    let mut k = 2u32;
+    loop {
+        candidate = RegionId::try_new(format!("{preferred}-{k}"))
+            .map_err(|err| BrowserError::DuplicateRegion(err.to_string()))?;
+        if used.insert(candidate.clone()) {
+            return Ok(candidate);
+        }
+        k += 1;
+    }
 }
 
 fn to_region(
     id: &RegionId,
     node: &RawNode,
     viewport: Rect,
+    parent: Option<RegionId>,
 ) -> Result<InteractionRegion, BrowserError> {
     let mut sources = SourceMask::NONE;
     if node.from_dom {
@@ -250,7 +324,7 @@ fn to_region(
         label: node.label.clone(),
         rect: node.rect,
         actions: node.actions.clone(),
-        parent: None,
+        parent,
         sources,
         flags,
         temporal_stability: UnitInterval::ONE,
@@ -279,6 +353,7 @@ mod tests {
             hidden: false,
             from_dom: true,
             from_ax: false,
+            ancestors: Vec::new(),
         }
     }
 
@@ -294,7 +369,13 @@ mod tests {
             hidden: false,
             from_dom: false,
             from_ax: true,
+            ancestors: Vec::new(),
         }
+    }
+
+    fn with_backend(mut node: RawNode, backend: i64) -> RawNode {
+        node.backend_node_id = Some(backend);
+        node
     }
 
     fn viewport() -> Rect {
@@ -320,12 +401,16 @@ mod tests {
         let (separate, _) = fuse(
             viewport(),
             &[dom("Sign in", Role::Button, 400.0)],
-            &[ax("Cancel", Role::Button, 401.0)],
+            &[with_backend(ax("Cancel", Role::Button, 401.0), 101)],
         )
         .unwrap();
-        assert_eq!(separate.len(), 2, "different labels must not fuse");
+        assert_eq!(
+            separate.len(),
+            2,
+            "different labels on different nodes must not fuse"
+        );
         assert!(separate.get_str("n100").is_some());
-        assert!(separate.get_str("ax100").is_some());
+        assert!(separate.get_str("ax101").is_some());
     }
 
     #[test]
@@ -333,7 +418,7 @@ mod tests {
         let (separate, _) = fuse(
             viewport(),
             &[dom("Sign in", Role::Button, 400.0)],
-            &[ax("Sign in", Role::Link, 400.0)],
+            &[with_backend(ax("Sign in", Role::Link, 400.0), 101)],
         )
         .unwrap();
         assert_eq!(separate.len(), 2);
@@ -346,5 +431,81 @@ mod tests {
         .unwrap();
         assert_eq!(merged.len(), 1);
         assert_eq!(merged.get_str("n100").unwrap().label(), "Sign in");
+    }
+
+    #[test]
+    fn same_backend_node_joins_even_when_labels_differ() {
+        // `<a>Read more<span class="sr-only"> about our pricing plans</span></a>`:
+        // the DOM text and the accessible name differ, but it is one control.
+        let (merged, _) = fuse(
+            viewport(),
+            &[dom("Read more", Role::Link, 400.0)],
+            &[ax("Read more about our pricing plans", Role::Link, 400.0)],
+        )
+        .unwrap();
+        assert_eq!(merged.len(), 1);
+        let region = merged.get_str("n100").unwrap();
+        assert_eq!(region.label(), "Read more about our pricing plans");
+        assert!(region.sources().contains(SourceMask::ACCESSIBILITY));
+    }
+
+    #[test]
+    fn heuristic_pass_only_sees_unjoined_nodes() {
+        // ax200 is joined to its own DOM node by backend id, so the heuristic
+        // pass cannot also give it to n100 even though it overlaps.
+        let mut other = dom("Sign in", Role::Button, 401.0);
+        other.backend_node_id = Some(200);
+        other.dom_node_id = Some(20);
+        let (merged, _) = fuse(
+            viewport(),
+            &[dom("Sign in", Role::Button, 400.0), other],
+            &[with_backend(ax("Sign in", Role::Button, 401.0), 200)],
+        )
+        .unwrap();
+        assert_eq!(merged.len(), 2);
+        assert!(!merged
+            .get_str("n100")
+            .unwrap()
+            .sources()
+            .contains(SourceMask::ACCESSIBILITY));
+        assert!(merged
+            .get_str("n200")
+            .unwrap()
+            .sources()
+            .contains(SourceMask::ACCESSIBILITY));
+    }
+
+    #[test]
+    fn two_ax_nodes_with_one_backend_id_stay_separate() {
+        // Reproduce: two accessibility-only nodes share a backend and no DOM
+        // partner. Observe must not fail with DuplicateRegion.
+        let left = with_backend(ax("Sign in", Role::Button, 400.0), 100);
+        let right = with_backend(ax("Cancel", Role::Button, 500.0), 100);
+        let (merged, _) = fuse(viewport(), &[], &[left, right]).unwrap();
+        assert_eq!(merged.len(), 2);
+        let ids: Vec<_> = merged.ids().map(|id| id.as_str().to_owned()).collect();
+        assert_eq!(ids, ["ax100", "ax100-2"]);
+        assert_eq!(merged.get_str("ax100").unwrap().label(), "Sign in");
+        assert_eq!(merged.get_str("ax100-2").unwrap().label(), "Cancel");
+    }
+
+    #[test]
+    fn parent_is_the_nearest_ancestor_that_is_a_region() {
+        let mut nav = dom("Sidebar", Role::Navigation, 0.0);
+        nav.backend_node_id = Some(50);
+        nav.dom_node_id = Some(5);
+        let mut child = dom("Settings", Role::Button, 400.0);
+        // 77 is a kept ancestor with no box, so it is not a region.
+        child.ancestors = vec![77, 50];
+        let (merged, _) = fuse(viewport(), &[nav, child], &[]).unwrap();
+        assert_eq!(
+            merged
+                .get_str("n100")
+                .unwrap()
+                .parent()
+                .map(RegionId::as_str),
+            Some("n50")
+        );
+        assert_eq!(merged.get_str("n50").unwrap().parent(), None);
     }
 }

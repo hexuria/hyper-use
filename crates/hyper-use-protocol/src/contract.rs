@@ -1,8 +1,8 @@
-//! JEV-facing task and result types.
+//! Legacy JEV-facing task and result types.
 //!
-//! An agent loop that already exists outside this repository owns goals,
-//! delegation, and the journal. hyper-use only accepts one locate or one act.
-//! There is no navigate intent and no method that plans a multi-step workflow.
+//! Prefer [`crate::GuardDecision`] for the action-firewall product. These types
+//! remain for transitional hosts. An agent loop outside this repository owns
+//! goals, delegation, and the journal. There is no navigate intent.
 
 use std::fmt;
 
@@ -19,6 +19,10 @@ pub enum FallbackReason {
     NotImplemented,
     /// The postcondition did not hold.
     VerifyFailed,
+    /// The top two candidates were too close. Nothing was clicked.
+    Ambiguous,
+    /// The act ran and neither the regions nor the page state changed.
+    NoEffect,
 }
 
 impl FallbackReason {
@@ -27,6 +31,8 @@ impl FallbackReason {
             Self::LowConfidence => "low-confidence",
             Self::NotImplemented => "not-implemented",
             Self::VerifyFailed => "verify-failed",
+            Self::Ambiguous => "ambiguous",
+            Self::NoEffect => "no-effect",
         }
     }
 }
@@ -42,12 +48,15 @@ impl fmt::Display for FallbackReason {
 pub enum ProtocolError {
     NonFiniteConfidence,
     EmptyExpectedText,
+    /// A caller-supplied confidence outside `[0, 1]`.
+    ConfidenceOutOfRange,
 }
 
 impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
+            Self::ConfidenceOutOfRange => f.write_str("confidence must be between 0 and 1"),
             Self::EmptyExpectedText => {
                 f.write_str("expected text must contain at least one alphanumeric token")
             }
@@ -68,6 +77,18 @@ impl MatcherConfidence {
             Ok(Self(value))
         } else {
             Err(ProtocolError::NonFiniteConfidence)
+        }
+    }
+
+    /// A confidence a caller hands to the act gate. It must be finite and in
+    /// `[0, 1]`. A ranker total can be negative ([`Self::try_new`] allows
+    /// that), but a caller value outside `[0, 1]` is not a locate result.
+    pub fn try_unit(value: f64) -> Result<Self, ProtocolError> {
+        let checked = Self::try_new(value)?;
+        if (0.0..=1.0).contains(&value) {
+            Ok(checked)
+        } else {
+            Err(ProtocolError::ConfidenceOutOfRange)
         }
     }
 
@@ -199,12 +220,18 @@ impl ComputerTask {
 }
 
 /// Id-level change between two observations. Not a second diff algorithm:
-/// a host fills this from `hyper-use-observe::diff`.
+/// a host fills this from `hyper-use-observe::diff`. Page flags are separate
+/// and use `url_changed`, never a navigate field. `new` leaves those flags
+/// unset so existing callers compile; set them with the `with_*` builders.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StateDelta {
     added: Vec<RegionId>,
     removed: Vec<RegionId>,
     changed: Vec<RegionId>,
+    moved: Vec<RegionId>,
+    text_changed: Vec<RegionId>,
+    focus_changed: bool,
+    url_changed: bool,
 }
 
 impl StateDelta {
@@ -223,15 +250,39 @@ impl StateDelta {
             added,
             removed,
             changed,
+            moved: Vec::new(),
+            text_changed: Vec::new(),
+            focus_changed: false,
+            url_changed: false,
         }
     }
 
+    pub fn with_moved(mut self, mut ids: Vec<RegionId>) -> Self {
+        ids.sort();
+        ids.dedup();
+        self.moved = ids;
+        self
+    }
+
+    pub fn with_text_changed(mut self, mut ids: Vec<RegionId>) -> Self {
+        ids.sort();
+        ids.dedup();
+        self.text_changed = ids;
+        self
+    }
+
+    pub fn with_focus_changed(mut self, changed: bool) -> Self {
+        self.focus_changed = changed;
+        self
+    }
+
+    pub fn with_url_changed(mut self, changed: bool) -> Self {
+        self.url_changed = changed;
+        self
+    }
+
     pub fn empty() -> Self {
-        Self {
-            added: Vec::new(),
-            removed: Vec::new(),
-            changed: Vec::new(),
-        }
+        Self::new(Vec::new(), Vec::new(), Vec::new())
     }
 
     pub fn added(&self) -> &[RegionId] {
@@ -246,8 +297,30 @@ impl StateDelta {
         &self.changed
     }
 
+    pub fn moved(&self) -> &[RegionId] {
+        &self.moved
+    }
+
+    pub fn text_changed(&self) -> &[RegionId] {
+        &self.text_changed
+    }
+
+    pub const fn focus_changed(&self) -> bool {
+        self.focus_changed
+    }
+
+    pub const fn url_changed(&self) -> bool {
+        self.url_changed
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
+        self.added.is_empty()
+            && self.removed.is_empty()
+            && self.changed.is_empty()
+            && self.moved.is_empty()
+            && self.text_changed.is_empty()
+            && !self.focus_changed
+            && !self.url_changed
     }
 }
 

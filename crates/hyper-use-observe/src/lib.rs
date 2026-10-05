@@ -10,9 +10,14 @@
 //! role, label Jaccard, and center distance. It does not allocate a hypervector;
 //! pass a cosine callback from the resonance crate when you want that metric.
 //!
-//! Phase 1 does not observe a live browser or the macOS accessibility tree.
+//! [`history::SnapshotRing`] keeps a bounded number of recent snapshots in
+//! memory so a host can diff by snapshot id.
+//!
+//! This crate does not observe a live browser or the macOS accessibility tree.
 
 #![forbid(unsafe_code)]
+
+pub mod history;
 
 use hyper_use_core::{token_jaccard, InteractionManifold, InteractionRegion, RegionId};
 
@@ -122,6 +127,37 @@ impl ManifoldDiff {
 
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
+    }
+
+    /// Ids that survived and whose only change is the rectangle.
+    /// [`ChangedField::Fingerprint`] may be present because the fingerprint
+    /// hashes the rectangle. Any other field means this is not a move.
+    /// Reads [`Self::changed`]. This is not a second diff.
+    pub fn moved(&self) -> impl Iterator<Item = &RegionId> {
+        self.changed.iter().filter_map(|change| {
+            let only_rect = change.fields.contains(&ChangedField::Rect)
+                && change
+                    .fields
+                    .iter()
+                    .all(|field| matches!(field, ChangedField::Rect | ChangedField::Fingerprint));
+            if only_rect {
+                Some(change.id())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Ids that survived with a different label, even if other fields also changed.
+    /// Reads [`Self::changed`]. This is not a second diff.
+    pub fn relabeled(&self) -> impl Iterator<Item = &RegionId> {
+        self.changed.iter().filter_map(|change| {
+            if change.fields.contains(&ChangedField::Label) {
+                Some(change.id())
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -510,5 +546,24 @@ mod tests {
         let fields = &delta.changed()[0];
         assert!(fields.fields().contains(&ChangedField::Flags));
         assert!(!fields.fields().contains(&ChangedField::Rect));
+    }
+
+    #[test]
+    fn moved_only_rect_is_moved_not_relabeled() {
+        let before = manifold(vec![
+            button("n1", "Send", 0.0, 0.0),
+            button("n2", "Cancel", 80.0, 0.0),
+        ]);
+        let after = manifold(vec![
+            button("n1", "Send", 40.0, 0.0),
+            button("n2", "Close", 80.0, 0.0),
+        ]);
+        let delta = diff(&before, &after);
+        let moved: Vec<&str> = delta.moved().map(RegionId::as_str).collect();
+        let relabeled: Vec<&str> = delta.relabeled().map(RegionId::as_str).collect();
+        assert_eq!(moved, ["n1"]);
+        assert_eq!(relabeled, ["n2"]);
+        assert!(!relabeled.contains(&"n1"));
+        assert!(!moved.contains(&"n2"));
     }
 }

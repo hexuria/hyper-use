@@ -103,6 +103,20 @@
           ]
         }
       }
+    },
+    {
+      "method": "Page.getNavigationHistory",
+      "params": {},
+      "result": {
+        "currentIndex": 0,
+        "entries": [
+          {
+            "id": 1,
+            "url": "https://example.test/welcome",
+            "title": "Welcome"
+          }
+        ]
+      }
     }
   ]
 }

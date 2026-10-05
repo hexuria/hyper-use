@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book a consultation - Acme Calendar</title>
+<link rel="stylesheet" href="/_shared/ui.css">
+<style>
+  .brand .logo { background: linear-gradient(135deg, #0b57d0, #00897b); }
+  .booking { display: grid; grid-template-columns: 300px minmax(0, 1fr) 260px; gap: 0; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; min-height: 560px; }
+  .host { padding: 28px; border-right: 1px solid var(--line); }
+  .host .avatar { width: 56px; height: 56px; font-size: 22px; background: #00897b; margin-bottom: 14px; }
+  .host h2 { margin: 6px 0 14px; font-size: 24px; line-height: 32px; font-weight: 400; }
+  .host .fact { display: flex; gap: 10px; align-items: center; color: var(--muted); margin: 10px 0; }
+  .cal { padding: 24px 28px; }
+  .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .cal-head h3 { margin: 0; font-size: 18px; font-weight: 500; flex: 1; }
+  .dow, .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; }
+  .dow span { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .day { height: 48px; border-radius: 24px; border: 0; background: transparent; font-weight: 500; cursor: pointer; }
+  .day.available { background: #e8f0fe; color: var(--primary); }
+  .day.available:hover { background: #d3e3fd; }
+  .day[aria-pressed="true"] { background: var(--primary); color: #fff; }
+  .day[aria-disabled="true"] { color: #b4b8bb; cursor: default; background: transparent; }
+  .slots { padding: 24px 20px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+  .slots h4 { margin: 0 0 6px; font-weight: 500; }
+  .slot { display: flex; gap: 8px; }
+  .slot .btn { flex: 1; }
+  .slot .time { border: 1px solid var(--primary); color: var(--primary); background: #fff; }
+  .slot .time[aria-pressed="true"] { background: #5f6368; color: #fff; border-color: #5f6368; }
+  .confirm { max-width: 560px; }
+  .settings { max-width: 720px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><button class="icon-btn" aria-label="Main menu"><svg class="i"><use href="#i-menu"/></svg></button>
+      <span class="logo">C</span><span>Acme Calendar</span></div>
+    <label class="search"><svg class="i"><use href="#i-search"/></svg><input aria-label="Search events" placeholder="Search events and people"></label>
+    <div class="top-actions">
+      <button class="icon-btn" aria-label="Help"><svg class="i"><use href="#i-help"/></svg></button>
+      <span class="avatar" aria-label="Account: Uriah">U</span>
+    </div>
+  </header>
+  <nav class="nav" aria-label="Calendar sections">
+    <a href="#book" data-view="book"><svg class="i"><use href="#i-calendar"/></svg>Book</a>
+    <a href="#upcoming" data-view="upcoming"><svg class="i"><use href="#i-doc"/></svg>Upcoming</a>
+    <a href="#settings" data-view="settings"><svg class="i"><use href="#i-settings"/></svg>Settings</a>
+  </nav>
+  <main class="main"><div class="panel" id="view"></div></main>
+</div>
+<div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
+<script src="/_shared/icons.js"></script>
+<script src="/_shared/bench.js"></script>
+<script>
+  const YEAR = 2026, MONTH = 9; // October (0-based)
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  // Weekdays from the 6th on are bookable; the seed picks which slots are taken.
+  const TIMES = ['9:00 AM','9:30 AM','10:00 AM','11:00 AM','1:00 PM','2:00 PM','2:30 PM','3:30 PM','4:00 PM'];
+  const takenFor = {};
+  function slotsFor(day) {
+    if (!takenFor[day]) {
+      const taken = new Set(BENCH.shuffle(TIMES.filter((t) => t !== '2:30 PM')).slice(0, 3));
+      takenFor[day] = TIMES.filter((t) => !taken.has(t));
+    }
+    return takenFor[day];
+  }
+  let selectedDay = null, selectedTime = null, booked = null;
+  let settings = { timezone: 'America/Los_Angeles', reminders: true };
+  let draft = { ...settings };
+  const iso = (d) => `${YEAR}-${String(MONTH + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const available = (d) => { const wd = new Date(YEAR, MONTH, d).getDay(); return d >= 6 && wd > 0 && wd < 6; };
+  function snack(text) { const bar = document.getElementById('snackbar'); bar.innerHTML = `<span>${text}</span><button type="button">OK</button>`; bar.classList.remove('hidden'); }
+
+  function book() {
+    document.title = 'Book a consultation - Acme Calendar';
+    const first = new Date(YEAR, MONTH, 1).getDay();
+    const days = new Date(YEAR, MONTH + 1, 0).getDate();
+    let cells = '';
+    for (let i = 0; i < first; i++) cells += '<span></span>';
+    for (let d = 1; d <= days; d++) {
+      const label = `${DOW[new Date(YEAR, MONTH, d).getDay()]}, ${MONTHS[MONTH]} ${d}, ${YEAR}`;
+      cells += available(d)
+        ? `<button class="day available" type="button" data-day="${d}" aria-label="${label}" aria-pressed="${selectedDay === d}">${d}</button>`
+        : `<button class="day" type="button" aria-disabled="true" aria-label="${label}, unavailable">${d}</button>`;
+    }
+    const slots = selectedDay ? slotsFor(selectedDay).map((t) => `
+      <div class="slot"><button class="btn time" type="button" data-time="${t}" aria-pressed="${selectedTime === t}">${t}</button>
+      ${selectedTime === t ? `<button class="btn btn-filled" type="button" id="next" aria-label="Next: confirm ${t}">Next</button>` : ''}</div>`).join('')
+      : '<p class="sub">Select a day to see available times.</p>';
+    return `<div class="panel-head"><h1>Book a consultation</h1></div>
+      <div class="booking">
+        <section class="host"><span class="avatar">L</span><div class="sub">Dr. Lina Ortiz</div><h2>30 minute consultation</h2>
+          <div class="fact"><svg class="i"><use href="#i-calendar"/></svg>30 min</div>
+          <div class="fact"><svg class="i"><use href="#i-link"/></svg>Video call link after booking</div>
+          <div class="fact"><svg class="i"><use href="#i-pin"/></svg>${settings.timezone}</div></section>
+        <section class="cal" aria-label="Choose a date"><div class="cal-head"><h3>${MONTHS[MONTH]} ${YEAR}</h3>
+            <button class="icon-btn" aria-label="Previous month" aria-disabled="true"><svg class="i"><use href="#i-left"/></svg></button>
+            <button class="icon-btn" aria-label="Next month" aria-disabled="true"><svg class="i"><use href="#i-right"/></svg></button></div>
+          <div class="dow">${['SUN','MON','TUE','WED','THU','FRI','SAT'].map((d) => `<span>${d}</span>`).join('')}</div>
+          <div class="days">${cells}</div></section>
+        <section class="slots" aria-label="Choose a time"><h4>${selectedDay ? `${DOW[new Date(YEAR, MONTH, selectedDay).getDay()]}, ${MONTHS[MONTH]} ${selectedDay}` : 'Times'}</h4>${slots}</section>
+      </div>`;
+  }
+  function confirmView() {
+    document.title = 'Confirm booking - Acme Calendar';
+    if (!selectedDay || !selectedTime) return book();
+    return `<div class="panel-head"><h1>Confirm your booking</h1></div><div class="card confirm">
+      <h3>30 minute consultation with Dr. Lina Ortiz</h3><p class="sub">${DOW[new Date(YEAR, MONTH, selectedDay).getDay()]}, ${MONTHS[MONTH]} ${selectedDay}, ${YEAR} at ${selectedTime} (${settings.timezone})</p>
+      <div class="form-row" style="margin:18px 0"><div class="field"><label for="b-name">Name</label><input class="input" id="b-name" value="Uriah Galang"></div>
+      <div class="field"><label for="b-email">Email</label><input class="input" id="b-email" value="uriah@acme.test"></div></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><a class="btn btn-text" href="#book">Back</a><button class="btn btn-filled" type="button" id="schedule">Schedule event</button></div></div>`;
+  }
+  function upcoming() {
+    document.title = 'Upcoming - Acme Calendar';
+    return `<div class="panel-head"><h1>Upcoming</h1></div>${booked ? `<div class="card"><h3>Consultation with Dr. Lina Ortiz</h3><p class="sub">${booked.date} at ${booked.time}</p></div>` : '<div class="empty">No upcoming events.</div>'}`;
+  }
+  function settingsView() {
+    document.title = 'Settings - Acme Calendar';
+    const zones = ['America/Los_Angeles', 'America/New_York', 'Europe/London', 'Europe/Lisbon', 'Asia/Manila', 'Asia/Tokyo', 'Australia/Sydney'];
+    return `<div class="panel-head"><h1>Settings</h1></div><div class="settings">
+      <div class="card"><div class="field" style="max-width:360px"><label for="tz">Time zone</label>
+        <select id="tz">${zones.map((z) => `<option value="${z}" ${draft.timezone === z ? 'selected' : ''}>${z}</option>`).join('')}</select></div>
+      <div class="switch" style="margin-top:12px"><div><div class="t" id="rem-label">Email reminders</div><div class="d">Send me an email 1 hour before each event</div></div>
+        <button class="toggle" type="button" role="switch" id="reminders" aria-labelledby="rem-label" aria-checked="${draft.reminders}"></button></div>
+      <div class="switch"><div><div class="t" id="sms-label">SMS reminders</div><div class="d">Text me 15 minutes before each event</div></div>
+        <button class="toggle" type="button" role="switch" id="sms" aria-labelledby="sms-label" aria-checked="false"></button></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn btn-text" type="button" id="discard">Discard</button><button class="btn btn-filled" type="button" id="save-settings">Save</button></div></div></div>`;
+  }
+  const VIEWS = { book, confirm: confirmView, upcoming, settings: settingsView };
+  function render() {
+    const view = location.hash.slice(1) || 'book';
+    document.getElementById('view').innerHTML = (VIEWS[view] || book)();
+    for (const a of document.querySelectorAll('.nav a')) a.classList.toggle('active', a.dataset.view === view || (view === 'confirm' && a.dataset.view === 'book'));
+    for (const b of document.querySelectorAll('[data-day]')) b.onclick = () => { selectedDay = Number(b.dataset.day); selectedTime = null; BENCH.emit('pick_day', { date: iso(selectedDay) }); render(); };
+    for (const b of document.querySelectorAll('[data-time]')) b.onclick = () => { selectedTime = b.dataset.time; BENCH.emit('pick_time', { date: iso(selectedDay), time: selectedTime }); render(); };
+    const next = document.getElementById('next'); if (next) next.onclick = () => { location.hash = '#confirm'; };
+    const sched = document.getElementById('schedule');
+    if (sched) sched.onclick = () => { booked = { date: iso(selectedDay), time: selectedTime, name: document.getElementById('b-name').value, timezone: settings.timezone }; BENCH.emit('booked', booked); snack(`Booked ${MONTHS[MONTH]} ${selectedDay} at ${selectedTime}`); location.hash = '#upcoming'; };
+    const tz = document.getElementById('tz'); if (tz) tz.onchange = () => { draft.timezone = tz.value; BENCH.set({ draft: { ...draft } }); };
+    const rem = document.getElementById('reminders'); if (rem) rem.onclick = () => { draft.reminders = !draft.reminders; rem.setAttribute('aria-checked', String(draft.reminders)); BENCH.emit('toggle', { setting: 'reminders', on: draft.reminders }); BENCH.set({ draft: { ...draft } }); };
+    const sms = document.getElementById('sms'); if (sms) sms.onclick = () => { const on = sms.getAttribute('aria-checked') !== 'true'; sms.setAttribute('aria-checked', String(on)); BENCH.emit('toggle', { setting: 'sms', on }); };
+    const save = document.getElementById('save-settings'); if (save) save.onclick = () => { settings = { ...draft }; BENCH.emit('settings_saved', { ...settings }); snack('Settings saved'); BENCH.set({ settings: { ...settings } }); };
+    const discard = document.getElementById('discard'); if (discard) discard.onclick = () => { draft = { ...settings }; render(); };
+    BENCH.set({ view, day: selectedDay ? iso(selectedDay) : null, time: selectedTime, booked, settings: { ...settings }, draft: { ...draft } });
+  }
+  window.addEventListener('hashchange', render);
+  render();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Only RUSTSEC advisories are gated. Licenses, bans, and sources are not
+# checked yet: the crates are publish = false and there is no policy to enforce.
+# See docs/DECISIONS.md.
+[graph]
+all-features = true
+
+[advisories]
+# Unmaintained and yanked are reported for every dependency. No advisory is
+# ignored. Add an ignore only with a reason and a DECISIONS entry.
+ignore = []

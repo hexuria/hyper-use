@@ -1,0 +1,1351 @@
+{
+ "merged_runs": [
+  "20261005-131001",
+  "20261005-141625",
+  "20261005-153648"
+ ],
+ "rows": [
+  {
+   "arm": "A3",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "crashed",
+     "cap": null,
+     "pass": false,
+     "final": "error"
+    },
+    {
+     "outcome": "crashed",
+     "cap": null,
+     "pass": false,
+     "final": "error"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 1,
+   "stuck": 0,
+   "crashed": 2,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 76,
+   "model_calls_first": 40,
+   "tokens": 245404,
+   "tokens_first": 129160,
+   "wall_s": 69.6,
+   "wall_s_first": 13.89,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A4",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 3,
+   "wrong_actions_first": 1,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 1,
+   "model_calls": 6,
+   "model_calls_first": 2,
+   "tokens": 11415,
+   "tokens_first": 3805,
+   "wall_s": 71.29,
+   "wall_s_first": 23.69,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A6",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 14,
+   "model_calls_first": 4,
+   "tokens": 72365,
+   "tokens_first": 15435,
+   "wall_s": 58.43,
+   "wall_s_first": 13.45,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A3",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 3,
+   "model_calls_first": 1,
+   "tokens": 9627,
+   "tokens_first": 3209,
+   "wall_s": 51.19,
+   "wall_s_first": 17.22,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A1",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 48660,
+   "tokens_first": 48660,
+   "wall_s": 41.64,
+   "wall_s_first": 41.64,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 11,
+   "model_calls_first": 11,
+   "tokens": 74402,
+   "tokens_first": 74402,
+   "wall_s": 5.58,
+   "wall_s_first": 5.58,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A5",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 1,
+   "model_calls": 24,
+   "model_calls_first": 9,
+   "tokens": 156261,
+   "tokens_first": 57925,
+   "wall_s": 12.85,
+   "wall_s_first": 4.62,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A3",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 3,
+   "model_calls_first": 1,
+   "tokens": 9648,
+   "tokens_first": 3216,
+   "wall_s": 51.6,
+   "wall_s_first": 17.28,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A2",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 14003,
+   "tokens_first": 14003,
+   "wall_s": 47.63,
+   "wall_s_first": 47.63,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A2",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 12849,
+   "tokens_first": 12849,
+   "wall_s": 41.52,
+   "wall_s_first": 41.52,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A1",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 36609,
+   "tokens_first": 36609,
+   "wall_s": 35.83,
+   "wall_s_first": 35.83,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A2",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 8698,
+   "tokens_first": 8698,
+   "wall_s": 38.08,
+   "wall_s_first": 38.08,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A4",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 3811,
+   "tokens_first": 3811,
+   "wall_s": 23.88,
+   "wall_s_first": 23.88,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A4",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 3702,
+   "tokens_first": 3702,
+   "wall_s": 23.69,
+   "wall_s_first": 23.69,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A6",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 18471,
+   "tokens_first": 18471,
+   "wall_s": 15.42,
+   "wall_s_first": 15.42,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A1",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 2,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 0,
+   "model_calls": 5,
+   "model_calls_first": 2,
+   "tokens": 36720,
+   "tokens_first": 12810,
+   "wall_s": 39.43,
+   "wall_s_first": 14.44,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "stuck",
+     "cap": null,
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "stuck",
+     "cap": null,
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "stuck",
+     "cap": null,
+     "pass": false,
+     "final": null
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 3,
+   "crashed": 0,
+   "steps": 9,
+   "steps_first": 3,
+   "model_calls": 66,
+   "model_calls_first": 22,
+   "tokens": 531706,
+   "tokens_first": 177697,
+   "wall_s": 27.53,
+   "wall_s_first": 8.89,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A2",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 13639,
+   "tokens_first": 13639,
+   "wall_s": 49.99,
+   "wall_s_first": 49.99,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A1",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 24006,
+   "tokens_first": 24006,
+   "wall_s": 24.53,
+   "wall_s_first": 24.53,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 3,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 120,
+   "model_calls_first": 40,
+   "tokens": 1104057,
+   "tokens_first": 368123,
+   "wall_s": 48.77,
+   "wall_s_first": 16.26,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A6",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 8,
+   "steps_first": 2,
+   "model_calls": 25,
+   "model_calls_first": 7,
+   "tokens": 204908,
+   "tokens_first": 46232,
+   "wall_s": 99.46,
+   "wall_s_first": 32.18,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A6",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 28233,
+   "tokens_first": 28233,
+   "wall_s": 16.48,
+   "wall_s_first": 16.48,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A4",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 3831,
+   "tokens_first": 3831,
+   "wall_s": 23.9,
+   "wall_s_first": 23.9,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A3",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 3,
+   "model_calls_first": 1,
+   "tokens": 9618,
+   "tokens_first": 3206,
+   "wall_s": 51.05,
+   "wall_s_first": 17.04,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3925,
+   "tokens_first": 3925,
+   "wall_s": 29.57,
+   "wall_s_first": 29.57,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3922,
+   "tokens_first": 3922,
+   "wall_s": 7.88,
+   "wall_s_first": 7.88,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 6309,
+   "tokens_first": 6309,
+   "wall_s": 25.79,
+   "wall_s_first": 25.79,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 15030,
+   "tokens_first": 15030,
+   "wall_s": 21.12,
+   "wall_s_first": 21.12,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 18568,
+   "tokens_first": 18568,
+   "wall_s": 39.75,
+   "wall_s_first": 39.75,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3930,
+   "tokens_first": 3930,
+   "wall_s": 8.28,
+   "wall_s_first": 8.28,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 10461,
+   "tokens_first": 10461,
+   "wall_s": 38.65,
+   "wall_s_first": 38.65,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 17015,
+   "tokens_first": 17015,
+   "wall_s": 25.27,
+   "wall_s_first": 25.27,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  }
+ ]
+}

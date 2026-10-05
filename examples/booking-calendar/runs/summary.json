@@ -1,0 +1,1051 @@
+{
+ "merged_runs": [
+  "20261005-131001",
+  "20261005-141625",
+  "20261005-153648"
+ ],
+ "rows": [
+  {
+   "arm": "A6",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 1,
+   "model_calls": 19,
+   "model_calls_first": 6,
+   "tokens": 51290,
+   "tokens_first": 15824,
+   "wall_s": 82.42,
+   "wall_s_first": 28.78,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A1",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 12724,
+   "tokens_first": 12724,
+   "wall_s": 14.73,
+   "wall_s_first": 14.73,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A6",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 6,
+   "steps_first": 2,
+   "model_calls": 28,
+   "model_calls_first": 9,
+   "tokens": 265408,
+   "tokens_first": 81776,
+   "wall_s": 112.68,
+   "wall_s_first": 39.92,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 3,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 1,
+   "model_calls": 120,
+   "model_calls_first": 40,
+   "tokens": 339180,
+   "tokens_first": 113060,
+   "wall_s": 41.75,
+   "wall_s_first": 13.9,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A2",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 3032,
+   "tokens_first": 3032,
+   "wall_s": 29.35,
+   "wall_s_first": 29.35,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A3",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 11268,
+   "tokens_first": 11268,
+   "wall_s": 18.54,
+   "wall_s_first": 18.54,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A3",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 20354,
+   "tokens_first": 20354,
+   "wall_s": 18.81,
+   "wall_s_first": 18.81,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A1",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 59284,
+   "tokens_first": 59284,
+   "wall_s": 60.45,
+   "wall_s_first": 60.45,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A4",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 1,
+   "model_calls_first": 1,
+   "tokens": 1364,
+   "tokens_first": 1364,
+   "wall_s": 18.01,
+   "wall_s_first": 18.01,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A2",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 11,
+   "steps_first": 3,
+   "model_calls": 21,
+   "model_calls_first": 5,
+   "tokens": 38630,
+   "tokens_first": 8159,
+   "wall_s": 152.31,
+   "wall_s_first": 38.86,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A6",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 14,
+   "model_calls_first": 5,
+   "tokens": 33260,
+   "tokens_first": 12827,
+   "wall_s": 48.73,
+   "wall_s_first": 19.6,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A4",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "stuck",
+     "cap": null,
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "stuck",
+     "cap": null,
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "stuck",
+     "cap": null,
+     "pass": false,
+     "final": null
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 3,
+   "crashed": 0,
+   "steps": 9,
+   "steps_first": 3,
+   "model_calls": 9,
+   "model_calls_first": 3,
+   "tokens": 13116,
+   "tokens_first": 4372,
+   "wall_s": 80.27,
+   "wall_s_first": 26.66,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A2",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 2,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 7,
+   "steps_first": 2,
+   "model_calls": 17,
+   "model_calls_first": 4,
+   "tokens": 87853,
+   "tokens_first": 12399,
+   "wall_s": 132.63,
+   "wall_s_first": 37.57,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A1",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 46618,
+   "tokens_first": 46618,
+   "wall_s": 36.55,
+   "wall_s_first": 36.55,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 1,
+   "model_calls": 90,
+   "model_calls_first": 29,
+   "tokens": 359854,
+   "tokens_first": 115181,
+   "wall_s": 34.07,
+   "wall_s_first": 11.17,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A4",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 12419,
+   "tokens_first": 12419,
+   "wall_s": 38.85,
+   "wall_s_first": 38.85,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A5",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 1,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 1,
+   "model_calls": 70,
+   "model_calls_first": 15,
+   "tokens": 275242,
+   "tokens_first": 48404,
+   "wall_s": 27.44,
+   "wall_s_first": 6.09,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A3",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 1,
+   "model_calls_first": 1,
+   "tokens": 3663,
+   "tokens_first": 3663,
+   "wall_s": 17.01,
+   "wall_s_first": 17.01,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A8",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 22354,
+   "tokens_first": 22354,
+   "wall_s": 27.19,
+   "wall_s_first": 27.19,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 8,
+   "steps_first": 8,
+   "model_calls": 17,
+   "model_calls_first": 17,
+   "tokens": 33098,
+   "tokens_first": 33098,
+   "wall_s": 58.44,
+   "wall_s_first": 58.44,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 9807,
+   "tokens_first": 9807,
+   "wall_s": 24.48,
+   "wall_s_first": 24.48,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3923,
+   "tokens_first": 3923,
+   "wall_s": 26.08,
+   "wall_s_first": 26.08,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 23393,
+   "tokens_first": 23393,
+   "wall_s": 39.74,
+   "wall_s_first": 39.74,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 7,
+   "steps_first": 2,
+   "model_calls": 19,
+   "model_calls_first": 5,
+   "tokens": 30528,
+   "tokens_first": 8795,
+   "wall_s": 113.91,
+   "wall_s_first": 40.18,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  }
+ ]
+}

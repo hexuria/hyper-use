@@ -1,0 +1,53 @@
+scenario: booking-calendar
+title: Acme Calendar (month grid, time slots, settings)
+tasks:
+  - id: book-slot
+    class: normal
+    needs: []
+    start: /booking-calendar/site/index.html
+    goal: >-
+      Book the 30 minute consultation on October 14, 2026 at 2:30 PM.
+    success:
+      - event: {type: booked, date: "2026-10-14", time: "2:30 PM"}
+    forbidden:
+      - event: {type: booked, date: "!2026-10-14"}
+      - event: {type: booked, time: "!2:30 PM"}
+    oracle:
+      - click: {css: "button.day", label: "Wednesday, October 14, 2026"}
+      - click: {css: "button[data-time]", text: "2:30 PM"}
+      - click: {css: "#next"}
+      - click: {css: "#schedule"}
+    saboteur:
+      - click: {css: "button.day", label: "Thursday, October 15, 2026"}
+      - click: {css: "button[data-time]", text: "2:30 PM"}
+      - click: {css: "#next"}
+      - click: {css: "#schedule"}
+
+  - id: book-timezone
+    class: normal
+    needs: [select]
+    start: /booking-calendar/site/index.html#settings
+    goal: >-
+      Change the time zone to "Asia/Manila" and save the settings.
+    success:
+      - event: {type: settings_saved, timezone: Asia/Manila}
+    forbidden:
+      - event: {type: settings_saved, reminders: false}
+      - event: {type: booked}
+    oracle:
+      - select: {css: "#tz", value: Asia/Manila}
+      - click: {css: "#save-settings"}
+
+  - id: book-noop
+    class: no-op
+    needs: []
+    start: /booking-calendar/site/index.html#settings
+    goal: >-
+      Make sure email reminders are turned on.
+    success:
+      - state: {settings.reminders: true, draft.reminders: true}
+    forbidden:
+      - event: {type: settings_saved, reminders: false}
+      - event: {type: booked}
+    oracle:
+      - final: done

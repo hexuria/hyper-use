@@ -23,7 +23,7 @@ pub use manifold::InteractionManifold;
 pub use query::LocateQuery;
 pub use rect::{Point, Rect};
 pub use region::{InteractionRegion, RegionParts};
-pub use text::{token_jaccard, token_recall, tokenize};
+pub use text::{token_jaccard, token_precision, token_recall, tokenize};
 pub use vocab::{Action, RegionFlags, Relation, Role, SizeClass, SourceMask, Zone};
 
 #[cfg(test)]
@@ -154,6 +154,16 @@ mod tests {
         assert_eq!(token_recall("Settings", "Account Settings"), 1.0);
         assert_eq!(token_recall("Settings panel", "Settings"), 0.5);
         assert_eq!(token_jaccard("", ""), 1.0);
+    }
+
+    #[test]
+    fn token_precision_counts_label_tokens_found_in_the_query() {
+        assert_eq!(token_precision("Send", "Send"), 1.0);
+        assert_eq!(token_precision("Send", "Send feedback"), 0.5);
+        assert_eq!(token_precision("Send", "Send to device"), 1.0 / 3.0);
+        assert_eq!(token_precision("Send", ""), 0.0);
+        assert_eq!(token_precision("", ""), 1.0);
+        assert_eq!(token_precision("Account Settings", "Settings"), 1.0);
     }
 
     #[test]

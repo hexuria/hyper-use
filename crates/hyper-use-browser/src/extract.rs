@@ -16,6 +16,8 @@ pub(crate) struct DomElement {
     pub actions: Vec<Action>,
     pub disabled: bool,
     pub hidden: bool,
+    /// Backend ids of kept ancestors, nearest first.
+    pub ancestors: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -24,6 +26,7 @@ pub(crate) struct AxElement {
     pub role: Role,
     pub name: String,
     pub disabled: bool,
+    pub focused: bool,
 }
 
 pub(crate) fn parse_viewport(result_json: &str) -> Result<hyper_use_core::Rect, BrowserError> {
@@ -49,7 +52,8 @@ pub(crate) fn dom_elements(document_json: &str) -> Result<Vec<DomElement>, Brows
         })
     })?;
     let mut out = Vec::new();
-    walk_dom(root, &mut out);
+    let mut ancestors = Vec::new();
+    walk_dom(root, &mut ancestors, &mut out);
     Ok(out)
 }
 
@@ -84,12 +88,14 @@ pub(crate) fn ax_elements(tree_json: &str) -> Result<Vec<AxElement>, BrowserErro
             .trim()
             .to_owned();
         let backend = node.get("backendDOMNodeId").and_then(Value::as_i64);
-        let disabled = ax_disabled(node);
+        let disabled = ax_flag(node, "disabled");
+        let focused = ax_flag(node, "focused");
         out.push(AxElement {
             backend_dom_node_id: backend,
             role,
             name,
             disabled,
+            focused,
         });
     }
     Ok(out)
@@ -144,17 +150,32 @@ pub(crate) fn object_id(resolve_json: &str) -> Result<String, BrowserError> {
         .ok_or(BrowserError::MissingObjectId)
 }
 
-fn walk_dom(node: &Value, out: &mut Vec<DomElement>) {
+/// `Runtime.callFunctionOn` reports a thrown click as `exceptionDetails`.
+pub(crate) fn call_threw(call_json: &str) -> Result<bool, BrowserError> {
+    let value = parse_json(call_json)?;
+    Ok(value.get("exceptionDetails").is_some())
+}
+
+/// `ancestors` holds the backend ids of kept elements above `node`, outermost
+/// first. Each element records them nearest first.
+fn walk_dom(node: &Value, ancestors: &mut Vec<i64>, out: &mut Vec<DomElement>) {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(1);
+    let mut pushed = false;
     if node_type == 1 {
-        if let Some(element) = element_from(node) {
+        if let Some(mut element) = element_from(node) {
+            element.ancestors = ancestors.iter().rev().copied().collect();
+            ancestors.push(element.backend_node_id);
+            pushed = true;
             out.push(element);
         }
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {
         for child in children {
-            walk_dom(child, out);
+            walk_dom(child, ancestors, out);
         }
+    }
+    if pushed {
+        ancestors.pop();
     }
 }
 
@@ -198,6 +219,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         actions: actions_for_role(role),
         disabled,
         hidden,
+        ancestors: Vec::new(),
     })
 }
 
@@ -286,18 +308,51 @@ fn ax_role(value: &str) -> Option<Role> {
     }
 }
 
-fn ax_disabled(node: &Value) -> bool {
+fn ax_flag(node: &Value, name: &str) -> bool {
     let Some(properties) = node.get("properties").and_then(Value::as_array) else {
         return false;
     };
     properties.iter().any(|property| {
-        property.get("name").and_then(Value::as_str) == Some("disabled")
+        property.get("name").and_then(Value::as_str) == Some(name)
             && property
                 .get("value")
                 .and_then(|value| value.get("value"))
                 .and_then(Value::as_bool)
                 == Some(true)
     })
+}
+
+/// URL and title of the current history entry. `None` when there is no
+/// current entry, so the page state is unknown.
+/// This does not read a timestamp: `Page.getNavigationHistory` has none.
+pub(crate) fn navigation_entry(
+    history_json: &str,
+) -> Result<Option<(String, String)>, BrowserError> {
+    let value = parse_json(history_json)?;
+    let Some(entries) = value.get("entries").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    let index = value
+        .get("currentIndex")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let Some(entry) = usize::try_from(index)
+        .ok()
+        .and_then(|index| entries.get(index))
+    else {
+        return Ok(None);
+    };
+    let url = entry
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let title = entry
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    Ok(Some((url, title)))
 }
 
 fn direct_text(node: &Value) -> String {

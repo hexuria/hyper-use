@@ -84,6 +84,22 @@ impl InteractionRegion {
     pub fn fingerprint(&self) -> StateFingerprint {
         self.fingerprint
     }
+
+    /// The owned inputs that rebuild this region. The fingerprint is derived
+    /// again by [`InteractionRegion::try_new`].
+    pub fn to_parts(&self) -> RegionParts {
+        RegionParts {
+            id: self.id.clone(),
+            role: self.role,
+            label: self.label.clone(),
+            rect: self.rect,
+            actions: self.actions.clone(),
+            parent: self.parent.clone(),
+            sources: self.sources,
+            flags: self.flags,
+            temporal_stability: self.temporal_stability,
+        }
+    }
 }
 
 fn fingerprint_of(parts: &RegionParts) -> StateFingerprint {

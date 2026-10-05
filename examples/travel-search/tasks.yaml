@@ -1,0 +1,34 @@
+scenario: travel-search
+title: Forma travel search (adapted from jev-ultrafast, MIT)
+tasks:
+  - id: travel-lisbon
+    class: normal
+    needs: [type, select]
+    start: /travel-search/site/index.html
+    goal: >-
+      Search for stays in "Lisbon", show only the Design category with free cancellation,
+      and open the matching stay.
+    success:
+      - event: {type: open, place: Casa Flora, category: Design, free: true, query: "~lisbon"}
+    forbidden:
+      - event: {type: open, place: "!Casa Flora"}
+    oracle:
+      - type: {css: "#destination", text: Lisbon}
+      - key: Enter
+      - select: {css: "#category", value: Design}
+      - click: {css: "#free"}
+      - click: {css: "button[data-place]", label: "View Casa Flora"}
+    saboteur:
+      - click: {css: "button[data-place]", label: "View Atelier Alfama"}
+
+  - id: travel-tm
+    class: target-missing
+    needs: []
+    start: /travel-search/site/index.html
+    goal: >-
+      Book "Casa Flora" for two nights.
+    success:
+      - final: [give_up]
+    forbidden: []
+    oracle:
+      - final: give_up

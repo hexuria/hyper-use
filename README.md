@@ -1,47 +1,55 @@
 # hyper-use
 
-hyper-use resolves an interface target and can act on it. It is not an agent
-and it does not navigate. The product name is hyper-use. HGRA is only the
-name of one matcher.
+**Hyper-Use is an independent action-verification layer for browser agents.**
+It resolves what an agent is about to interact with, refuses ambiguous or
+unsafe actions, and verifies the resulting state change.
 
-The toolchain is pinned to Rust 1.99.0. Versions are 0.1.0 and `publish = false`.
-The public API is unstable until 1.0.
+It is not a browser agent. It is not a Browser Use or CUA replacement. It does
+not click, type, navigate, or plan. Browser Use (or another agent executor)
+performs the trusted action after Hyper-Use allows it.
 
-## Roadmap
+```text
+Agent / Browser Use
+       │ proposes action
+       ▼
+┌─────────────────────────────┐
+│         HYPER-USE           │
+│ observe → resolve → gate    │
+│ ALLOW / REFUSE / ESCALATE   │
+└──────────────┬──────────────┘
+               │ allow
+               ▼
+        Browser Use acts
+               │
+               ▼
+┌─────────────────────────────┐
+│         HYPER-USE           │
+│ observe → diff → verify     │
+│ SUCCESS / NO-EFFECT / WRONG │
+└─────────────────────────────┘
+```
 
-1. State foundation. Done.
-2. Browser integration. This tree. Fixture-proven CDP observe, locate, act, diff, and verify. Live Chrome was exercised read-only (`Browser.getVersion` on an already-running debugging port). No click was sent to that browser. hyper-use does not launch or install Chrome.
-3. JEV contract types. This tree. `ComputerTask` and `ComputerResult` only. JEV itself stays outside this repo.
-4. MCP, CLI, and skill. `hyper-use mcp` serves observe, locate, inspect, act, diff, and verify on stdin. There is no navigate tool.
-5. Fixture agreement with an optional System One choice. Not a Browser Use score.
-6. Browser Use semantic executor. Opt-in replay of one region id, role, label, and click. Not a benchmark. The default act path remains the CDP press.
-7. Hyper matcher experiment. `HgraMatcher` is selectable. It is not the default, and it has not been shown to beat `WeightedMatcher`.
-8. CUA semantic handoff. Opt-in replay of one region id, role, label, and click. Not a fusion benchmark. The pixel driver stays unimplemented.
-9. macOS. Last. Accessibility and the Mac app stay stubs.
+Toolchain: Rust 1.99.0. Versions are 0.1.0 and `publish = false`. Public API
+is unstable until 1.0. `WeightedMatcher` is the default; HGRA is an experiment
+under `experiments/hgra/` and is not on the default path.
+
+## MCP tools
+
+`observe`, `guard`, `verify`. Locate, inspect, and diff remain available as
+internal or deprecated helpers during the transition; they are not the product
+surface.
 
 ## Commands
 
-Default matcher is weighted. Default CDP HTTP endpoint, used when `--cdp` is
-passed with no URL, is `http://127.0.0.1:9222`.
-
 ```bash
 cargo test --workspace
-cargo run -p hyper-use-cli -- locate \
-  --fixture fixtures/sidebar.manifold \
-  --text Settings --role button --position left --json
-cargo run -p hyper-use-cli -- locate "Sign in" \
-  --fixture fixtures/sign-in.cdp.json
-cargo run -p hyper-use-cli -- act n100 press \
-  --fixture fixtures/sign-in-press.cdp.json
+cargo run -p hyper-use-cli -- observe --fixture fixtures/sign-in.cdp.json
+cargo run -p hyper-use-cli -- guard \
+  --fixture fixtures/sign-in.cdp.json \
+  --action click --target "Sign in" --role button --json
 cargo run -p hyper-use-cli -- verify \
   --fixture fixtures/welcome.cdp.json --expect-text Welcome
 ```
 
-`press` is the CLI verb for `Action::Click`. A scored confidence below 0.55
-refuses the act and does not click. `--executor browser-use` and `--executor cua`
-each send the region id, role, and label through a replay fixture. They do not
-navigate, they are not in the default policy order, and the CUA path is not a
-fusion benchmark. The default executor remains the CDP press. macOS still
-returns not-implemented.
-
-See `docs/PRD.md` and `docs/DECISIONS.md`.
+See `docs/PRD.md` and `docs/DECISIONS.md`. Benchmark evidence that motivated
+this pivot lives on the `bench/uniform` branch (`RESULTS.md`, PR #2).

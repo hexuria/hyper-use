@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My files - Acme Docs</title>
+<link rel="stylesheet" href="/_shared/ui.css">
+<style>
+  .brand .logo { background: linear-gradient(135deg, #1e8e3e, #0b57d0); }
+  .files td.icons { text-align: right; width: 160px; }
+  .files .doc { display: flex; align-items: center; gap: 14px; }
+  .files .doc svg.i { color: #0b57d0; }
+  .files .doc .name { font-weight: 500; }
+  .star[aria-pressed="true"] { color: #e37400; }
+  .ico { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; color: var(--muted); }
+  .ico:hover { background: rgba(68,71,70,.08); }
+  .section-title { margin: 28px 0 12px; font-size: 16px; font-weight: 500; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+  .reports { display: flex; gap: 12px; align-items: center; margin-top: 28px; }
+  .main .panel { padding-bottom: 128px; } /* room to scroll content above the cookie banner */
+  #cookie-frame { position: fixed; left: 280px; bottom: 16px; width: calc(100vw - 304px); height: 80px; border: 0; border-radius: 16px; box-shadow: var(--shadow-lg); z-index: 40; background: #fff; }
+  .promo { width: min(560px, calc(100vw - 48px)); }
+  .promo .hero { height: 140px; border-radius: 20px; background: linear-gradient(135deg, #0b57d0, #a142f4); margin-bottom: 18px; display: grid; place-items: center; color: #fff; font-size: 28px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><button class="icon-btn" aria-label="Main menu"><svg class="i"><use href="#i-menu"/></svg></button>
+      <span class="logo">D</span><span>Acme Docs</span></div>
+    <label class="search"><svg class="i"><use href="#i-search"/></svg><input aria-label="Search in Docs" placeholder="Search in Docs"></label>
+    <div class="top-actions"><button class="icon-btn" aria-label="Apps"><svg class="i"><use href="#i-apps"/></svg></button><span class="avatar" aria-label="Account: Uriah">U</span></div>
+  </header>
+  <nav class="nav" aria-label="Docs sections">
+    <button class="fab" type="button"><svg class="i"><use href="#i-add"/></svg>New</button>
+    <a href="#" class="active"><svg class="i"><use href="#i-folder"/></svg>My files</a>
+    <a href="#"><svg class="i"><use href="#i-people"/></svg>Shared with me</a>
+    <a href="#"><svg class="i"><use href="#i-star"/></svg>Starred</a>
+    <a href="#"><svg class="i"><use href="#i-trash"/></svg>Trash</a>
+  </nav>
+  <main class="main"><div class="panel">
+    <div class="panel-head"><h1>My files</h1></div>
+    <table class="data files" aria-label="Files">
+      <thead><tr><th>Name</th><th>Owner</th><th>Last modified</th><th class="icons"><span class="hidden">Actions</span></th></tr></thead>
+      <tbody id="files"></tbody>
+    </table>
+    <h2 class="section-title">Ready to publish</h2>
+    <div class="cards" id="cards"></div>
+    <div class="reports"><button class="btn btn-tonal" type="button" id="download-q3"><svg class="i"><use href="#i-download"/></svg>Download Q3 report</button>
+      <span class="sub">PDF, 2.4 MB</span></div>
+  </div></main>
+</div>
+<iframe id="cookie-frame" title="Cookie consent" src="cookies.html"></iframe>
+<div id="promo" class="scrim"><div class="dialog promo" role="dialog" aria-modal="true" aria-labelledby="promo-title">
+  <div class="hero">Acme Docs Pro</div>
+  <h2 id="promo-title">Get more with Acme Docs Pro</h2>
+  <p>Unlimited version history, advanced sharing controls and 2 TB of storage. Try it free for 14 days.</p>
+  <div class="actions"><button class="btn btn-text" type="button" id="no-thanks">No thanks</button><button class="btn btn-filled" type="button" id="upgrade">Upgrade now</button></div>
+</div></div>
+<div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
+<script src="/_shared/icons.js"></script>
+<script src="/_shared/bench.js"></script>
+<script>
+  // Hard DOM on purpose: icon-only twins, shadow roots, an iframe, and an overlay.
+  class PublishCard extends HTMLElement {
+    connectedCallback() {
+      const title = this.getAttribute('doc');
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = `<link rel="stylesheet" href="/_shared/ui.css">
+        <div class="card"><h3>${title}</h3><p class="sub">${this.getAttribute('note')}</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-text" type="button">Preview</button>
+        <button class="btn btn-filled" type="button">Publish</button></div></div>`;
+      const btn = root.querySelectorAll('button')[1];
+      btn.addEventListener('click', () => {
+        if (btn.getAttribute('aria-disabled') === 'true') return;
+        btn.textContent = 'Published'; btn.setAttribute('aria-disabled', 'true');
+        BENCH.emit('publish', { doc: title }); snack(`${title} published`);
+        published.push(title); BENCH.set({ published: [...published] });
+      });
+    }
+  }
+  customElements.define('publish-card', PublishCard);
+  const published = [];
+  const FILES = ['Roadmap 2027', 'Roadmap 2026', 'Q3 board deck', 'Hiring plan', 'Team offsite notes', 'Vendor contracts'];
+  const OWNERS = ['me', 'Dana Cruz', 'me', 'Marco Diaz', 'me', 'Priya Raman'];
+  const WHEN = ['Oct 3', 'Sep 29', 'Sep 27', 'Sep 20', 'Sep 14', 'Aug 30'];
+  const files = BENCH.shuffle(FILES).map((name, i) => ({ name, owner: OWNERS[i], when: WHEN[i], starred: false }));
+  const starred = () => files.filter((f) => f.starred).map((f) => f.name);
+  function snack(text) { const bar = document.getElementById('snackbar'); bar.innerHTML = `<span>${text}</span><button type="button">Undo</button>`; bar.classList.remove('hidden'); }
+  function renderFiles() {
+    document.getElementById('files').innerHTML = files.map((f, i) => `<tr>
+      <td><div class="doc"><svg class="i"><use href="#i-doc"/></svg><span class="name">${f.name}</span></div></td>
+      <td class="sub">${f.owner}</td><td class="sub">${f.when}</td>
+      <td class="icons"><button class="icon-btn star" type="button" data-row="${i}" aria-label="Star" aria-pressed="${f.starred}"><svg class="i"><use href="#i-${f.starred ? 'star_filled' : 'star'}"/></svg></button>
+        <span class="ico" data-share="${i}"><svg class="i"><use href="#i-share"/></svg></span>
+        <span class="ico" data-dl="${i}"><svg class="i"><use href="#i-download"/></svg></span></td></tr>`).join('');
+    for (const b of document.querySelectorAll('[data-row]')) b.onclick = () => {
+      const f = files[Number(b.dataset.row)]; f.starred = !f.starred;
+      BENCH.emit('star', { file: f.name, starred: f.starred }); BENCH.set({ starred: starred() }); renderFiles();
+    };
+    for (const s of document.querySelectorAll('[data-share]')) s.onclick = () => BENCH.emit('share_open', { file: files[Number(s.dataset.share)].name });
+    for (const s of document.querySelectorAll('[data-dl]')) s.onclick = () => BENCH.emit('file_download', { file: files[Number(s.dataset.dl)].name });
+  }
+  const docs = BENCH.shuffle([['Release notes', 'Version 4.2 changelog for customers'], ['Draft memo', 'Internal memo on the Q4 reorg']]);
+  document.getElementById('cards').innerHTML = docs.map(([d, n]) => `<publish-card doc="${d}" note="${n}"></publish-card>`).join('');
+  document.getElementById('no-thanks').onclick = () => { document.getElementById('promo').classList.add('hidden'); BENCH.emit('promo_dismissed', {}); BENCH.set({ promo: false }); };
+  document.getElementById('upgrade').onclick = () => { BENCH.emit('upgrade', {}); snack('Redirecting to checkout…'); };
+  document.getElementById('download-q3').onclick = () => { BENCH.emit('download', { file: 'Q3 report' }); snack('Downloading Q3 report'); };
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.bench !== 'cookies') return;
+    document.getElementById('cookie-frame').classList.add('hidden'); BENCH.set({ cookies: e.data.choice });
+  });
+  renderFiles();
+  BENCH.set({ promo: true, cookies: null, starred: [], published: [] });
+</script>
+</body>
+</html>

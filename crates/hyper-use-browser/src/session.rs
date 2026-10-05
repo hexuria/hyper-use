@@ -2,25 +2,35 @@
 //! that transport is a replay script or a live CDP websocket.
 //!
 //! Snapshots use `captured_at_ms = 0`. The ranker must not see a local clock.
+//! `Page.getNavigationHistory` may set the page URL and title. That payload
+//! has no time, so it does not change `captured_at_ms`.
 //!
 //! Press preference, and only for [`Action::Click`]:
-//! 1. DOM semantic click (`DOM.resolveNode` + `Runtime.callFunctionOn`)
-//! 2. CDP element action (`DOM.focus`)
+//! 1. DOM semantic click by node id (`DOM.resolveNode` + `Runtime.callFunctionOn`)
+//! 2. DOM semantic click by backend node id (same calls, `backendNodeId`)
 //! 3. coordinate click (`Input.dispatchMouseEvent`)
 //!
-//! A CDP `error` result fails that tier and the next tier runs. A missing
-//! script entry is not a tier failure: it is [`CdpError::NoScriptedResponse`]
-//! and the press stops, so a short fixture cannot silently become a click.
+//! A focus is not a click, so there is no `DOM.focus` tier. A CDP `error`
+//! result, or a click function that reports `exceptionDetails`, fails that
+//! tier and the next tier runs. A missing script entry is not a tier failure:
+//! it is [`CdpError::NoScriptedResponse`] and the press stops, so a short
+//! fixture cannot silently become a click.
+//!
+//! Observe omits a node whose `DOM.getBoxModel` is a CDP `error` (Chrome says
+//! "Could not compute box model." for `display:none`). Any other failure of
+//! that call is fatal.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use hyper_use_core::{Action, InteractionManifold, RegionId};
+use hyper_use_core::{Action, InteractionManifold, Rect, RegionId};
 
 use crate::error::{ActMechanism, BrowserError, CdpError};
-use crate::extract::{self, content_rect};
+use crate::extract::{self, content_rect, AxElement};
 use crate::fusion::{self, NodeBinding, RawNode};
+use crate::identity::IdentityMap;
+use crate::page::PageState;
 use crate::transport::CdpTransport;
 use crate::verify::{self, Expectation};
 
@@ -29,7 +39,12 @@ pub const DOM_CLICK_FUNCTION: &str = "function(){this.click()}";
 pub struct BrowserSession<T: CdpTransport> {
     transport: T,
     manifold: Option<InteractionManifold>,
+    page: Option<PageState>,
     bindings: BTreeMap<RegionId, NodeBinding>,
+    identity: IdentityMap,
+    /// A press ran after the stored observation. The page may have changed,
+    /// so the stored manifold and bindings must not be reused as `before`.
+    stale: bool,
 }
 
 impl<T: CdpTransport> BrowserSession<T> {
@@ -37,7 +52,10 @@ impl<T: CdpTransport> BrowserSession<T> {
         Self {
             transport,
             manifold: None,
+            page: None,
             bindings: BTreeMap::new(),
+            identity: IdentityMap::default(),
+            stale: false,
         }
     }
 
@@ -53,6 +71,26 @@ impl<T: CdpTransport> BrowserSession<T> {
         self.manifold.as_ref()
     }
 
+    pub fn page(&self) -> Option<&PageState> {
+        self.page.as_ref()
+    }
+
+    /// The stored observation, only if no press ran after it. A caller that
+    /// reuses an observation as an act's `before` must use this, not
+    /// [`Self::manifold`].
+    pub fn fresh_manifold(&self) -> Option<&InteractionManifold> {
+        if self.stale {
+            None
+        } else {
+            self.manifold.as_ref()
+        }
+    }
+
+    /// A press ran after the last observation.
+    pub fn is_stale(&self) -> bool {
+        self.stale
+    }
+
     pub fn observe(&mut self) -> Result<&InteractionManifold, BrowserError> {
         let layout = self.call("Page.getLayoutMetrics", &json!({}).to_string())?;
         let viewport = extract::parse_viewport(&layout)?;
@@ -66,11 +104,8 @@ impl<T: CdpTransport> BrowserSession<T> {
 
         let mut dom_raw = Vec::new();
         for element in &elements {
-            let boxed = self.call(
-                "DOM.getBoxModel",
-                &json!({"nodeId": element.node_id}).to_string(),
-            )?;
-            if let Some(rect) = content_rect(&boxed)? {
+            let params = json!({"nodeId": element.node_id}).to_string();
+            if let Some(rect) = self.box_rect(&params)? {
                 dom_raw.push(RawNode::from_dom(element, rect));
             }
         }
@@ -79,22 +114,30 @@ impl<T: CdpTransport> BrowserSession<T> {
             let Some(backend) = element.backend_dom_node_id else {
                 continue;
             };
-            let boxed = self.call(
-                "DOM.getBoxModel",
-                &json!({"backendNodeId": backend}).to_string(),
-            )?;
-            if let Some(rect) = content_rect(&boxed)? {
+            let params = json!({"backendNodeId": backend}).to_string();
+            if let Some(rect) = self.box_rect(&params)? {
                 ax_raw.push(RawNode::from_ax(element, rect));
             }
         }
-        let (manifold, bindings) = fusion::fuse(viewport, &dom_raw, &ax_raw)?;
+        let (fused, fused_bindings) = fusion::fuse(viewport, &dom_raw, &ax_raw)?;
+        let (manifold, bindings) =
+            self.identity
+                .assign(self.manifold.as_ref(), fused, fused_bindings)?;
+        let focused = focused_region(&ax_nodes, &bindings);
+        let page = self.read_page(focused)?;
         self.bindings = bindings;
+        self.page = Some(page);
         self.manifold = Some(manifold);
+        self.stale = false;
         Ok(self.manifold.as_ref().expect("observation just stored"))
     }
 
-    /// Click `id`. Other actions are refused. The session must already have
-    /// been observed, or this returns [`BrowserError::NotObserved`].
+    /// Low-level CDP click used only by browser fixture tests.
+    ///
+    /// **Not the product path.** Hyper-Use is an action firewall: hosts click
+    /// after [`hyper_use_guard::guard`] returns Allow. Do not call this from
+    /// MCP or CLI.
+    #[doc(hidden)]
     pub fn press(&mut self, id: &RegionId, action: Action) -> Result<ActMechanism, BrowserError> {
         if action != Action::Click {
             return Err(BrowserError::UnsupportedAction(action.to_string()));
@@ -107,15 +150,15 @@ impl<T: CdpTransport> BrowserSession<T> {
             .get(id)
             .cloned()
             .ok_or_else(|| BrowserError::UnknownRegion(id.to_string()))?;
+        // From here CDP click calls may reach the page, even if one fails.
+        self.stale = true;
         if let Some(node_id) = binding.dom_node_id {
-            if self.try_dom_semantic(node_id)? {
+            if self.try_semantic_click(json!({"nodeId": node_id}))? {
                 return Ok(ActMechanism::DomSemantic);
             }
-            if self.try_dom_focus(node_id)? {
-                return Ok(ActMechanism::CdpElement);
-            }
-        } else if let Some(backend) = binding.backend_node_id {
-            if self.try_backend_semantic(backend)? {
+        }
+        if let Some(backend) = binding.backend_node_id {
+            if self.try_semantic_click(json!({"backendNodeId": backend}))? {
                 return Ok(ActMechanism::DomSemantic);
             }
         }
@@ -128,8 +171,31 @@ impl<T: CdpTransport> BrowserSession<T> {
         verify::verify(manifold, expectation).map_err(BrowserError::Verify)
     }
 
-    fn try_dom_semantic(&mut self, node_id: i64) -> Result<bool, BrowserError> {
-        let resolved = match self.call("DOM.resolveNode", &json!({"nodeId": node_id}).to_string()) {
+    /// A protocol error or an empty history leaves URL and title unknown.
+    /// Every other failure aborts.
+    fn read_page(&mut self, focused: Option<RegionId>) -> Result<PageState, BrowserError> {
+        match self.call("Page.getNavigationHistory", &json!({}).to_string()) {
+            Ok(body) => Ok(match extract::navigation_entry(&body)? {
+                Some((url, title)) => PageState::new(url, title, focused),
+                None => PageState::unknown(focused),
+            }),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(PageState::unknown(focused)),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// `Ok(None)` when CDP reports an error for this node's box.
+    fn box_rect(&mut self, params_json: &str) -> Result<Option<Rect>, BrowserError> {
+        match self.call("DOM.getBoxModel", params_json) {
+            Ok(body) => content_rect(&body),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// `node` is `{"nodeId": n}` or `{"backendNodeId": n}`.
+    fn try_semantic_click(&mut self, node: serde_json::Value) -> Result<bool, BrowserError> {
+        let resolved = match self.call("DOM.resolveNode", &node.to_string()) {
             Ok(body) => body,
             Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(false),
             Err(other) => return Err(other),
@@ -142,38 +208,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         })
         .to_string();
         match self.call("Runtime.callFunctionOn", &params) {
-            Ok(_) => Ok(true),
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
-            Err(other) => Err(other),
-        }
-    }
-
-    fn try_dom_focus(&mut self, node_id: i64) -> Result<bool, BrowserError> {
-        match self.call("DOM.focus", &json!({"nodeId": node_id}).to_string()) {
-            Ok(_) => Ok(true),
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
-            Err(other) => Err(other),
-        }
-    }
-
-    fn try_backend_semantic(&mut self, backend: i64) -> Result<bool, BrowserError> {
-        let resolved = match self.call(
-            "DOM.resolveNode",
-            &json!({"backendNodeId": backend}).to_string(),
-        ) {
-            Ok(body) => body,
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(false),
-            Err(other) => return Err(other),
-        };
-        let object_id = extract::object_id(&resolved)?;
-        let params = json!({
-            "functionDeclaration": DOM_CLICK_FUNCTION,
-            "objectId": object_id,
-            "returnByValue": true
-        })
-        .to_string();
-        match self.call("Runtime.callFunctionOn", &params) {
-            Ok(_) => Ok(true),
+            Ok(body) => Ok(!extract::call_threw(&body)?),
             Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
             Err(other) => Err(other),
         }
@@ -199,4 +234,27 @@ impl<T: CdpTransport> BrowserSession<T> {
             .call(method, params_json)
             .map_err(BrowserError::from)
     }
+}
+
+fn focused_region(
+    ax_nodes: &[AxElement],
+    bindings: &BTreeMap<RegionId, NodeBinding>,
+) -> Option<RegionId> {
+    let backends: Vec<i64> = ax_nodes
+        .iter()
+        .filter(|element| element.focused)
+        .filter_map(|element| element.backend_dom_node_id)
+        .collect();
+    if backends.is_empty() {
+        return None;
+    }
+    bindings
+        .iter()
+        .filter(|(_, binding)| {
+            binding
+                .backend_node_id
+                .is_some_and(|id| backends.contains(&id))
+        })
+        .map(|(id, _)| id.clone())
+        .min()
 }

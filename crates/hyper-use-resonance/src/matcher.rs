@@ -5,11 +5,16 @@
 //! score: the weighted matcher never calls the encoder. There is no benchmark
 //! that picks a winner.
 
-use hyper_use_core::{token_recall, InteractionManifold, InteractionRegion, LocateQuery, RegionId};
+use hyper_use_core::{
+    token_precision, token_recall, InteractionManifold, InteractionRegion, LocateQuery, RegionId,
+};
+#[cfg(feature = "hgra")]
 use hyper_use_hyper::{Dims, Encoder};
 
+#[cfg(feature = "hgra")]
+use crate::locate_with;
 use crate::{
-    actionability_score, geometric_score, locate_with, penalty_total, ResonanceError,
+    actionability_score, cap_text_miss, geometric_score, penalty_total, ResonanceError,
     ResonanceModel,
 };
 
@@ -112,8 +117,12 @@ impl WeightedModel {
 const _: () = assert!(WeightedModel::V1.basis_point_sum() == 100);
 
 /// Deterministic baseline. Semantic text and role combine by minimum, so a
-/// role hit cannot hide a text miss. An absent constraint scores `1` (it was
+/// role hit cannot hide a text miss. The text term is
+/// `recall * (0.5 + 0.5 * precision)`: every query token must be in the label
+/// for full credit, and label tokens the query did not ask for cost up to half
+/// of it, so "Send" outranks "Send feedback". An absent constraint scores `1` (it was
 /// not asked). Penalties match [`ResonanceModel::V1`] and are subtracted after.
+/// A text miss is then clamped to [`crate::TEXT_MISS_CAP`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WeightedMatcher {
     model: WeightedModel,
@@ -154,6 +163,7 @@ impl RegionMatcher for WeightedMatcher {
     }
 }
 
+#[cfg(feature = "hgra")]
 /// The hyperdimensional ranker. `locate` / `locate_with` remain the
 /// implementation; this type only adapts them to [`RegionMatcher`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,12 +172,14 @@ pub struct HgraMatcher {
     model: ResonanceModel,
 }
 
+#[cfg(feature = "hgra")]
 impl HgraMatcher {
     pub const fn new(dims: Dims, model: ResonanceModel) -> Self {
         Self { dims, model }
     }
 }
 
+#[cfg(feature = "hgra")]
 impl Default for HgraMatcher {
     fn default() -> Self {
         Self {
@@ -177,6 +189,7 @@ impl Default for HgraMatcher {
     }
 }
 
+#[cfg(feature = "hgra")]
 impl RegionMatcher for HgraMatcher {
     fn rank(
         &self,
@@ -196,7 +209,7 @@ impl RegionMatcher for HgraMatcher {
     }
 }
 
-/// Library default. The CLI uses this unless `--matcher hgra` is set.
+/// Library default. The product matcher is weighted; HGRA is feature-gated.
 pub fn default_matcher() -> WeightedMatcher {
     WeightedMatcher::default()
 }
@@ -211,23 +224,31 @@ fn weighted_total(
     let geometric = geometric_score(manifold.viewport(), region.rect(), query);
     let actionability = actionability_score(region, query);
     let penalty = penalty_total(manifold.viewport(), region, ResonanceModel::V1);
-    model.semantic() * semantic
+    let total = model.semantic() * semantic
         + model.geometric() * geometric
         + model.actionability() * actionability
-        - penalty
+        - penalty;
+    cap_text_miss(query, region.label(), total)
 }
 
 /// Minimum of the constraints that were actually set. Absent text and role
 /// score `1`. A text miss is `0` even when the role matches.
-fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
+///
+/// Shared with HGRA (`semantic_score` in the crate root), so both matchers
+/// score text precision and role the same way.
+pub(crate) fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
     let mut present = Vec::new();
     if let Some(text) = query.text_ref() {
-        present.push(token_recall(text, region.label()));
+        present.push(weighted_text(text, region.label()));
     }
     if let Some(role) = query.role_ref() {
         present.push(if region.role() == role { 1.0 } else { 0.0 });
     }
     present.into_iter().fold(1.0, f64::min)
+}
+
+fn weighted_text(text: &str, label: &str) -> f64 {
+    token_recall(text, label) * (0.5 + 0.5 * token_precision(text, label))
 }
 
 fn sort_matches(ranked: &mut [Match]) {
@@ -308,6 +329,20 @@ mod tests {
     }
 
     #[test]
+    fn exact_label_outranks_superset_labels_with_lower_ids() {
+        let manifold =
+            hyper_use_core::parse_fixture(include_str!("../../../fixtures/send-buttons.manifold"))
+                .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Button);
+        let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        let ids: Vec<_> = ranked.iter().map(|m| m.id().as_str()).collect();
+        assert_eq!(ids, ["z-send", "a-feedback", "b-device"]);
+        assert!((ranked[0].confidence() - 1.0).abs() < 1e-12);
+        assert!((ranked[1].confidence() - 0.875).abs() < 1e-12);
+        assert!((ranked[2].confidence() - 0.833_333_333_333_333_4).abs() < 1e-12);
+    }
+
+    #[test]
     fn text_miss_is_not_rescued_by_a_role_hit() {
         let viewport = Rect::try_viewport(0.0, 0.0, 200.0, 200.0).unwrap();
         let manifold = InteractionManifold::try_new(
@@ -321,8 +356,47 @@ mod tests {
             .unwrap()
             .role(Role::Button);
         let score = WeightedMatcher::default().rank(&query, &manifold).unwrap()[0].confidence();
-        // semantic min(0, 1) = 0, geometric unconstrained 1, actionability 1.
-        let expected = WeightedModel::V1.geometric() + WeightedModel::V1.actionability();
-        assert!((score - expected).abs() < 1e-12, "{score}");
+        // semantic min(0, 1) = 0, geometric unconstrained 1, actionability 1:
+        // 0.50 before the cap, then clamped to TEXT_MISS_CAP.
+        let uncapped = WeightedModel::V1.geometric() + WeightedModel::V1.actionability();
+        assert!((uncapped - 0.5).abs() < 1e-12);
+        assert_eq!(score, crate::TEXT_MISS_CAP);
+    }
+
+    #[test]
+    fn a_label_hit_with_the_wrong_role_outranks_a_nameless_region() {
+        // Live drive t7: "Send" asked as a link. Every candidate missed, they
+        // all tied at 0.50, and an unlabeled AX node won on region id.
+        let viewport = Rect::try_viewport(0.0, 0.0, 400.0, 400.0).unwrap();
+        let mut nameless = button("ax11", "", RegionFlags::none()).to_parts();
+        nameless.role = Role::Image;
+        let manifold = InteractionManifold::try_new(
+            viewport,
+            vec![
+                InteractionRegion::try_new(nameless).unwrap(),
+                button("n714", "Send", RegionFlags::none()),
+            ],
+            0,
+        )
+        .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Link);
+        let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "n714");
+        assert!((ranked[0].confidence() - 0.5).abs() < 1e-12);
+        assert_eq!(ranked[1].id().as_str(), "ax11");
+        assert_eq!(ranked[1].confidence(), crate::TEXT_MISS_CAP);
+    }
+
+    #[test]
+    fn the_cap_only_lowers_and_only_on_a_text_miss() {
+        let text = LocateQuery::new().text("Send").unwrap();
+        assert_eq!(cap_text_miss(&text, "", 0.9), crate::TEXT_MISS_CAP);
+        assert_eq!(cap_text_miss(&text, "Archive", 0.3), 0.3);
+        assert_eq!(cap_text_miss(&text, "Send feedback", 0.9), 0.9);
+        assert_eq!(cap_text_miss(&LocateQuery::new(), "", 0.9), 0.9);
+        assert_eq!(
+            cap_text_miss(&LocateQuery::new().role(Role::Button), "", 0.9),
+            0.9
+        );
     }
 }

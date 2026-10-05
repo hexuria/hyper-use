@@ -1,32 +1,61 @@
 # hyper-use
 
-The product, crates, and binary are `hyper-use`. HGRA is the name of one matcher. A crate or binary named `hgra` is a bug.
+The product, crates, and binary are `hyper-use`. HGRA is an experimental
+matcher under `experiments/hgra/`. A crate or binary named `hgra` on the
+product path is a bug.
 
-hyper-use is not an agent. Operations are observe, locate, inspect, act, diff, verify. No navigate.
+**Product:** Hyper-Use is an independent action-verification layer for browser
+agents. It resolves what an agent is about to interact with, refuses ambiguous
+or unsafe actions, and verifies the resulting state change.
 
-The product default matcher is `WeightedMatcher`. `HgraMatcher` is selectable. Do not claim one won without a benchmark.
+It is not an agent. It is not a Browser Use or CUA replacement. Public
+operations are **observe**, **guard**, **verify**. No navigate. No click on the
+product path. Browser Use (or another host) performs the trusted action after
+`GuardDecision::Allow`.
 
-Phase 2 speaks CDP through one transport trait. Replay fixtures and a live websocket share that trait. macOS stays unimplemented. The CUA pixel driver stays unimplemented. Opt-in `cua` is a semantic replay, not fusion. A low-confidence act does not call CUA.
+The product default matcher is `WeightedMatcher`. HGRA is feature-gated /
+quarantined and has not been shown to beat WeightedMatcher.
 
-Public API is 0.1 and unstable until 1.0. Toolchain pin: Rust 1.99.0. `publish = false`.
+Public API is 0.1 and unstable until 1.0. Toolchain pin: Rust 1.99.0.
+`publish = false`. `#![forbid(unsafe_code)]` on every crate.
+
+## Crates (product graph)
+
+Keep: `hyper-use-core`, `hyper-use-browser`, `hyper-use-observe`,
+`hyper-use-geometry`, `hyper-use-resonance` (WeightedMatcher), `hyper-use-guard`,
+`hyper-use-protocol` (guard / verify messages), `hyper-use-mcp`, `hyper-use-cli`.
+
+Removed from the product graph: `hyper-use-browser-use`, `hyper-use-cua`,
+`hyper-use-macos`, `hyper-use-executor`. HGRA algebra lives under
+`experiments/hgra/`, not the default workspace build.
 
 ## Verification
 
-Deterministic ranking and the bipolar algebra are owned by unit tests and `proptest`. Do not add a second model of `locate_with` or of `WeightedMatcher::rank`.
+Deterministic ranking and the bipolar algebra (when the hgra feature is on)
+are owned by unit tests and `proptest`. Do not add a second model of
+`WeightedMatcher::rank`.
 
-`write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP replay parsing is a different grammar. `structural_similarity` is a different metric, not a second ranker. Fusion is the only DOM/accessibility merge.
+`write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP replay
+parsing is a different grammar. Fusion is the only DOM/accessibility merge.
 
-Region identity across a move, an enabled change, and a press is owned by the observe id-diff test. It is not a second identity service.
+Diff semantics on a given id are owned by the observe id-diff test. Region
+identity across observations is owned by the browser session's `IdentityMap`.
 
-Miri, Loom, Kani, TLA+, and Lean are not justified: there is no `unsafe`, no atomics, no threads, and no recovery protocol. `#![forbid(unsafe_code)]` is on every crate. The CDP client is blocking and single-threaded. A websocket read is not a concurrent protocol.
+Miri, Loom, Kani, TLA+, and Lean are not justified: there is no `unsafe`, no
+atomics, no threads, and no recovery protocol. The CDP client is blocking and
+single-threaded.
 
-Fuzz of CDP JSON is USEFUL later. A 16-case proptest that garbage scripts do not panic is the owner for now. Fixtures are local; a live socket is Chrome on loopback.
+Fuzz of CDP JSON is USEFUL later. A 16-case proptest that garbage scripts do
+not panic is the owner for now. Fixtures are local; a live socket is Chrome on
+loopback.
 
 > Any change to observable semantics names the verification boundary it affects.
 
-- Concurrency, interleaving, scheduling, retry, cancellation, recovery, ownership, or liveness updates the system model, or the change states why that model is unaffected.
-- Executable Rust behavior updates the Rust verification layer. A theorem-owned kernel updates its proof. Workflow or DSL semantics update conformance or differential tests.
-- Do not clone one state machine across Rust, TLA+, Lean, and a DSL for symmetry. Passing independent suites does not establish equivalence.
+- Concurrency, interleaving, scheduling, retry, cancellation, recovery,
+  ownership, or liveness updates the system model, or the change states why
+  that model is unaffected.
+- Executable Rust behavior updates the Rust verification layer.
+- Do not clone one state machine across Rust, TLA+, Lean, and a DSL for symmetry.
 
 ```
 Verification impact
@@ -43,81 +72,34 @@ Verification impact
 [x] Property-test / fuzz surface
 [ ] No verification architecture impact
 
-Reason: Phase 2 adds weighted ranking, CDP parse/fusion/press/verify, and the JEV task types. Replay is a fixture, not crash recovery. The websocket client is one blocking call stream, so no system model was added.
-Affected invariants: default locate is weighted; HGRA remains selectable; fusion merges a 1px DOM/AX pair and refuses different labels; press prefers a DOM click; verify fails with ExpectedTextMissing; confidence below 550 millis does not click; a region id survives move, enabled change, and press.
-Tests or proofs updated: resonance matcher tests, browser fusion and session tests, executor confidence test, CLI command tests, observe identity test, protocol contract test. No second formal model.
+Reason: action-firewall pivot removes executor routing and public actuation.
+GuardDecision is pure over observe + query (+ optional proposed target).
+Verify remains observe/diff/expectation. No system model added.
+Affected invariants: product tools are observe/guard/verify; WeightedMatcher
+default; text-miss cap below allow threshold; ranked margin refuse; no MCP
+click; HGRA not in default graph.
+Tests or proofs updated: guard unit tests, MCP guard tests, protocol tests.
+No second formal model.
 ```
 
 ## MCP
 
-`hyper-use mcp` is a newline-delimited JSON-RPC server. Tools are observe, locate, inspect, act, diff, verify. No navigate. The ranker crates do not depend on `hyper-use-mcp`.
+`hyper-use mcp` is a newline-delimited JSON-RPC server. Product tools:
+observe, guard, verify. Locate / inspect / diff may remain during transition
+as deprecated helpers. The ranker crates do not depend on `hyper-use-mcp`.
 
-```
-Verification impact
+The server owns a 16-entry in-memory snapshot ring and up to four live CDP
+sessions. A failed live call drops its session; there is no retry or reconnect.
+Guard never clicks. Verify never clicks.
 
-[x] Pure Rust deterministic behavior
-[ ] Concurrency / interleaving
-[ ] System model
-[ ] Crash-recovery / replay
-[ ] Persistence
-[ ] TLA+
-[ ] Proof kernel
-[ ] Workflow / DSL
-[ ] Unsafe / memory
-[x] Property-test / fuzz surface
-[ ] No verification architecture impact
+## Signals
 
-Reason: MCP dispatch is one blocking stdin reader. A notification has no reply. That is not a concurrent protocol, so no system model was added.
-Affected invariants: tool names are the six verbs; a goal or coordinate argument cannot succeed; locate defaults to weighted and sets benchmark false; a scored act below 550 millis returns executed false and does not press; verify failures are exact ToolError variants.
-Tests or proofs updated: hyper-use-mcp server tests, a 16-case proptest that random lines do not panic, and a stdio subprocess test of the hyper-use binary. No second formal model.
-```
+Signals (`no-op`, `loop-detected`, `repeated_query`) are data for the host
+journal. They do not retry and do not select an executor.
 
+## Act / press (going away)
 
-## Browser Use executor
-
-`browser-use` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. The CDP press path is unchanged. macOS stays unimplemented. A scored confidence below 550 millis does not call the replay transport.
-
-```
-Verification impact
-
-[x] Pure Rust deterministic behavior
-[ ] Concurrency / interleaving
-[ ] System model
-[ ] Crash-recovery / replay
-[ ] Persistence
-[ ] TLA+
-[ ] Proof kernel
-[ ] Workflow / DSL
-[ ] Unsafe / memory
-[x] Property-test / fuzz surface
-[ ] No verification architecture impact
-
-Reason: the Browser Use path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
-Affected invariants: default act stays the CDP browser press; Browser Use is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented. The CUA stub executor still returns NotImplemented; the opt-in replay is a later section.
-Tests or proofs updated: browser-use replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
-```
-
-
-## CUA semantic handoff
-
-`cua` is an opt-in act backend. It is not in `DEFAULT_POLICY_ORDER` and it does not navigate. The semantic request is region id, role, label, and action. This is not a CUA fusion benchmark. The CDP press path and the Browser Use path are unchanged. macOS stays unimplemented. A scored confidence below 550 millis does not call the CUA transport. `CuaStub` still says pixel actuation is a later phase.
-
-```
-Verification impact
-
-[x] Pure Rust deterministic behavior
-[ ] Concurrency / interleaving
-[ ] System model
-[ ] Crash-recovery / replay
-[ ] Persistence
-[ ] TLA+
-[ ] Proof kernel
-[ ] Workflow / DSL
-[ ] Unsafe / memory
-[x] Property-test / fuzz surface
-[ ] No verification architecture impact
-
-Reason: the CUA path is one blocking replay script. Recording a request is not crash recovery, and choosing the backend is not a concurrent protocol, so no system model was added.
-Affected invariants: default act stays the CDP browser press; CUA is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented; a missing CDP session does not select CUA.
-Tests or proofs updated: cua replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
-```
+`BrowserSession::press` and any MCP/CLI `act` that performs a CDP click are
+removed from the product path. Transitional fixture tests may still exercise
+low-level CDP click helpers until deleted. New code must return
+`GuardDecision` instead of clicking.

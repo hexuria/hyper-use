@@ -1,53 +1,52 @@
 //! stdio MCP server for hyper-use.
 //!
-//! Tool names are the six verbs: observe, locate, inspect, act, diff, verify.
-//! There is no navigate tool and no argument that carries a multi-step goal.
-//! Transport is newline-delimited JSON-RPC 2.0 on stdin and stdout. A
-//! notification (no `id`) gets no response. Batches are rejected.
-//!
-//! The ranker crates do not depend on this crate. `serde_json` is used here
-//! to parse JSON-RPC. It is not a public type in the ranker API.
+//! Product tools: observe, guard, verify. Locate, inspect, and diff remain as
+//! transitional helpers. `act` is accepted as a deprecated alias of `guard` and
+//! never clicks. There is no navigate tool.
 
 #![forbid(unsafe_code)]
 
 mod error;
+mod repeat;
 mod rpc;
+mod server;
 mod tools;
 
 pub use error::ToolError;
+pub use repeat::{REPEAT_THRESHOLD, REPEAT_WINDOW};
 pub use rpc::{handle_line, serve_stdio};
+pub use server::{CdpConnector, Server, MAX_LIVE_SESSIONS};
 pub use tools::call_tool;
 
-/// `observe`
 pub const TOOL_OBSERVE: &str = "observe";
-/// `locate`
 pub const TOOL_LOCATE: &str = "locate";
-/// `inspect`
 pub const TOOL_INSPECT: &str = "inspect";
-/// `act`
+pub const TOOL_GUARD: &str = "guard";
+/// Deprecated alias of [`TOOL_GUARD`]. Never clicks.
 pub const TOOL_ACT: &str = "act";
-/// `diff`
 pub const TOOL_DIFF: &str = "diff";
-/// `verify`
 pub const TOOL_VERIFY: &str = "verify";
 
-pub const TOOLS: [&str; 6] = [
+pub const TOOLS: [&str; 7] = [
     TOOL_OBSERVE,
     TOOL_LOCATE,
     TOOL_INSPECT,
+    TOOL_GUARD,
     TOOL_ACT,
     TOOL_DIFF,
     TOOL_VERIFY,
 ];
 
-/// Tool name for a protocol phase.
+pub const PRODUCT_TOOLS: [&str; 3] = [TOOL_OBSERVE, TOOL_GUARD, TOOL_VERIFY];
+
+/// Tool name for a legacy protocol phase.
 pub fn tool_for_phase(phase: hyper_use_protocol::LoopPhase) -> &'static str {
     use hyper_use_protocol::LoopPhase;
     match phase {
         LoopPhase::Observe => TOOL_OBSERVE,
         LoopPhase::Locate => TOOL_LOCATE,
         LoopPhase::Inspect => TOOL_INSPECT,
-        LoopPhase::Act => TOOL_ACT,
+        LoopPhase::Act => TOOL_GUARD,
         LoopPhase::Diff => TOOL_DIFF,
         LoopPhase::Verify => TOOL_VERIFY,
     }
@@ -56,26 +55,25 @@ pub fn tool_for_phase(phase: hyper_use_protocol::LoopPhase) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper_use_protocol::{LoopPhase, LOOP_ORDER};
+    use hyper_use_protocol::{FirewallPhase, LoopPhase, FIREWALL_ORDER, LOOP_ORDER};
 
     #[test]
-    fn tool_names_are_the_six_verbs() {
-        let mut names = TOOLS.to_vec();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), TOOLS.len());
-        assert_eq!(
-            TOOLS,
-            ["observe", "locate", "inspect", "act", "diff", "verify"]
-        );
-        for name in TOOLS {
-            assert!(!name.contains('.'), "{name}");
-            assert!(!name.contains("hgra"), "{name}");
-            assert_ne!(name, "navigate");
+    fn product_tools_are_observe_guard_verify() {
+        assert_eq!(PRODUCT_TOOLS, ["observe", "guard", "verify"]);
+        for name in PRODUCT_TOOLS {
+            assert!(TOOLS.contains(&name));
         }
-        for phase in LOOP_ORDER {
-            assert_eq!(tool_for_phase(phase), phase.as_str());
-        }
-        assert_eq!(tool_for_phase(LoopPhase::Locate), TOOL_LOCATE);
+        assert!(!PRODUCT_TOOLS.contains(&"navigate"));
+        assert!(!PRODUCT_TOOLS.contains(&"act"));
+    }
+
+    #[test]
+    fn firewall_phases_match_product_tools() {
+        let names: Vec<_> = FIREWALL_ORDER.iter().map(|p| p.as_str()).collect();
+        assert_eq!(names, PRODUCT_TOOLS);
+        assert_eq!(tool_for_phase(LoopPhase::Act), TOOL_GUARD);
+        assert_eq!(tool_for_phase(LoopPhase::Observe), TOOL_OBSERVE);
+        let _ = LOOP_ORDER;
+        let _ = FirewallPhase::Guard;
     }
 }

@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox (12) - Acme Mail</title>
+<style>
+  :root { --page: #f6f8fc; --white: #fff; --text: #1f1f1f; --muted: #5e5e5e; --line: #eceff1;
+          --blue: #0b57d0; --blue-hover: #0a4cba; --active: #d3e3fd; --hover: #e9eef6; --compose: #c2e7ff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--page); color: var(--text);
+         font: 14px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+         display: grid; grid-template-columns: 256px minmax(0, 1fr); grid-template-rows: 64px minmax(0, 1fr); overflow: hidden; }
+  a { color: inherit; text-decoration: none; }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  svg { flex: none; }
+  .hidden { display: none !important; }
+  .offscreen { position: absolute !important; left: -10000px; top: auto; }
+  .icon-btn { width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; display: grid; place-items: center; color: #444746; }
+  .icon-btn:hover { background: rgba(68,71,70,.08); }
+  .icon-btn svg { width: 20px; height: 20px; }
+
+  /* top bar */
+  .topbar { grid-column: 1 / 3; display: flex; align-items: center; gap: 8px; padding: 0 16px 0 8px; }
+  .brand { display: flex; align-items: center; gap: 8px; width: 222px; margin: 0; font-size: 22px; font-weight: 400; color: #444746; white-space: nowrap; }
+  .brand-mark { width: 32px; height: 26px; }
+  .search { flex: 1; max-width: 720px; height: 48px; display: flex; align-items: center; gap: 4px; padding: 0 6px;
+            background: #e9eef6; border-radius: 24px; }
+  .search:focus-within { background: var(--white); box-shadow: 0 1px 3px rgba(60,64,67,.3); }
+  .search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font-size: 16px; }
+  .top-right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 600;
+            background: #0b8043; color: #fff; flex: none; margin-left: 8px; }
+
+  /* left nav */
+  .nav { padding: 8px 16px 16px 0; overflow-y: auto; }
+  .compose-btn { display: inline-flex; align-items: center; gap: 12px; height: 56px; padding: 0 24px 0 16px; margin: 0 0 16px 8px;
+                 border: 0; border-radius: 16px; background: var(--compose); font-weight: 500; white-space: nowrap;
+                 box-shadow: 0 1px 2px rgba(60,64,67,.15); transition: box-shadow .15s; }
+  .compose-btn:hover { box-shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px rgba(60,64,67,.15); }
+  .compose-btn svg { width: 24px; height: 24px; }
+  .nav-item { display: flex; align-items: center; gap: 18px; height: 32px; padding: 0 12px 0 26px; border-radius: 0 16px 16px 0;
+              white-space: nowrap; color: #202124; }
+  .nav-item:hover { background: var(--hover); }
+  .nav-item svg { width: 20px; height: 20px; color: #444746; }
+  .nav-item[aria-current="page"] { background: var(--active); font-weight: 700; }
+  .nav-item .count { margin-left: auto; font-size: 12px; font-weight: 700; }
+  .nav-more { width: 100%; border: 0; background: transparent; text-align: left; }
+  .nav h2 { font-size: 16px; font-weight: 500; margin: 16px 0 4px 26px; display: flex; align-items: center; justify-content: space-between; }
+  .label-dot { width: 12px; height: 12px; border-radius: 3px; margin: 0 4px; }
+
+  /* main container */
+  .main { background: var(--white); border-radius: 16px; margin: 0 16px 16px 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .toolbar { display: flex; align-items: center; gap: 2px; height: 48px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); }
+  .toolbar .check { width: 18px; height: 18px; margin: 0 11px; accent-color: var(--blue); }
+  .pager { margin-left: auto; display: flex; align-items: center; gap: 2px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tab { flex: 0 0 254px; display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 16px; border: 0; background: transparent;
+         color: var(--muted); font-weight: 500; border-bottom: 3px solid transparent; white-space: nowrap; }
+  .tab:hover { background: #f2f2f2; }
+  .tab[aria-selected="true"] { color: var(--blue); border-bottom-color: var(--blue); }
+  .tab svg { width: 20px; height: 20px; }
+  .scroll { overflow-y: auto; min-height: 0; flex: 1; }
+
+  .view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .msg { position: relative; display: grid; grid-template-columns: 40px 32px minmax(0, 1fr); align-items: center;
+         height: 40px; padding: 0 16px 0 4px; border-bottom: 1px solid var(--line); background: #f2f6fc; }
+  .msg.unread { background: var(--white); font-weight: 700; }
+  .msg:hover { box-shadow: inset 1px 0 0 #dadce0, inset -1px 0 0 #dadce0, 0 1px 2px rgba(60,64,67,.3); z-index: 1; }
+  .msg input { width: 18px; height: 18px; margin: 0 11px; accent-color: var(--blue); }
+  .open { display: grid; grid-template-columns: 200px minmax(0, 1fr) 96px; align-items: center; height: 40px; min-width: 0; cursor: pointer; }
+  .star { width: 32px; height: 32px; border: 0; background: transparent; border-radius: 50%; color: #8a8a8a; display: grid; place-items: center; }
+  .star svg { width: 20px; height: 20px; }
+  .star[aria-pressed="true"] { color: #f4b400; }
+  .sender { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 16px; }
+  .subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .snippet { color: var(--muted); font-weight: 400; }
+  .date { text-align: right; font-size: 12px; white-space: nowrap; }
+  .row-actions { position: absolute; right: 12px; top: 0; height: 40px; display: flex; align-items: center; background: inherit; opacity: 0; }
+  .msg:hover .row-actions { opacity: 1; }
+  .msg:hover .date { visibility: hidden; }
+  .row-actions .icon-btn { width: 32px; height: 32px; }
+  .row-actions .icon-btn svg { width: 18px; height: 18px; }
+
+  /* thread view: replaces the list in the content area */
+  .reader { overflow-y: auto; padding: 0 24px 24px 72px; }
+  .reader-tools { display: flex; align-items: center; gap: 4px; height: 48px; margin: 0 -24px 8px -60px; padding-left: 4px; border-bottom: 1px solid var(--line); }
+  .reader h2 { font-size: 22px; font-weight: 400; margin: 12px 0 16px; }
+  .from { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .from .avatar { margin: 0 0 0 -52px; background: #7b1fa2; width: 40px; height: 40px; }
+  .from small { color: var(--muted); }
+  .body-text { max-width: 760px; color: #222; }
+  .reply { margin-top: 20px; max-width: 760px; border: 1px solid #dadce0; border-radius: 12px; padding: 12px 16px; box-shadow: 0 1px 2px rgba(60,64,67,.15); }
+  .reply textarea { width: 100%; border: 0; resize: none; outline: none; min-height: 56px; }
+  .reply-foot { display: flex; align-items: center; gap: 8px; }
+
+  .pill { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 24px; border: 0; border-radius: 18px;
+          background: var(--blue); color: #fff; font-weight: 500; white-space: nowrap; }
+  .pill:hover { background: var(--blue-hover); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+
+  /* compose sheet */
+  .sheet { position: fixed; right: 16px; bottom: 0; width: 540px; height: 560px; background: var(--white); z-index: 30;
+           border-radius: 12px 12px 0 0; box-shadow: 0 8px 10px 1px rgba(0,0,0,.14), 0 3px 14px 2px rgba(0,0,0,.12), 0 5px 5px -3px rgba(0,0,0,.2);
+           display: flex; flex-direction: column; }
+  .sheet-head { display: flex; align-items: center; height: 40px; padding: 0 4px 0 16px; background: #404040; color: #fff; border-radius: 12px 12px 0 0; }
+  .sheet-head .icon-btn { color: #fff; }
+  .sheet-head .icon-btn:hover { background: rgba(255,255,255,.12); }
+  .sheet-head h2 { font-size: 14px; font-weight: 500; margin: 0; flex: 1; }
+  .sheet-head .icon-btn { width: 28px; height: 28px; }
+  .sheet-head .icon-btn svg { width: 16px; height: 16px; }
+  .line { display: flex; align-items: center; gap: 8px; margin: 0 16px; border-bottom: 1px solid var(--line); height: 40px; }
+  .line input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; }
+  .line .link-btn { border: 0; background: transparent; color: var(--muted); padding: 4px 6px; border-radius: 4px; white-space: nowrap; }
+  .line .link-btn:hover { color: var(--text); text-decoration: underline; }
+  .sheet textarea { flex: 1; border: 0; outline: none; resize: none; margin: 8px 16px; }
+  .sheet-foot { display: flex; align-items: center; gap: 2px; padding: 12px 16px 14px; }
+  .sheet-foot .pill { margin-right: 10px; }
+  .sheet-foot .grow { flex: 1; }
+
+  /* snackbar */
+  .snackbar { position: fixed; left: 24px; bottom: 24px; z-index: 40; display: flex; align-items: center; gap: 24px;
+              background: #303030; color: #f2f2f2; padding: 0 8px 0 24px; height: 48px; border-radius: 4px;
+              box-shadow: 0 3px 5px -1px rgba(0,0,0,.2), 0 6px 10px 0 rgba(0,0,0,.14); white-space: nowrap; }
+  .snackbar button { border: 0; background: transparent; color: #a8c7fa; font-weight: 500; padding: 8px 12px; border-radius: 4px; }
+  .snackbar button:hover { background: rgba(255,255,255,.08); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="m20 20-4.2-4.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="10" cy="17" r="2" stroke="currentColor" stroke-width="2" fill="none"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 2.5v3M12 18.5v3M3.8 7l2.6 1.5M17.6 15.5l2.6 1.5M3.8 17l2.6-1.5M17.6 8.5 20.2 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-apps" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="12" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></g></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 14h4l1.5 2.5h5L16 14h4" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.9l-5.3 2.7 1-5.8-4.2-4.1 5.9-.9z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M3 20.5 21 12 3 3.5l2.5 8.5zM5.5 12H12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></symbol>
+    <symbol id="i-draft" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="M9 13h6M9 17h4" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2" fill="none"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2-4.9M19 4v4h-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></g></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-8 8z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><circle cx="7.5" cy="8.5" r="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18 14.8c1.8.8 3 2.5 3.5 5.2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><path d="M3 4h18v4H3zM5 8v12h14V8M10 12h4" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></symbol>
+    <symbol id="i-read" viewBox="0 0 24 24"><path d="M3 10 12 4l9 6v10H3z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="m3 10 9 6 9-6" stroke="currentColor" stroke-width="2" fill="none"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-min" viewBox="0 0 24 24"><path d="M6 18h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-max" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-format" viewBox="0 0 24 24"><path d="M6 20h12M8 16 12 5l4 11M9.5 12h5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-attach" viewBox="0 0 24 24"><path d="M20 11.5 12 19.5a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 5.3l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-emoji" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="M8.5 14.5a4 4 0 0 0 7 0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M10 8 4 13l6 5M4 13h10a6 6 0 0 1 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <button class="icon-btn" type="button" aria-label="Main menu"><svg><use href="#i-menu"/></svg></button>
+  <h1 class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 26" aria-hidden="true"><rect x="1" y="1" width="30" height="24" rx="4" fill="#fff" stroke="#c4c7c5"/><path d="M2 3l14 11L30 3" stroke="#0b57d0" stroke-width="3" fill="none" stroke-linejoin="round"/></svg>
+    Acme Mail</h1>
+  <form class="search" role="search" onsubmit="return false">
+    <button class="icon-btn" type="button" aria-label="Search"><svg><use href="#i-search"/></svg></button>
+    <input type="search" aria-label="Search mail" placeholder="Search mail">
+    <button class="icon-btn" type="button" aria-label="Show search options"><svg><use href="#i-tune"/></svg></button>
+  </form>
+  <div class="top-right">
+    <a class="icon-btn" href="help.html" aria-label="Help" title="Help"><svg><use href="#i-help"/></svg></a>
+    <a class="icon-btn" href="settings.html" aria-label="Quick settings" title="Settings"><svg><use href="#i-gear"/></svg></a>
+    <button class="icon-btn" type="button" aria-label="Apps"><svg><use href="#i-apps"/></svg></button>
+    <span class="avatar" aria-hidden="true">U</span>
+  </div>
+</header>
+
+<nav class="nav" aria-label="Mailboxes">
+  <button id="compose-open" class="compose-btn" type="button"><svg aria-hidden="true"><use href="#i-pencil"/></svg>Compose</button>
+  <a class="nav-item" href="#inbox" aria-current="page"><svg aria-hidden="true"><use href="#i-inbox"/></svg>Inbox<span class="count" aria-hidden="true">12</span></a>
+  <a class="nav-item" href="#starred"><svg aria-hidden="true"><use href="#i-star"/></svg>Starred</a>
+  <a class="nav-item" href="#snoozed"><svg aria-hidden="true"><use href="#i-clock"/></svg>Snoozed</a>
+  <a class="nav-item" href="#sent"><svg aria-hidden="true"><use href="#i-send"/></svg>Sent</a>
+  <a class="nav-item" href="#drafts"><svg aria-hidden="true"><use href="#i-draft"/></svg>Drafts<span class="count" aria-hidden="true" style="font-weight:400">3</span></a>
+  <a class="nav-item" href="settings.html"><svg aria-hidden="true"><use href="#i-gear"/></svg>Settings</a>
+  <a class="nav-item" href="#billing"><svg aria-hidden="true"><use href="#i-card"/></svg>Billing</a>
+  <button class="nav-item nav-more" type="button" aria-expanded="false"><svg aria-hidden="true"><use href="#i-down"/></svg>More</button>
+  <h2>Labels <button class="icon-btn" type="button" aria-label="Create new label" style="width:32px;height:32px"><svg style="width:18px;height:18px"><use href="#i-plus"/></svg></button></h2>
+  <a class="nav-item" href="#label-work"><span class="label-dot" style="background:#4285f4" aria-hidden="true"></span>Work</a>
+  <a class="nav-item" href="#label-personal"><span class="label-dot" style="background:#0f9d58" aria-hidden="true"></span>Personal</a>
+  <a class="nav-item" href="#label-receipts"><span class="label-dot" style="background:#f4b400" aria-hidden="true"></span>Receipts</a>
+</nav>
+
+<main class="main">
+  <section id="list-view" class="view" aria-label="Inbox">
+    <div class="toolbar">
+      <input class="check" type="checkbox" aria-label="Select all">
+      <button class="icon-btn" type="button" aria-label="Refresh"><svg><use href="#i-refresh"/></svg></button>
+      <button class="icon-btn" type="button" aria-label="More email options"><svg><use href="#i-dots"/></svg></button>
+      <div class="pager"><span>1–50 of 1,234</span>
+        <button class="icon-btn" type="button" aria-label="Newer" disabled style="opacity:.4"><svg><use href="#i-left"/></svg></button>
+        <button class="icon-btn" type="button" aria-label="Older"><svg><use href="#i-right"/></svg></button>
+      </div>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Inbox categories">
+      <button class="tab" role="tab" aria-selected="true" type="button"><svg aria-hidden="true"><use href="#i-inbox"/></svg>Primary</button>
+      <button class="tab" role="tab" aria-selected="false" type="button"><svg aria-hidden="true"><use href="#i-tag"/></svg>Promotions</button>
+      <button class="tab" role="tab" aria-selected="false" type="button"><svg aria-hidden="true"><use href="#i-people"/></svg>Social</button>
+    </div>
+    <div class="scroll">
+      <ul class="rows" aria-label="Messages" id="rows"></ul>
+    </div>
+  </section>
+
+  <article id="thread-view" class="view reader hidden" aria-label="Open message">
+    <div class="reader-tools" role="toolbar" aria-label="Message actions">
+      <a class="icon-btn" href="#inbox" aria-label="Back to Inbox"><svg><use href="#i-back"/></svg></a>
+      <button id="archive-hidden" class="icon-btn hidden" type="button" aria-label="Archive"><svg><use href="#i-archive"/></svg></button>
+      <button id="archive-offscreen" class="icon-btn offscreen" type="button" aria-label="Archive"><svg><use href="#i-archive"/></svg></button>
+      <button id="archive" class="icon-btn" type="button" aria-label="Archive"><svg><use href="#i-archive"/></svg></button>
+      <button class="icon-btn" type="button" aria-label="Delete"><svg><use href="#i-trash"/></svg></button>
+      <button class="icon-btn" type="button" aria-label="Mark as unread"><svg><use href="#i-read"/></svg></button>
+    </div>
+    <h2 id="thread-subject"></h2>
+    <div class="from"><span class="avatar" aria-hidden="true" id="thread-initial"></span>
+      <div><strong id="thread-sender"></strong> <small id="thread-address"></small><br><small id="thread-when"></small></div></div>
+    <div class="body-text" id="thread-body"></div>
+    <section class="reply" aria-label="Quick reply">
+      <textarea id="reply-text"></textarea>
+      <div class="reply-foot">
+        <button id="reply-send" class="pill" type="button">Send</button>
+        <button class="icon-btn" type="button" aria-label="Formatting options"><svg><use href="#i-format"/></svg></button>
+        <button class="icon-btn" type="button" aria-label="Attach files"><svg><use href="#i-attach"/></svg></button>
+      </div>
+    </section>
+  </article>
+</main>
+
+<section id="compose" class="sheet hidden" role="dialog" aria-modal="false" aria-labelledby="compose-title">
+  <div class="sheet-head">
+    <h2 id="compose-title">New Message</h2>
+    <button class="icon-btn" type="button" aria-label="Minimize"><svg><use href="#i-min"/></svg></button>
+    <button class="icon-btn" type="button" aria-label="Full screen"><svg><use href="#i-max"/></svg></button>
+    <button id="compose-close" class="icon-btn" type="button" aria-label="Save and close"><svg><use href="#i-close"/></svg></button>
+  </div>
+  <div class="line"><input id="compose-to" aria-label="To recipients" placeholder="Recipients">
+    <button id="add-cc" class="link-btn" type="button">Add Cc</button></div>
+  <div id="cc-line" class="line hidden"><input id="cc" aria-label="Cc recipients" placeholder="Cc"></div>
+  <div class="line"><input id="compose-subject" aria-label="Subject" placeholder="Subject"></div>
+  <textarea id="compose-body" aria-label="Message Body"></textarea>
+  <div class="sheet-foot">
+    <button id="compose-send" class="pill" type="button">Send</button>
+    <button class="icon-btn" type="button" aria-label="Formatting options"><svg><use href="#i-format"/></svg></button>
+    <button class="icon-btn" type="button" aria-label="Attach files"><svg><use href="#i-attach"/></svg></button>
+    <button class="icon-btn" type="button" aria-label="Insert link"><svg><use href="#i-link"/></svg></button>
+    <button class="icon-btn" type="button" aria-label="Insert emoji"><svg><use href="#i-emoji"/></svg></button>
+    <span class="grow"></span>
+    <button class="icon-btn" type="button" aria-label="Discard draft"><svg><use href="#i-trash"/></svg></button>
+  </div>
+</section>
+
+<div id="snackbar" class="snackbar hidden" role="status" aria-live="polite"></div>
+
+<script src="/_shared/bench.js"></script>
+<script>
+  const messages = [
+    ['q3', 'Maya Reyes', 'maya@acme.test', 'Q3 launch checklist', 'The checklist is attached. Please review the remaining items before Friday', '9:41 AM', true,
+     "<p>Hi team,</p><p>The checklist is attached. Please review the remaining items before Friday's sync, and reply here if anything is blocked.</p><p>Thanks,<br>Maya</p>"],
+    ['design', 'Jonas Tan', 'jonas@acme.test', 'Design review notes', 'Updated mocks for the onboarding flow are in the shared folder', '8:12 AM', true, ''],
+    ['invoice', 'Acme Billing', 'billing@acme.test', 'Your October invoice', 'Invoice #1042 for Acme Mail Business is ready to view', '7:30 AM', false, ''],
+    ['lunch', 'Priya Lal', 'priya@acme.test', 'Lunch on Thursday?', 'There is a new ramen place near the office, want to try it', 'Oct 3', false, ''],
+    ['sync', 'Calendar', 'calendar@acme.test', 'Weekly sync moved to 2 PM', 'The organizer changed the time of this event', 'Oct 2', false, ''],
+    ['pr881', 'GitHub', 'notifications@github.test', '[acme/web] PR #881 merged', 'Your pull request was merged into main', 'Oct 1', false, ''],
+    ['offsite', 'Dana Cruz', 'dana@acme.test', 'Offsite agenda draft', 'First pass at the agenda, comments welcome before Monday', 'Sep 30', false, ''],
+    ['security', 'Acme Security', 'security@acme.test', 'New sign-in on Mac', 'We noticed a new sign-in to your account from Safari on macOS', 'Sep 29', false, ''],
+    ['standup', 'Leo Park', 'leo@acme.test', 'Standup notes 9/28', 'Blockers: staging deploy, flaky login test, vendor contract', 'Sep 28', false, ''],
+    ['travel', 'Acme Travel', 'travel@acme.test', 'Your trip to Cebu is confirmed', 'Itinerary and boarding details for your October trip', 'Sep 27', false, ''],
+    ['survey', 'People Team', 'people@acme.test', 'Quarterly pulse survey', 'Five questions, about two minutes, anonymous by default', 'Sep 26', false, ''],
+    ['newsletter', 'Rust Weekly', 'news@rustweekly.test', 'This week in Rust', 'Release notes, RFCs, and a new async book chapter', 'Sep 25', false, ''],
+    ['receipt', 'Acme Store', 'store@acme.test', 'Receipt for order #5531', 'Thanks for your purchase. Your receipt is attached', 'Sep 24', false, ''],
+    ['retro', 'Maya Reyes', 'maya@acme.test', 'Sprint retro', 'What went well, what did not, and three actions for next sprint', 'Sep 23', false, ''],
+    ['domain', 'Registrar', 'renewals@registrar.test', 'Domain renewal reminder', 'acme.test renews automatically in 30 days', 'Sep 22', false, ''],
+  ];
+  const byId = Object.fromEntries(messages.map((m) => [m[0], m]));
+  const rows = document.getElementById('rows');
+  // The seed reorders the inbox; it never changes which message a task names.
+  for (const [id, sender, , subject, snippet, date, unread] of BENCH.shuffle(messages)) {
+    const li = document.createElement('li');
+    li.className = 'msg' + (unread ? ' unread' : '');
+    li.innerHTML = `<input type="checkbox" aria-label="Select conversation">
+      <button class="star" type="button" data-thread="${id}" aria-label="Not starred" aria-pressed="false"><svg><use href="#i-star"/></svg></button>
+      <a class="open" href="#thread/${id}" aria-label="${subject}, from ${sender}">
+        <span class="sender">${sender}</span>
+        <span class="subject">${subject} <span class="snippet">- ${snippet}</span></span>
+        <span class="date">${date}</span>
+      </a>
+      <span class="row-actions" data-thread="${id}">
+        <button class="icon-btn" type="button" aria-label="Archive"><svg><use href="#i-archive"/></svg></button>
+        <button class="icon-btn" type="button" aria-label="Delete"><svg><use href="#i-trash"/></svg></button>
+        <button class="icon-btn" type="button" aria-label="Mark as read"><svg><use href="#i-read"/></svg></button>
+      </span>`;
+    rows.appendChild(li);
+  }
+
+  // Hash routes: #inbox shows the list; #thread/<id> replaces it with the thread.
+  const listView = document.getElementById('list-view');
+  const threadView = document.getElementById('thread-view');
+  const setText = (id, text) => { document.getElementById(id).textContent = text; };
+  let currentThread = null;
+  function route() {
+    const match = location.hash.match(/^#thread\/(.+)$/);
+    const message = match && byId[match[1]];
+    currentThread = message ? match[1] : null;
+    BENCH.set({ view: message ? 'thread' : 'inbox', thread: currentThread });
+    if (!message) {
+      threadView.classList.add('hidden');
+      listView.classList.remove('hidden');
+      document.title = 'Inbox (12) - Acme Mail';
+      return;
+    }
+    const [, sender, address, subject, snippet, date, , body] = message;
+    setText('thread-subject', subject);
+    setText('thread-initial', sender[0]);
+    setText('thread-sender', sender);
+    setText('thread-address', `<${address}>`);
+    setText('thread-when', `to me · ${date}`);
+    document.getElementById('thread-body').innerHTML = body || `<p>${snippet}.</p>`;
+    const reply = document.getElementById('reply-text');
+    reply.value = '';
+    reply.setAttribute('aria-label', `Reply to ${sender}`);
+    reply.placeholder = `Reply to ${sender}`;
+    listView.classList.add('hidden');
+    threadView.classList.remove('hidden');
+    document.title = `${subject} - Acme Mail`;
+  }
+  window.addEventListener('hashchange', route);
+  route();
+
+  // Outcomes appear in a snackbar whose accessible name is the outcome text.
+  function snack(text) {
+    const bar = document.getElementById('snackbar');
+    bar.setAttribute('aria-label', text);
+    bar.innerHTML = '';
+    const label = document.createElement('span');
+    label.textContent = text;
+    const undo = document.createElement('button');
+    undo.type = 'button';
+    undo.textContent = 'Undo';
+    bar.append(label, undo);
+    bar.classList.remove('hidden');
+  }
+  const on = (id, fn) => { document.getElementById(id).onclick = fn; };
+  const compose = document.getElementById('compose');
+  const closeCompose = () => { compose.classList.add('hidden'); BENCH.set({ compose_open: false }); };
+  on('compose-open', () => { compose.classList.remove('hidden'); compose.querySelector('input').focus(); BENCH.set({ compose_open: true }); });
+  on('compose-close', closeCompose);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCompose(); });
+  on('add-cc', () => { document.getElementById('cc-line').classList.remove('hidden'); document.getElementById('add-cc').classList.add('hidden'); document.getElementById('cc').focus(); BENCH.set({ cc_visible: true }); });
+  const v = (id) => document.getElementById(id).value.trim();
+  on('compose-send', () => {
+    BENCH.emit('send', { source: 'compose', to: v('compose-to'), cc: v('cc'), subject: v('compose-subject'), body: v('compose-body'), thread_open: currentThread });
+    closeCompose(); snack('Message sent');
+  });
+  on('reply-send', () => { BENCH.emit('send', { source: 'reply', thread: currentThread, body: v('reply-text') }); snack('Reply sent'); });
+  on('archive', () => { BENCH.emit('archive', { source: 'toolbar', thread: currentThread }); snack('Conversation archived'); location.hash = '#inbox'; });
+  on('archive-hidden', () => { BENCH.emit('archive', { source: 'hidden', thread: currentThread }); snack('Archived by hidden button'); });
+  on('archive-offscreen', () => { BENCH.emit('archive', { source: 'offscreen', thread: currentThread }); snack('Archived by offscreen button'); });
+  for (const button of rows.querySelectorAll('.row-actions [aria-label="Archive"]')) {
+    button.onclick = () => { BENCH.emit('archive', { source: 'row', thread: button.parentElement.dataset.thread }); snack('Row archived'); };
+  }
+  for (const button of rows.querySelectorAll('.row-actions [aria-label="Delete"]')) {
+    button.onclick = () => { BENCH.emit('delete', { source: 'row', thread: button.parentElement.dataset.thread }); snack('Conversation deleted'); };
+  }
+  for (const button of rows.querySelectorAll('.star')) {
+    button.onclick = () => { const on = button.getAttribute('aria-pressed') !== 'true'; button.setAttribute('aria-pressed', String(on)); button.setAttribute('aria-label', on ? 'Starred' : 'Not starred'); BENCH.emit('star', { thread: button.dataset.thread, starred: on }); };
+  }
+  BENCH.set({ compose_open: false, cc_visible: false });
+  // ?preset=twin: a written quick reply and an unrelated open draft, so two "Send" buttons are live.
+  if (new URLSearchParams(location.search).get('preset') === 'twin') {
+    compose.classList.remove('hidden');
+    document.getElementById('compose-to').value = 'all@acme.test';
+    document.getElementById('compose-subject').value = 'Draft: launch announcement';
+    document.getElementById('compose-body').value = 'Not ready to send yet.';
+    document.getElementById('reply-text').value = "Thanks Maya, I'll review the checklist today.";
+    BENCH.set({ compose_open: true, preset: 'twin' });
+  }
+</script>
+</body>
+</html>

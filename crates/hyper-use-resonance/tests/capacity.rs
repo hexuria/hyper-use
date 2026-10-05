@@ -1,3 +1,4 @@
+#![cfg(feature = "hgra")]
 //! Closed-load smoke test. Not a regression gate.
 //!
 //! Load model: closed, single thread, N = 2000 regions, one locate.

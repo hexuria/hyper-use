@@ -1,0 +1,1319 @@
+{
+ "merged_runs": [
+  "20261005-131001",
+  "20261005-141625",
+  "20261005-153648"
+ ],
+ "rows": [
+  {
+   "arm": "A1",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 12915,
+   "tokens_first": 12915,
+   "wall_s": 15.01,
+   "wall_s_first": 15.01,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    },
+    {
+     "outcome": "cap_hit",
+     "cap": "model_calls",
+     "pass": false,
+     "final": null
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 3,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 120,
+   "model_calls_first": 40,
+   "tokens": 860989,
+   "tokens_first": 286805,
+   "wall_s": 46.35,
+   "wall_s_first": 15.2,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A5",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 1,
+   "model_calls": 63,
+   "model_calls_first": 21,
+   "tokens": 205766,
+   "tokens_first": 68732,
+   "wall_s": 25.38,
+   "wall_s_first": 8.62,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A2",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 2,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 12,
+   "steps_first": 4,
+   "model_calls": 14,
+   "model_calls_first": 3,
+   "tokens": 44586,
+   "tokens_first": 7030,
+   "wall_s": 134.37,
+   "wall_s_first": 46.99,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A2",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 26135,
+   "tokens_first": 26135,
+   "wall_s": 70.86,
+   "wall_s_first": 70.86,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A2",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 4154,
+   "tokens_first": 4154,
+   "wall_s": 25.22,
+   "wall_s_first": 25.22,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A3",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 1,
+   "model_calls_first": 1,
+   "tokens": 3547,
+   "tokens_first": 3547,
+   "wall_s": 16.51,
+   "wall_s_first": 16.51,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A3",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 1,
+   "model_calls_first": 1,
+   "tokens": 2919,
+   "tokens_first": 2919,
+   "wall_s": 16.99,
+   "wall_s_first": 16.99,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A6",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 8,
+   "model_calls_first": 4,
+   "tokens": 18682,
+   "tokens_first": 11403,
+   "wall_s": 31.99,
+   "wall_s_first": 13.96,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A4",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 6,
+   "wrong_actions_first": 2,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 23,
+   "steps_first": 8,
+   "model_calls": 28,
+   "model_calls_first": 9,
+   "tokens": 53239,
+   "tokens_first": 17087,
+   "wall_s": 166.39,
+   "wall_s_first": 57.8,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A4",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 1,
+   "model_calls_first": 1,
+   "tokens": 1663,
+   "tokens_first": 1663,
+   "wall_s": 19.31,
+   "wall_s_first": 19.31,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A5",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 12,
+   "model_calls_first": 12,
+   "tokens": 48229,
+   "tokens_first": 48229,
+   "wall_s": 5.6,
+   "wall_s_first": 5.6,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A6",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 18903,
+   "tokens_first": 18903,
+   "wall_s": 20.39,
+   "wall_s_first": 20.39,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A4",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 4468,
+   "tokens_first": 4468,
+   "wall_s": 24.44,
+   "wall_s_first": 24.44,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A1",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 35538,
+   "tokens_first": 35538,
+   "wall_s": 38.83,
+   "wall_s_first": 38.83,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A2",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 13489,
+   "tokens_first": 13489,
+   "wall_s": 50.67,
+   "wall_s_first": 50.67,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A6",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 1,
+   "model_calls": 27,
+   "model_calls_first": 7,
+   "tokens": 223811,
+   "tokens_first": 46929,
+   "wall_s": 113.62,
+   "wall_s_first": 40.49,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A5",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 22420,
+   "tokens_first": 22420,
+   "wall_s": 3.56,
+   "wall_s_first": 3.56,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A6",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 11332,
+   "tokens_first": 11332,
+   "wall_s": 13.9,
+   "wall_s_first": 13.9,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A3",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "crashed",
+     "cap": null,
+     "pass": false,
+     "final": "error"
+    },
+    {
+     "outcome": "crashed",
+     "cap": null,
+     "pass": false,
+     "final": "error"
+    },
+    {
+     "outcome": "crashed",
+     "cap": null,
+     "pass": false,
+     "final": "error"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 3,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 6,
+   "model_calls_first": 2,
+   "tokens": 10890,
+   "tokens_first": 3630,
+   "wall_s": 56.5,
+   "wall_s_first": 19.05,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A3",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 14341,
+   "tokens_first": 14341,
+   "wall_s": 18.27,
+   "wall_s_first": 18.27,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A4",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 6,
+   "steps_first": 6,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 18010,
+   "tokens_first": 18010,
+   "wall_s": 51.71,
+   "wall_s_first": 51.71,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A1",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 46765,
+   "tokens_first": 46765,
+   "wall_s": 41.51,
+   "wall_s_first": 41.51,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A1",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 6,
+   "steps_first": 6,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 47242,
+   "tokens_first": 47242,
+   "wall_s": 45.65,
+   "wall_s_first": 45.65,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 6195,
+   "tokens_first": 6195,
+   "wall_s": 36.33,
+   "wall_s_first": 36.33,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 9095,
+   "tokens_first": 9095,
+   "wall_s": 33.46,
+   "wall_s_first": 33.46,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 8866,
+   "tokens_first": 8866,
+   "wall_s": 26.59,
+   "wall_s_first": 26.59,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 2734,
+   "tokens_first": 2734,
+   "wall_s": 7.36,
+   "wall_s_first": 7.36,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 11440,
+   "tokens_first": 11440,
+   "wall_s": 15.51,
+   "wall_s_first": 15.51,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 7,
+   "steps_first": 7,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 18335,
+   "tokens_first": 18335,
+   "wall_s": 28.01,
+   "wall_s_first": 28.01,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 6,
+   "steps_first": 6,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 33002,
+   "tokens_first": 33002,
+   "wall_s": 68.05,
+   "wall_s_first": 68.05,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 10509,
+   "tokens_first": 10509,
+   "wall_s": 33.52,
+   "wall_s_first": 33.52,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  }
+ ]
+}

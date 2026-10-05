@@ -27,6 +27,29 @@ pub enum ToolError {
     UnknownAction(String),
     UnsupportedAction(String),
     NonFiniteConfidence,
+    /// `runner_up` was given without `confidence`, which would make the act
+    /// look inspected and skip the gate.
+    RunnerUpNeedsConfidence,
+    /// `runner_up.id` is the region being pressed.
+    RunnerUpIsTarget,
+    BadRunnerUp(String),
+    /// Locate fields on `act` ranked a different region first.
+    TargetNotTop {
+        region: String,
+        top: String,
+    },
+    /// `act` was given both `confidence` and locate fields.
+    ConfidenceWithQuery,
+    /// `diff` mixed file paths and snapshot ids.
+    MixedDiffSources,
+    SnapshotEvicted {
+        id: u64,
+        oldest: u64,
+    },
+    UnknownSnapshot(u64),
+    BadSnapshot(String),
+    /// An expectation was given with `observe_after: false`.
+    ExpectNeedsObserveAfter,
     ExpectedTextMissing {
         expected: String,
     },
@@ -36,6 +59,9 @@ pub enum ToolError {
     DimsRequireHgra,
     BadDims(String),
     BadConfidence(String),
+    /// A caller-supplied `confidence` or `runner_up.confidence` outside
+    /// `[0, 1]`. The value is the JSON text the caller sent.
+    ConfidenceOutOfRange(String),
     MissingRegion,
     MissingExpect,
     BothExpectations,
@@ -90,11 +116,22 @@ impl ToolError {
             Self::UnknownAction(_) => "UnknownAction",
             Self::UnsupportedAction(_) => "UnsupportedAction",
             Self::NonFiniteConfidence => "NonFiniteConfidence",
+            Self::RunnerUpNeedsConfidence => "RunnerUpNeedsConfidence",
+            Self::RunnerUpIsTarget => "RunnerUpIsTarget",
+            Self::BadRunnerUp(_) => "BadRunnerUp",
+            Self::TargetNotTop { .. } => "TargetNotTop",
+            Self::ConfidenceWithQuery => "ConfidenceWithQuery",
+            Self::MixedDiffSources => "MixedDiffSources",
+            Self::SnapshotEvicted { .. } => "SnapshotEvicted",
+            Self::UnknownSnapshot(_) => "UnknownSnapshot",
+            Self::BadSnapshot(_) => "BadSnapshot",
+            Self::ExpectNeedsObserveAfter => "ExpectNeedsObserveAfter",
             Self::ExpectedTextMissing { .. } => "ExpectedTextMissing",
             Self::RegionStillPresent { .. } => "RegionStillPresent",
             Self::DimsRequireHgra => "DimsRequireHgra",
             Self::BadDims(_) => "BadDims",
             Self::BadConfidence(_) => "BadConfidence",
+            Self::ConfidenceOutOfRange(_) => "ConfidenceOutOfRange",
             Self::MissingRegion => "MissingRegion",
             Self::MissingExpect => "MissingExpect",
             Self::BothExpectations => "BothExpectations",
@@ -134,6 +171,18 @@ impl ToolError {
             Self::RegionStillPresent { id } => json!({"variant": "RegionStillPresent", "id": id}),
             Self::BadDims(dims) => json!({"variant": "BadDims", "dims": dims}),
             Self::BadConfidence(value) => json!({"variant": "BadConfidence", "value": value}),
+            Self::ConfidenceOutOfRange(value) => {
+                json!({"variant": "ConfidenceOutOfRange", "value": value})
+            }
+            Self::BadRunnerUp(message) => json!({"variant": "BadRunnerUp", "message": message}),
+            Self::TargetNotTop { region, top } => {
+                json!({"variant": "TargetNotTop", "region": region, "top": top})
+            }
+            Self::SnapshotEvicted { id, oldest } => {
+                json!({"variant": "SnapshotEvicted", "id": id, "oldest": oldest})
+            }
+            Self::UnknownSnapshot(id) => json!({"variant": "UnknownSnapshot", "id": id}),
+            Self::BadSnapshot(value) => json!({"variant": "BadSnapshot", "value": value}),
             Self::UnknownExecutor(name) => json!({"variant": "UnknownExecutor", "name": name}),
             Self::NotImplemented { executor } => {
                 json!({"variant": "NotImplemented", "executor": executor})
@@ -191,6 +240,26 @@ impl fmt::Display for ToolError {
                 write!(f, "browser session cannot perform `{action}`")
             }
             Self::NonFiniteConfidence => f.write_str("confidence must be finite"),
+            Self::RunnerUpNeedsConfidence => f.write_str("runner_up requires confidence"),
+            Self::RunnerUpIsTarget => f.write_str("runner_up must name a different region"),
+            Self::BadRunnerUp(message) => write!(f, "bad runner_up: {message}"),
+            Self::TargetNotTop { region, top } => {
+                write!(f, "locate ranked `{top}` first, not `{region}`")
+            }
+            Self::ConfidenceWithQuery => {
+                f.write_str("act takes confidence or locate fields, not both")
+            }
+            Self::MixedDiffSources => {
+                f.write_str("diff takes before/after paths or snapshot ids, not both")
+            }
+            Self::SnapshotEvicted { id, oldest } => {
+                write!(f, "snapshot {id} was evicted; oldest kept is {oldest}")
+            }
+            Self::UnknownSnapshot(id) => write!(f, "snapshot {id} was never recorded"),
+            Self::BadSnapshot(value) => write!(f, "bad snapshot id `{value}`"),
+            Self::ExpectNeedsObserveAfter => {
+                f.write_str("expect_text and expect_absent require observe_after")
+            }
             Self::ExpectedTextMissing { expected } => {
                 write!(f, "expected text `{expected}` did not appear")
             }
@@ -198,6 +267,9 @@ impl fmt::Display for ToolError {
             Self::DimsRequireHgra => f.write_str("dims is only valid with matcher hgra"),
             Self::BadDims(dims) => write!(f, "unsupported dims `{dims}`"),
             Self::BadConfidence(value) => write!(f, "bad confidence `{value}`"),
+            Self::ConfidenceOutOfRange(value) => {
+                write!(f, "confidence `{value}` must be between 0 and 1")
+            }
             Self::MissingRegion => f.write_str("act and inspect require region"),
             Self::MissingExpect => f.write_str("verify requires expect_text or expect_absent"),
             Self::BothExpectations => {

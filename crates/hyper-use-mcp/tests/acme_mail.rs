@@ -168,6 +168,41 @@ fn thread_page(compose_open: bool) -> PageSpec {
     page
 }
 
+/// Compose is a non-modal, accessibility-only dialog docked at the right.
+/// It is a front layer, but it only blocks what its box covers, and the
+/// compose controls inside its box are its content. The quick-reply Send
+/// stays clickable, so the twin Send is still ambiguous, not refused.
+#[test]
+fn guard_with_compose_open_blocks_nothing_outside_the_compose_box() {
+    let page = thread_page(true);
+    let (mut server, log) = server(ScriptBuilder::new().observe(&page).observe(&page));
+    let observed = call(&mut server, "observe", json!({"cdp": TAB}));
+    assert_eq!(
+        observed["front_layer"],
+        json!([{"id": "ax1030", "label": "New Message", "modal": false}]),
+        "{observed}"
+    );
+    let visibility = |id: &str| {
+        observed["regions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|region| region["id"] == id)
+            .map(|region| region["state"]["visibility"].clone())
+            .unwrap()
+    };
+    assert_eq!(visibility("n714"), "visible");
+    assert_eq!(visibility("n750"), "visible");
+    let decision = call(
+        &mut server,
+        "guard",
+        json!({"cdp": TAB, "target": "Send", "role": "button"}),
+    );
+    assert_eq!(decision["decision"], "escalate", "{decision}");
+    assert_eq!(decision["reason"], "ambiguous", "{decision}");
+    assert_eq!(presses(&log), 0);
+}
+
 /// t7: "Send" asked as a link. No link is named Send, so every candidate is a
 /// miss. A named Send button (right label, wrong role) must rank above every
 /// unnamed node, and the act must still refuse below the gate.

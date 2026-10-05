@@ -121,3 +121,28 @@ Reason: the CUA path is one blocking replay script. Recording a request is not c
 Affected invariants: default act stays the CDP browser press; CUA is selected only when named; the wire object has four semantic keys and no goal or coordinate; confidence below 550 millis does not submit; a scripted rejection is a typed error; macos still returns NotImplemented; a missing CDP session does not select CUA.
 Tests or proofs updated: cua replay tests, a 16-case proptest of wire keys, executor gate and receipt tests, a 16-case proptest of the act gate, CLI and MCP act tests. No second formal model.
 ```
+
+
+## Locate precision, act margin, and press tiers
+
+Observe omits a node whose `DOM.getBoxModel` is a CDP error. Press is a DOM click by node id, then by backend node id, then a coordinate click. A focus is not a click, so there is no `DOM.focus` tier.
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[ ] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: observe and press are one blocking CDP call stream. Skipping a node with no box and dropping a press tier do not add interleaving, so no system model was added.
+Affected invariants: a getBoxModel protocol error omits that node and a missing script step is still fatal; press never reports DOM.focus as a click; a thrown click function is a tier failure.
+Tests or proofs updated: browser observe tests on hidden-node.cdp.json, press tier tests. No second formal model.
+```

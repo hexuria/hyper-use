@@ -1,0 +1,212 @@
+{
+  "calls": [
+    {
+      "method": "Page.getLayoutMetrics",
+      "params": {},
+      "result": {
+        "cssLayoutViewport": {
+          "clientWidth": 1280,
+          "clientHeight": 720,
+          "pageX": 0,
+          "pageY": 0
+        }
+      }
+    },
+    {
+      "method": "DOM.getDocument",
+      "params": {
+        "depth": -1,
+        "pierce": false
+      },
+      "result": {
+        "root": {
+          "nodeId": 1,
+          "backendNodeId": 1,
+          "nodeType": 9,
+          "nodeName": "#document",
+          "children": [
+            {
+              "nodeId": 10,
+              "backendNodeId": 100,
+              "nodeType": 1,
+              "nodeName": "BUTTON",
+              "attributes": [],
+              "children": [
+                {
+                  "nodeId": 11,
+                  "backendNodeId": 11,
+                  "nodeType": 3,
+                  "nodeName": "#text",
+                  "nodeValue": "Sign in"
+                }
+              ]
+            },
+            {
+              "nodeId": 20,
+              "backendNodeId": 200,
+              "nodeType": 1,
+              "nodeName": "BUTTON",
+              "attributes": [],
+              "children": [
+                {
+                  "nodeId": 21,
+                  "backendNodeId": 21,
+                  "nodeType": 3,
+                  "nodeName": "#text",
+                  "nodeValue": "Cancel"
+                }
+              ]
+            },
+            {
+              "nodeId": 30,
+              "backendNodeId": 300,
+              "nodeType": 1,
+              "nodeName": "BUTTON",
+              "attributes": [
+                "class",
+                "menu"
+              ],
+              "children": [
+                {
+                  "nodeId": 31,
+                  "backendNodeId": 31,
+                  "nodeType": 3,
+                  "nodeName": "#text",
+                  "nodeValue": "Hidden menu"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "Accessibility.getFullAXTree",
+      "params": {},
+      "result": {
+        "nodes": [
+          {
+            "nodeId": "ax10",
+            "backendDOMNodeId": 100,
+            "ignored": false,
+            "role": {
+              "value": "button"
+            },
+            "name": {
+              "value": "Sign in"
+            }
+          },
+          {
+            "nodeId": "ax20",
+            "backendDOMNodeId": 200,
+            "ignored": false,
+            "role": {
+              "value": "button"
+            },
+            "name": {
+              "value": "Cancel"
+            }
+          },
+          {
+            "nodeId": "ax30",
+            "backendDOMNodeId": 300,
+            "ignored": true,
+            "role": {
+              "value": "button"
+            },
+            "name": {
+              "value": "Hidden menu"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "nodeId": 10
+      },
+      "result": {
+        "model": {
+          "content": [
+            400,
+            300,
+            480,
+            300,
+            480,
+            332,
+            400,
+            332
+          ]
+        }
+      }
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "nodeId": 20
+      },
+      "result": {
+        "model": {
+          "content": [
+            400,
+            360,
+            480,
+            360,
+            480,
+            392,
+            400,
+            392
+          ]
+        }
+      }
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "nodeId": 30
+      },
+      "error": "Could not compute box model."
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "backendNodeId": 100
+      },
+      "result": {
+        "model": {
+          "content": [
+            401,
+            300,
+            481,
+            300,
+            481,
+            332,
+            401,
+            332
+          ]
+        }
+      }
+    },
+    {
+      "method": "DOM.getBoxModel",
+      "params": {
+        "backendNodeId": 200
+      },
+      "result": {
+        "model": {
+          "content": [
+            400,
+            360,
+            480,
+            360,
+            480,
+            392,
+            400,
+            392
+          ]
+        }
+      }
+    }
+  ]
+}

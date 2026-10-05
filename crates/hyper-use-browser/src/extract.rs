@@ -144,6 +144,12 @@ pub(crate) fn object_id(resolve_json: &str) -> Result<String, BrowserError> {
         .ok_or(BrowserError::MissingObjectId)
 }
 
+/// `Runtime.callFunctionOn` reports a thrown click as `exceptionDetails`.
+pub(crate) fn call_threw(call_json: &str) -> Result<bool, BrowserError> {
+    let value = parse_json(call_json)?;
+    Ok(value.get("exceptionDetails").is_some())
+}
+
 fn walk_dom(node: &Value, out: &mut Vec<DomElement>) {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(1);
     if node_type == 1 {

@@ -186,9 +186,11 @@ value is a journal record, not a second executor. CUA is not invoked.
 CDP methods, in order, for one observation: `Page.getLayoutMetrics`,
 `DOM.getDocument` depth -1, `Accessibility.getFullAXTree`, then
 `DOM.getBoxModel` per DOM node id, then `DOM.getBoxModel` per accessibility
-backend id. Press, when a DOM node id exists: `DOM.resolveNode` then
-`Runtime.callFunctionOn` of `function(){this.click()}`. A CDP error on that
-call falls through to `DOM.focus`, then to `Input.dispatchMouseEvent`.
+backend id. A `DOM.getBoxModel` CDP error omits that node. Press:
+`DOM.resolveNode` then `Runtime.callFunctionOn` of `function(){this.click()}`,
+by node id and then by backend node id. A CDP error, or `exceptionDetails` in
+the call result, falls through to the next tier and finally to
+`Input.dispatchMouseEvent`.
 A missing script entry is `CdpError::NoScriptedResponse` and does not fall
 through, so a short fixture cannot become a silent coordinate click.
 `press` in the CLI is `Action::Click`. Other actions return
@@ -339,8 +341,8 @@ The request is a `SemanticRequest`: region id, role, label, and action.
 `to_wire` writes only those four keys. A fixture that carries `goal`, `url`,
 `x`, `y`, `coordinates`, `navigate`, `task`, `screenshot`, `tokens`, `latency`,
 or `retries` is `BrowserUseError::BadScript`. There is no coordinate click on
-this path. The CDP press order (DOM semantic, then `DOM.focus`, then a
-coordinate click) is unchanged.
+this path. The CDP press order (DOM semantic by node id, then by backend
+node id, then a coordinate click) is unchanged.
 
 `ReplayTransport` is the only transport. It records every `submit` and then
 either returns a `TransportReceipt` or `BrowserUseError::Rejected`. It does
@@ -432,3 +434,38 @@ called `Result::unwrap_err()` on an `Ok` value: SemanticRequest { region_id: Reg
 The return was restored. The test then asserts
 `Err(CuaError::BadScript { message: "label must not be empty" })`, not `is_err()`.
 
+
+## Box model errors omit a node
+
+Chrome answers `DOM.getBoxModel` with "Could not compute box model." for a
+`display:none` node. Hidden menus and dialogs are on most real pages, so
+propagating that error made `observe` fail on them. A CDP `error` on that call
+now means the node has no box and is left out, which is the same outcome as a
+box model with no content quad. `NoScriptedResponse`, `ParamsMismatch`,
+`BadJson`, and `Transport` stay fatal, so a short replay script still fails.
+
+Downside accepted: a `display:none` control is absent from the manifold, so
+`verify --expect-absent` passes for it. That is the intended meaning of gone.
+
+Verifiers: `observe_omits_a_node_whose_box_model_is_a_protocol_error` on
+`fixtures/hidden-node.cdp.json`, `observe_still_fails_when_the_box_model_step_is_missing`,
+and `box_model_params_mismatch_is_still_fatal`.
+
+## Press has no focus tier
+
+`press` used to return `CdpElement` after `DOM.focus` succeeded. The caller was
+told a click happened when only a focus did. A click now tries
+`Runtime.callFunctionOn` by node id, then by backend node id (a backend id
+survives node id invalidation, which is the usual reason `DOM.resolveNode`
+fails), then a coordinate click. `ActMechanism::CdpElement` is removed. A
+click function that reports `exceptionDetails` (an SVG element has no
+`click`) is a tier failure, not a `DomSemantic` success.
+
+Downside accepted: when both semantic tiers fail, a coordinate click can land
+on whatever is at that point now. Returning an error instead was rejected to
+keep the documented third tier. This is a judgement call.
+
+Verifiers: `node_id_failure_retries_by_backend_id_before_coordinates`,
+`both_semantic_tiers_fail_then_coordinates`, and
+`click_exception_is_a_tier_failure`. Each asserts that `DOM.focus` is never
+sent.

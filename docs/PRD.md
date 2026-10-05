@@ -42,8 +42,8 @@ No navigate command, no navigate intent, no goal runner.
 Observe builds an interaction manifold for one viewport. Locate ranks regions
 for a structured query. Inspect is required when more than one candidate is
 still plausible. Act names a region id. The press preference on a browser
-session is DOM semantic click, then a CDP element action (`DOM.focus`), then
-a coordinate click. Diff is id-based. Verify checks expected text or that a
+session is a DOM semantic click by node id, then by backend node id, then a
+coordinate click. A focus is not a click, so there is no focus tier. Diff is id-based. Verify checks expected text or that a
 region disappeared.
 
 If the matcher confidence used for the act is below 0.55 (550 millis), act

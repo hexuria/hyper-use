@@ -4,19 +4,25 @@
 //! Snapshots use `captured_at_ms = 0`. The ranker must not see a local clock.
 //!
 //! Press preference, and only for [`Action::Click`]:
-//! 1. DOM semantic click (`DOM.resolveNode` + `Runtime.callFunctionOn`)
-//! 2. CDP element action (`DOM.focus`)
+//! 1. DOM semantic click by node id (`DOM.resolveNode` + `Runtime.callFunctionOn`)
+//! 2. DOM semantic click by backend node id (same calls, `backendNodeId`)
 //! 3. coordinate click (`Input.dispatchMouseEvent`)
 //!
-//! A CDP `error` result fails that tier and the next tier runs. A missing
-//! script entry is not a tier failure: it is [`CdpError::NoScriptedResponse`]
-//! and the press stops, so a short fixture cannot silently become a click.
+//! A focus is not a click, so there is no `DOM.focus` tier. A CDP `error`
+//! result, or a click function that reports `exceptionDetails`, fails that
+//! tier and the next tier runs. A missing script entry is not a tier failure:
+//! it is [`CdpError::NoScriptedResponse`] and the press stops, so a short
+//! fixture cannot silently become a click.
+//!
+//! Observe omits a node whose `DOM.getBoxModel` is a CDP `error` (Chrome says
+//! "Could not compute box model." for `display:none`). Any other failure of
+//! that call is fatal.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use hyper_use_core::{Action, InteractionManifold, RegionId};
+use hyper_use_core::{Action, InteractionManifold, Rect, RegionId};
 
 use crate::error::{ActMechanism, BrowserError, CdpError};
 use crate::extract::{self, content_rect};
@@ -66,11 +72,8 @@ impl<T: CdpTransport> BrowserSession<T> {
 
         let mut dom_raw = Vec::new();
         for element in &elements {
-            let boxed = self.call(
-                "DOM.getBoxModel",
-                &json!({"nodeId": element.node_id}).to_string(),
-            )?;
-            if let Some(rect) = content_rect(&boxed)? {
+            let params = json!({"nodeId": element.node_id}).to_string();
+            if let Some(rect) = self.box_rect(&params)? {
                 dom_raw.push(RawNode::from_dom(element, rect));
             }
         }
@@ -79,11 +82,8 @@ impl<T: CdpTransport> BrowserSession<T> {
             let Some(backend) = element.backend_dom_node_id else {
                 continue;
             };
-            let boxed = self.call(
-                "DOM.getBoxModel",
-                &json!({"backendNodeId": backend}).to_string(),
-            )?;
-            if let Some(rect) = content_rect(&boxed)? {
+            let params = json!({"backendNodeId": backend}).to_string();
+            if let Some(rect) = self.box_rect(&params)? {
                 ax_raw.push(RawNode::from_ax(element, rect));
             }
         }
@@ -108,14 +108,12 @@ impl<T: CdpTransport> BrowserSession<T> {
             .cloned()
             .ok_or_else(|| BrowserError::UnknownRegion(id.to_string()))?;
         if let Some(node_id) = binding.dom_node_id {
-            if self.try_dom_semantic(node_id)? {
+            if self.try_semantic_click(json!({"nodeId": node_id}))? {
                 return Ok(ActMechanism::DomSemantic);
             }
-            if self.try_dom_focus(node_id)? {
-                return Ok(ActMechanism::CdpElement);
-            }
-        } else if let Some(backend) = binding.backend_node_id {
-            if self.try_backend_semantic(backend)? {
+        }
+        if let Some(backend) = binding.backend_node_id {
+            if self.try_semantic_click(json!({"backendNodeId": backend}))? {
                 return Ok(ActMechanism::DomSemantic);
             }
         }
@@ -128,8 +126,18 @@ impl<T: CdpTransport> BrowserSession<T> {
         verify::verify(manifold, expectation).map_err(BrowserError::Verify)
     }
 
-    fn try_dom_semantic(&mut self, node_id: i64) -> Result<bool, BrowserError> {
-        let resolved = match self.call("DOM.resolveNode", &json!({"nodeId": node_id}).to_string()) {
+    /// `Ok(None)` when CDP reports an error for this node's box.
+    fn box_rect(&mut self, params_json: &str) -> Result<Option<Rect>, BrowserError> {
+        match self.call("DOM.getBoxModel", params_json) {
+            Ok(body) => content_rect(&body),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// `node` is `{"nodeId": n}` or `{"backendNodeId": n}`.
+    fn try_semantic_click(&mut self, node: serde_json::Value) -> Result<bool, BrowserError> {
+        let resolved = match self.call("DOM.resolveNode", &node.to_string()) {
             Ok(body) => body,
             Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(false),
             Err(other) => return Err(other),
@@ -142,38 +150,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         })
         .to_string();
         match self.call("Runtime.callFunctionOn", &params) {
-            Ok(_) => Ok(true),
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
-            Err(other) => Err(other),
-        }
-    }
-
-    fn try_dom_focus(&mut self, node_id: i64) -> Result<bool, BrowserError> {
-        match self.call("DOM.focus", &json!({"nodeId": node_id}).to_string()) {
-            Ok(_) => Ok(true),
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
-            Err(other) => Err(other),
-        }
-    }
-
-    fn try_backend_semantic(&mut self, backend: i64) -> Result<bool, BrowserError> {
-        let resolved = match self.call(
-            "DOM.resolveNode",
-            &json!({"backendNodeId": backend}).to_string(),
-        ) {
-            Ok(body) => body,
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(false),
-            Err(other) => return Err(other),
-        };
-        let object_id = extract::object_id(&resolved)?;
-        let params = json!({
-            "functionDeclaration": DOM_CLICK_FUNCTION,
-            "objectId": object_id,
-            "returnByValue": true
-        })
-        .to_string();
-        match self.call("Runtime.callFunctionOn", &params) {
-            Ok(_) => Ok(true),
+            Ok(body) => Ok(!extract::call_threw(&body)?),
             Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
             Err(other) => Err(other),
         }

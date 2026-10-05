@@ -16,7 +16,7 @@ the default graph, rustfmt in CI, and `publish = false` with Rust pinned to
 Unit tests own the paths that can fail in-process:
 
 - CDP replay: observe, DOM semantic press, protocol-error fallthrough to
-  `DOM.focus`, verify text, and the exact errors `NotObserved`,
+  a backend-id DOM click and then coordinates, verify text, and the exact errors `NotObserved`,
   `BadViewport`, `MissingObjectId`, `BadJson`, `ParamsMismatch`, and
   `Transport` (a `wss://` or non-http endpoint, no socket).
 - CLI argv: unknown and duplicate flags, bad dims, unknown matcher, missing

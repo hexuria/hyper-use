@@ -151,29 +151,122 @@ mod phase2 {
         assert_eq!(err, BrowserError::UnsupportedAction("type".into()));
     }
 
-    #[test]
-    fn protocol_error_falls_through_to_element_focus_not_coordinates() {
+    fn sign_in_then(script: &str) -> BrowserSession<ReplayTransport> {
         let mut transport =
             ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
-        transport
-            .append(
-                r#"{"calls":[
-                    {"method":"DOM.resolveNode","params":{"nodeId":10},"error":"node gone"},
-                    {"method":"DOM.focus","params":{"nodeId":10},"result":{}}
-                ]}"#,
-            )
-            .unwrap();
+        transport.append(script).unwrap();
         let mut session = BrowserSession::new(transport);
         session.observe().unwrap();
+        session
+    }
+
+    #[test]
+    fn node_id_failure_retries_by_backend_id_before_coordinates() {
+        let mut session = sign_in_then(
+            r#"{"calls":[
+                {"method":"DOM.resolveNode","params":{"nodeId":10},"error":"node gone"},
+                {"method":"DOM.resolveNode","params":{"backendNodeId":100},"result":{"object":{"objectId":"obj-100"}}},
+                {"method":"Runtime.callFunctionOn","params":{"functionDeclaration":"function(){this.click()}","objectId":"obj-100","returnByValue":true},"result":{"result":{"type":"undefined"}}}
+            ]}"#,
+        );
         let mechanism = session
             .press(&RegionId::try_new("n100").unwrap(), Action::Click)
             .unwrap();
-        assert_eq!(mechanism, ActMechanism::CdpElement);
+        assert_eq!(mechanism, ActMechanism::DomSemantic);
+        let methods = session.transport().logged_methods();
+        assert!(methods.iter().all(|method| method != "DOM.focus"));
+        assert!(methods
+            .iter()
+            .all(|method| method != "Input.dispatchMouseEvent"));
+    }
+
+    #[test]
+    fn both_semantic_tiers_fail_then_coordinates() {
+        let mut session = sign_in_then(
+            r#"{"calls":[
+                {"method":"DOM.resolveNode","params":{"nodeId":10},"error":"node gone"},
+                {"method":"DOM.resolveNode","params":{"backendNodeId":100},"error":"node gone"},
+                {"method":"Input.dispatchMouseEvent","params":{"type":"mousePressed","x":440.0,"y":316.0,"button":"left","clickCount":1},"result":{}},
+                {"method":"Input.dispatchMouseEvent","params":{"type":"mouseReleased","x":440.0,"y":316.0,"button":"left","clickCount":1},"result":{}}
+            ]}"#,
+        );
+        let mechanism = session
+            .press(&RegionId::try_new("n100").unwrap(), Action::Click)
+            .unwrap();
+        assert_eq!(mechanism, ActMechanism::Coordinate);
+        assert_eq!(mechanism.as_str(), "coordinate");
         assert!(session
             .transport()
             .logged_methods()
             .iter()
-            .all(|method| method != "Input.dispatchMouseEvent"));
+            .all(|method| method != "DOM.focus"));
+    }
+
+    #[test]
+    fn click_exception_is_a_tier_failure() {
+        let mut session = sign_in_then(
+            r#"{"calls":[
+                {"method":"DOM.resolveNode","params":{"nodeId":10},"result":{"object":{"objectId":"obj-10"}}},
+                {"method":"Runtime.callFunctionOn","params":{"functionDeclaration":"function(){this.click()}","objectId":"obj-10","returnByValue":true},"result":{"result":{"type":"object"},"exceptionDetails":{"text":"this.click is not a function"}}},
+                {"method":"DOM.resolveNode","params":{"backendNodeId":100},"result":{"object":{"objectId":"obj-100"}}},
+                {"method":"Runtime.callFunctionOn","params":{"functionDeclaration":"function(){this.click()}","objectId":"obj-100","returnByValue":true},"result":{"result":{"type":"undefined"}}}
+            ]}"#,
+        );
+        let mechanism = session
+            .press(&RegionId::try_new("n100").unwrap(), Action::Click)
+            .unwrap();
+        assert_eq!(mechanism, ActMechanism::DomSemantic);
+        let resolves = session
+            .transport()
+            .logged_methods()
+            .iter()
+            .filter(|method| *method == "DOM.resolveNode")
+            .count();
+        assert_eq!(resolves, 2);
+    }
+
+    #[test]
+    fn observe_omits_a_node_whose_box_model_is_a_protocol_error() {
+        let transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/hidden-node.cdp.json")).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert_eq!(manifold.len(), 2);
+        assert!(manifold.get_str("n300").is_none());
+        let sign_in = manifold.get_str("n100").unwrap();
+        assert!(sign_in.sources().contains(SourceMask::ACCESSIBILITY));
+    }
+
+    #[test]
+    fn observe_still_fails_when_the_box_model_step_is_missing() {
+        let full = include_str!("../../../fixtures/sign-in.cdp.json");
+        let mut value: serde_json::Value = serde_json::from_str(full).unwrap();
+        value["calls"].as_array_mut().unwrap().truncate(4);
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let err = session.observe().unwrap_err();
+        assert_eq!(
+            err,
+            BrowserError::Cdp(CdpError::NoScriptedResponse {
+                method: "DOM.getBoxModel".into()
+            })
+        );
+    }
+
+    #[test]
+    fn box_model_params_mismatch_is_still_fatal() {
+        let full = include_str!("../../../fixtures/sign-in.cdp.json");
+        let mut value: serde_json::Value = serde_json::from_str(full).unwrap();
+        value["calls"][3]["params"] = serde_json::json!({"nodeId": 99});
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let err = session.observe().unwrap_err();
+        assert_eq!(
+            err,
+            BrowserError::Cdp(CdpError::ParamsMismatch {
+                method: "DOM.getBoxModel".into()
+            })
+        );
     }
 
     #[test]

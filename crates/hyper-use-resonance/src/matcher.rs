@@ -11,8 +11,8 @@ use hyper_use_core::{
 use hyper_use_hyper::{Dims, Encoder};
 
 use crate::{
-    actionability_score, geometric_score, locate_with, penalty_total, ResonanceError,
-    ResonanceModel,
+    actionability_score, cap_text_miss, geometric_score, locate_with, penalty_total,
+    ResonanceError, ResonanceModel,
 };
 
 /// One ranked region. `rank` is 1-based. `confidence` is that matcher's total,
@@ -119,6 +119,7 @@ const _: () = assert!(WeightedModel::V1.basis_point_sum() == 100);
 /// for full credit, and label tokens the query did not ask for cost up to half
 /// of it, so "Send" outranks "Send feedback". An absent constraint scores `1` (it was
 /// not asked). Penalties match [`ResonanceModel::V1`] and are subtracted after.
+/// A text miss is then clamped to [`crate::TEXT_MISS_CAP`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WeightedMatcher {
     model: WeightedModel,
@@ -216,10 +217,11 @@ fn weighted_total(
     let geometric = geometric_score(manifold.viewport(), region.rect(), query);
     let actionability = actionability_score(region, query);
     let penalty = penalty_total(manifold.viewport(), region, ResonanceModel::V1);
-    model.semantic() * semantic
+    let total = model.semantic() * semantic
         + model.geometric() * geometric
         + model.actionability() * actionability
-        - penalty
+        - penalty;
+    cap_text_miss(query, region.label(), total)
 }
 
 /// Minimum of the constraints that were actually set. Absent text and role
@@ -344,8 +346,47 @@ mod tests {
             .unwrap()
             .role(Role::Button);
         let score = WeightedMatcher::default().rank(&query, &manifold).unwrap()[0].confidence();
-        // semantic min(0, 1) = 0, geometric unconstrained 1, actionability 1.
-        let expected = WeightedModel::V1.geometric() + WeightedModel::V1.actionability();
-        assert!((score - expected).abs() < 1e-12, "{score}");
+        // semantic min(0, 1) = 0, geometric unconstrained 1, actionability 1:
+        // 0.50 before the cap, then clamped to TEXT_MISS_CAP.
+        let uncapped = WeightedModel::V1.geometric() + WeightedModel::V1.actionability();
+        assert!((uncapped - 0.5).abs() < 1e-12);
+        assert_eq!(score, crate::TEXT_MISS_CAP);
+    }
+
+    #[test]
+    fn a_label_hit_with_the_wrong_role_outranks_a_nameless_region() {
+        // Live drive t7: "Send" asked as a link. Every candidate missed, they
+        // all tied at 0.50, and an unlabeled AX node won on region id.
+        let viewport = Rect::try_viewport(0.0, 0.0, 400.0, 400.0).unwrap();
+        let mut nameless = button("ax11", "", RegionFlags::none()).to_parts();
+        nameless.role = Role::Image;
+        let manifold = InteractionManifold::try_new(
+            viewport,
+            vec![
+                InteractionRegion::try_new(nameless).unwrap(),
+                button("n714", "Send", RegionFlags::none()),
+            ],
+            0,
+        )
+        .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Link);
+        let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "n714");
+        assert!((ranked[0].confidence() - 0.5).abs() < 1e-12);
+        assert_eq!(ranked[1].id().as_str(), "ax11");
+        assert_eq!(ranked[1].confidence(), crate::TEXT_MISS_CAP);
+    }
+
+    #[test]
+    fn the_cap_only_lowers_and_only_on_a_text_miss() {
+        let text = LocateQuery::new().text("Send").unwrap();
+        assert_eq!(cap_text_miss(&text, "", 0.9), crate::TEXT_MISS_CAP);
+        assert_eq!(cap_text_miss(&text, "Archive", 0.3), 0.3);
+        assert_eq!(cap_text_miss(&text, "Send feedback", 0.9), 0.9);
+        assert_eq!(cap_text_miss(&LocateQuery::new(), "", 0.9), 0.9);
+        assert_eq!(
+            cap_text_miss(&LocateQuery::new().role(Role::Button), "", 0.9),
+            0.9
+        );
     }
 }

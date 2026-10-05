@@ -40,6 +40,10 @@ use crate::server::Server;
 
 const PRODUCT: &str = "hyper-use";
 
+// A text miss is clamped below the act gate, so a scored act on a region whose
+// label shares no token with the query text cannot execute.
+const _: () = assert!(hyper_use_resonance::TEXT_MISS_CAP < hyper_use_executor::MIN_ACT_CONFIDENCE);
+
 enum Origin {
     Fixture(String),
     Cdp(String),

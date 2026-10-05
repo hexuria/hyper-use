@@ -17,6 +17,13 @@
 //! actionability 0.10, temporal stability 0.05, contextual consistency 0.05.
 //! Penalties: disabled 0.25, hidden 0.45, occluded 0.20, offscreen 0.35,
 //! stale 0.15, ambiguous 0.12, detached 0.20, zero-size 0.40.
+//!
+//! Text-miss cap: when the query has text and a region's label shares no
+//! token with it, both matchers clamp that region's total to at most
+//! [`TEXT_MISS_CAP`] (0.45). Without it, a text miss still collects the
+//! credit for constraints the query did not set (geometry with no position,
+//! actionability with no action), which is 0.50 under the weighted V1 model
+//! and more under other weights or HGRA.
 
 #![forbid(unsafe_code)]
 
@@ -42,6 +49,27 @@ pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
 
 use signature::{query_probes, region_signature as compose_signature, Memory};
 
+/// Highest total any matcher gives a region whose label shares no token with
+/// a non-empty text query.
+///
+/// Why 0.45: it is strictly below the executor's 0.55 act gate, so a nameless
+/// or unrelated region can never be clicked from a text query, whatever the
+/// weights. It is also 0.05 below the 0.50 that the weighted V1 model gives a
+/// label hit with the wrong role, so under V1 a right-named control of the
+/// wrong kind still ranks above every text miss instead of tying with them
+/// and losing on region id.
+pub const TEXT_MISS_CAP: f64 = 0.45;
+
+/// Clamp `total` to [`TEXT_MISS_CAP`] when the query has text and `label`
+/// shares none of its tokens. A query without text, or text with no tokens,
+/// is unchanged.
+pub(crate) fn cap_text_miss(query: &LocateQuery, label: &str, total: f64) -> f64 {
+    match query.text_ref() {
+        Some(text) if token_recall(text, label) == 0.0 => total.min(TEXT_MISS_CAP),
+        _ => total,
+    }
+}
+
 /// One ranked region. `rank` is 1-based after the deterministic sort.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RankedCandidate {
@@ -62,7 +90,8 @@ impl RankedCandidate {
     }
 }
 
-/// Breakdown of one region's resonance. `total = weighted positives - penalty`.
+/// Breakdown of one region's resonance. `total = weighted positives - penalty`,
+/// then clamped to [`TEXT_MISS_CAP`] on a text miss.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResonanceScore {
     hypervector: f64,
@@ -206,7 +235,7 @@ fn score_parts(
         temporal_stability,
         contextual_consistency,
         penalty,
-        total: positive - penalty,
+        total: cap_text_miss(query, region.label(), positive - penalty),
     }
 }
 

@@ -1076,6 +1076,9 @@ mod tests {
             ["Send", "Settings", "Export", "Admin", "Undo"]
         );
         assert!(!rendered.contains("winner"));
+        // HGRA margins on twins.manifold were 184, 195, 184 before the
+        // text-miss cap: the runner-ups there share no token with the query
+        // and scored above TEXT_MISS_CAP. Tops and gate decisions did not move.
         assert_eq!(
             seen,
             vec![
@@ -1103,7 +1106,7 @@ mod tests {
                     Some(250),
                     false,
                     "z-export".into(),
-                    Some(184),
+                    Some(223),
                     false,
                 ),
                 (
@@ -1112,7 +1115,7 @@ mod tests {
                     Some(450),
                     false,
                     "z-admin".into(),
-                    Some(195),
+                    Some(231),
                     false,
                 ),
                 (
@@ -1121,7 +1124,7 @@ mod tests {
                     Some(350),
                     false,
                     "z-undo".into(),
-                    Some(184),
+                    Some(231),
                     false,
                 ),
             ]

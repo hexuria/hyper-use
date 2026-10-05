@@ -6,7 +6,9 @@ use hyper_use_core::{
     RegionParts, Role, SourceMask, UnitInterval, Zone,
 };
 use hyper_use_hyper::{Dims, Encoder};
-use hyper_use_resonance::{locate_with, RegionMatcher, ResonanceModel, WeightedMatcher};
+use hyper_use_resonance::{
+    locate_with, RegionMatcher, ResonanceModel, WeightedBasisPoints, WeightedMatcher, TEXT_MISS_CAP,
+};
 use proptest::prelude::*;
 
 fn region(id: &str, label: &str, flags: RegionFlags) -> InteractionRegion {
@@ -117,5 +119,80 @@ proptest! {
         let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
         prop_assert_eq!(ranked[0].id().as_str(), "z-exact");
         prop_assert!(ranked[0].confidence() > ranked[1].confidence());
+    }
+}
+
+proptest! {
+    // The act-gate guard is a safety property, so it gets more cases.
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    #[test]
+    fn a_nameless_region_never_reaches_the_act_gate_for_a_text_query(
+        text in "[A-Za-z0-9]{1,12}( [A-Za-z0-9]{1,12}){0,2}",
+        role_index in 0usize..12,
+        query_role in proptest::option::of(0usize..12),
+        position in proptest::option::of(0usize..5),
+        action in proptest::option::of(0usize..7),
+        x in -2000.0f64..3000.0,
+        y in -2000.0f64..3000.0,
+        width in 0.0f64..2000.0,
+        height in 0.0f64..2000.0,
+        flag_index in proptest::option::of(0usize..7),
+        semantic in 0u16..=100,
+        geometric_share in 0u16..=100,
+        actionability_one in proptest::bool::ANY,
+    ) {
+        let roles = [
+            Role::Button, Role::Link, Role::Text, Role::TextField, Role::Checkbox,
+            Role::MenuItem, Role::Navigation, Role::Image, Role::Generic, Role::Slider,
+            Role::Tab, Role::Heading,
+        ];
+        let zones = [Zone::Left, Zone::Right, Zone::Top, Zone::Bottom, Zone::Center];
+        let actions = [
+            Action::Click, Action::Type, Action::Scroll, Action::Focus, Action::Hover,
+            Action::Select, Action::Toggle,
+        ];
+        let nameless = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("ax1").unwrap(),
+            role: roles[role_index],
+            label: String::new(),
+            rect: Rect::try_new(x, y, width, height).unwrap(),
+            actions: actions.to_vec(),
+            parent: None,
+            sources: SourceMask::ALL,
+            flags: flag_index.map_or(RegionFlags::none(), flag),
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap();
+        let manifold = InteractionManifold::try_new(
+            Rect::try_viewport(0.0, 0.0, 1440.0, 900.0).unwrap(),
+            vec![nameless],
+            0,
+        )
+        .unwrap();
+        let mut query = LocateQuery::new().text(&text).unwrap();
+        if let Some(index) = query_role {
+            query = query.role(roles[index]);
+        }
+        if let Some(index) = position {
+            query = query.position(zones[index]);
+        }
+        if let Some(index) = action {
+            query = query.action(actions[index]);
+        }
+        // Any weights that sum to 100, not just V1.
+        let geometric = geometric_share.min(100 - semantic);
+        let rest = 100 - semantic - geometric;
+        let (geometric, actionability) = if actionability_one { (geometric, rest) } else { (geometric + rest, 0) };
+        let model = WeightedBasisPoints { semantic, geometric, actionability }.try_model().unwrap();
+        let weighted = WeightedMatcher::new(model).rank(&query, &manifold).unwrap()[0].confidence();
+        prop_assert!(weighted <= TEXT_MISS_CAP, "weighted {weighted}");
+        prop_assert!(weighted < 0.55, "weighted {weighted}");
+        let hgra = locate_with(&manifold, &query, &Encoder::new(Dims::D512), ResonanceModel::V1)
+            .unwrap()[0]
+            .score()
+            .total();
+        prop_assert!(hgra <= TEXT_MISS_CAP, "hgra {hgra}");
+        prop_assert!(hgra < 0.55, "hgra {hgra}");
     }
 }

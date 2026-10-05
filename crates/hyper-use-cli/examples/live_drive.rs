@@ -7,11 +7,16 @@
 //! from the task text and the last observation, runs the call on a
 //! `hyper-use mcp` child, and appends the reply to the state.
 //!
+//! Product tools are observe / guard / verify. `guard` decides Allow or Refuse
+//! and never clicks. This harness owns the click: after `GuardDecision::Allow`
+//! it inspects the allowed region for geometry and presses the center through
+//! its own CDP connection (`Input.dispatchMouseEvent`). A Refuse is journaled
+//! and does not click. Deprecated `act` is not offered.
+//!
 //! Caller-side rules the harness enforces (the server enforces the rest):
-//! - act either forwards the last locate's top and runner-up confidence, or
-//!   names a region that was already inspected (the MCP contract for an
-//!   ungated act);
-//! - expectation text can only be a string quoted in the task.
+//! - guard takes locate-style text/role/position (and optional proposed /
+//!   seen_snapshot); expectation text for verify can only be a string quoted
+//!   in the task.
 //!
 //! Each task gets a fresh tab (`PUT /json/new`) and a fresh `hyper-use mcp`
 //! process on that tab's page websocket. After the task the harness reads the
@@ -25,7 +30,7 @@
 //!
 //! Run (see examples/live-drive/README.md):
 //! `HYPER_USE_JEV=1 TYPESAFE_API_KEY=... cargo run --release -p hyper-use-cli
-//!  --features jev --example live_drive -- --bin target/release/hyper-use`
+//!  --features "jev,hgra" --example live_drive -- --bin target/release/hyper-use`
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -81,20 +86,22 @@ const TASKS: [Task; 8] = [
     },
     Task {
         id: "t6-thread-archive",
-        start: "index.html",
-        text: r#"Open the "Q3 launch checklist" message, then click the visible "Archive" button in its toolbar and verify "Conversation archived" appears."#,
+        // Thread toolbar Archive is only on #thread/<id>; start already there.
+        start: "index.html#thread/q3",
+        text: r#"On the open "Q3 launch checklist" thread, click the visible "Archive" button in its toolbar and verify "Conversation archived" appears."#,
         expect: "snackbar Conversation archived",
     },
     Task {
         id: "t7-thread-reply",
-        start: "index.html",
-        text: r#"Open the "Q3 launch checklist" message, then click "Send" in the quick reply box and verify "Reply sent" appears."#,
+        start: "index.html#thread/q3",
+        text: r#"On the open "Q3 launch checklist" thread, click "Send" in the quick reply box and verify "Reply sent" appears."#,
         expect: "snackbar Reply sent, url #thread/q3",
     },
     Task {
         id: "t8-twin-send",
-        start: "index.html",
-        text: r#"Open the "Q3 launch checklist" message, open "Compose", then click "Send"."#,
+        // preset=twin opens Compose + fills quick reply so both Send buttons are live.
+        start: "index.html?preset=twin#thread/q3",
+        text: r#"On the open "Q3 launch checklist" thread with Compose already open, click "Send"."#,
         expect: "unspecified (twin probe: compose Send vs quick-reply Send both visible)",
     },
 ];
@@ -198,14 +205,22 @@ struct Tab {
 }
 
 fn open_tab(cdp: &str, url: &str) -> Tab {
-    let body = http("PUT", cdp, &format!("/json/new?{url}"));
+    // `/json/new?{url}` cannot carry a `#fragment` in the HTTP request-target.
+    // Open a blank tab, then `Page.navigate` to the full URL (query + hash) so
+    // thread starts (`#thread/q3`) and `?preset=twin` apply in document order.
+    let body = http("PUT", cdp, "/json/new?about:blank");
     let value: Value = serde_json::from_str(&body).expect("json/new");
     let tab = Tab {
         id: value["id"].as_str().unwrap().to_owned(),
         ws: value["webSocketDebuggerUrl"].as_str().unwrap().to_owned(),
     };
-    // Let the page load before the first observe.
-    std::thread::sleep(Duration::from_millis(1200));
+    let mut socket = WebSocketTransport::connect(&tab.ws).expect("cdp for navigate");
+    let nav = json!({"url": url});
+    socket
+        .call("Page.navigate", &nav.to_string())
+        .expect("Page.navigate");
+    // Let the page load (and hash route / preset) before the first observe.
+    std::thread::sleep(Duration::from_millis(1400));
     tab
 }
 
@@ -235,6 +250,29 @@ fn ground_truth(tab: &Tab) -> Value {
         }
         Err(err) => json!({"error": err.to_string()}),
     }
+}
+
+/// Harness-owned click after guard Allow. Uses the tab's page websocket, not MCP.
+fn press_center(tab: &Tab, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+    let mut socket = WebSocketTransport::connect(&tab.ws).map_err(|e| e.to_string())?;
+    let cx = x + width / 2.0;
+    let cy = y + height / 2.0;
+    for kind in ["mousePressed", "mouseReleased"] {
+        let params = json!({
+            "type": kind,
+            "x": cx,
+            "y": cy,
+            "button": "left",
+            "clickCount": 1
+        })
+        .to_string();
+        socket
+            .call("Input.dispatchMouseEvent", &params)
+            .map_err(|e| e.to_string())?;
+    }
+    // Let the page react before the next observe/verify.
+    std::thread::sleep(Duration::from_millis(350));
+    Ok(())
 }
 
 /// Screenshots at each width, then one with Compose open. Uses a device
@@ -423,6 +461,52 @@ fn quoted(text: &str) -> Vec<String> {
 
 /// `(zone, candidate id)` pairs from a `repeated_query` signal on the last
 /// locate, for the candidates that have a separating zone.
+/// Position zone that produced the last low-confidence refuse, if any.
+fn low_confidence_position(
+    last_guard: Option<&Value>,
+    last_guard_args: Option<&Value>,
+) -> Option<String> {
+    let guard = last_guard?;
+    let reason = guard["reason"]
+        .as_str()
+        .or_else(|| guard["fallback"].as_str())?;
+    if reason != "low-confidence" {
+        return None;
+    }
+    last_guard_args?
+        .get("position")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+}
+
+fn position_options(
+    zones: &[&str],
+    suggested: &[(String, String)],
+    failed_pos: Option<&str>,
+) -> Vec<(String, String)> {
+    zones
+        .iter()
+        .map(|z| {
+            let mut about = match suggested.iter().find(|(zone, _)| zone == z) {
+                Some((_, id)) => format!("position {z} (repeated_query suggests it to pick {id})"),
+                None => format!("position {z}"),
+            };
+            if *z == "none" {
+                if let Some(bad) = failed_pos {
+                    about = format!(
+                        "none (last guard refused low-confidence with position {bad}; clear the zone)"
+                    );
+                } else {
+                    about = "none (omit zone constraint; safest default)".into();
+                }
+            } else if failed_pos == Some(*z) {
+                about = format!("{about} (this zone just refused as low-confidence)");
+            }
+            (z.to_string(), about)
+        })
+        .collect()
+}
+
 fn repeated_query_hints(last_locate: Option<&Value>) -> Vec<(String, String)> {
     let Some(signals) = last_locate.and_then(|located| located["signals"].as_array()) else {
         return Vec::new();
@@ -454,11 +538,15 @@ fn summarize(tool: &str, is_error: bool, body: &Value) -> Value {
             "signals": body["signals"],
         }),
         "inspect" => body["target"].clone(),
-        "act" => json!({
-            "executed": body["executed"], "verified": body["verified"], "fallback": body["fallback"],
-            "margin_millis": body["margin_millis"], "state_delta": body["state_delta"],
-            "verify_error": body["verify_error"], "signals": body["signals"],
-            "before_snapshot": body["before_snapshot"], "after_snapshot": body["after_snapshot"],
+        "guard" => json!({
+            "decision": body["decision"],
+            "reason": body["reason"],
+            "fallback": body["fallback"],
+            "target": body["target"],
+            "confidence": body["confidence"],
+            "candidates": body["candidates"].as_array().map(|c| c.iter().take(3).cloned().collect::<Vec<_>>()),
+            "clicked": body["clicked"],
+            "click_error": body["click_error"],
         }),
         "verify" | "diff" => {
             json!({"verified": body["verified"], "state_delta": body["state_delta"]})
@@ -512,9 +600,13 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let mut regions: Vec<Value> = Vec::new();
     let mut inspected: Vec<String> = Vec::new();
     let mut last_locate: Option<Value> = None;
-    let mut last_act: Option<Value> = None;
+    let mut last_snapshot: Option<u64> = None;
+    let mut last_guard: Option<Value> = None;
+    let mut last_guard_args: Option<Value> = None;
+    let mut last_diff_pair: Option<(u64, u64)> = None;
     let mut history: Vec<Value> = Vec::new();
     let (mut tool_calls, mut jev_calls) = (0usize, 0usize);
+    let mut clicks_executed = 0usize;
     let mut outcome = "max-steps".to_owned();
 
     for step in 1..=args.max_steps {
@@ -524,15 +616,20 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
             "tools": tools,
             "guidance": [
                 "observe lists the page regions; locate ranks regions for a text, role, and position query",
-                "act presses one region; it refuses below confidence 0.55 or when the runner-up is within 0.05 (fallback ambiguous)",
-                "act on a cdp session observes again and returns state_delta; expect_text makes it verify",
-                "a refusal is not a click: change the query (role or position) and try again",
+                "guard decides Allow or Refuse for a click intent (text/role/position); it never clicks",
+                "after Allow this harness clicks the allowed region via CDP; after Refuse do not click — change the query and try again",
+                "verify checks that a quoted string is present on the page after a click",
                 "locate signals repeated_query means this exact query already ran on this unchanged page and will return the same ranking; use a suggested_position it names, or change the text or role",
+                "position is optional: choose none unless you know the target's zone; a wrong zone (for example top on a bottom compose-sheet control) drops confidence and can refuse as low-confidence even when the label ranks first",
+                "when the last guard refused low-confidence and the query had a position, retry with position none before changing the text",
                 "each region has a state: availability enabled or disabled, visibility visible, occluded, offscreen, or hidden",
+                "thread toolbar Archive and quick-reply Send exist only when the thread view is open; do not guard inbox row links or occluded twins to open a thread — this task already starts on the right view when needed",
+                "when two Send buttons are visible (Compose and quick reply), prefer the Compose sheet Send unless the task names the quick reply box",
                 "choose done when the task's check has passed, or give up when it cannot pass"
             ],
             "page_regions": regions,
             "last_locate": last_locate,
+            "last_guard": last_guard,
             "history": history,
             "step": step,
         });
@@ -540,7 +637,11 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
             ("observe".into(), "list the regions on the page".into()),
             (
                 "locate".into(),
-                "rank regions for a text/role/position query".into(),
+                "rank regions for a text/role/position query (preview; does not click)".into(),
+            ),
+            (
+                "guard".into(),
+                "decide Allow/Refuse for a click; on Allow this harness presses via CDP".into(),
             ),
         ];
         if !regions.is_empty() {
@@ -549,17 +650,14 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 "read one region's role, label, and box".into(),
             ));
         }
-        if last_locate.is_some() || !inspected.is_empty() {
-            tool_options.push(("act".into(), "press a located or inspected region".into()));
-        }
         tool_options.push((
             "verify".into(),
             "check that a quoted text is on the page now".into(),
         ));
-        if last_act.is_some() {
+        if last_diff_pair.is_some() {
             tool_options.push((
                 "diff".into(),
-                "diff the last act's before and after snapshots".into(),
+                "diff the snapshots before and after the last harness click".into(),
             ));
         }
         tool_options.push(("done".into(), "stop: the task's check passed".into()));
@@ -683,21 +781,12 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 // the candidate each suggested position would favour. Option
                 // order does not change.
                 let suggested = repeated_query_hints(last_locate.as_ref());
+                let failed_pos =
+                    low_confidence_position(last_guard.as_ref(), last_guard_args.as_ref());
                 if let Some(zone) = ask_arg(
                     "position",
-                    "Where on the page is the target?",
-                    zones
-                        .iter()
-                        .map(|z| {
-                            let about = match suggested.iter().find(|(zone, _)| zone == z) {
-                                Some((_, id)) => format!(
-                                    "position {z} (repeated_query suggests it to pick {id})"
-                                ),
-                                None => format!("position {z}"),
-                            };
-                            (z.to_string(), about)
-                        })
-                        .collect(),
+                    "Where on the page is the target? Prefer none unless sure.",
+                    position_options(&zones, &suggested, failed_pos.as_deref()),
                 ) {
                     if zone != "none" {
                         arguments["position"] = json!(zone);
@@ -712,51 +801,72 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 Some(id) => arguments["region"] = json!(id),
                 None => skip = Some("no regions known"),
             },
-            "act" => {
-                let mut targets: Vec<(String, String)> = Vec::new();
-                if let Some(located) = &last_locate {
-                    targets.push((
-                        "last_locate_top".into(),
-                        format!(
-                            "press locate's top candidate {} with its confidence and runner-up",
-                            located["candidates"][0]["id"]
-                        ),
-                    ));
+            "guard" => {
+                match ask_arg(
+                    "text",
+                    "Which text should guard resolve for a click?",
+                    text_options,
+                ) {
+                    Some(text) => arguments["text"] = json!(text),
+                    None => skip = Some("no guard text"),
                 }
-                targets.extend(
-                    region_options(&|id| inspected.iter().any(|i| i == id))
-                        .into_iter()
-                        .map(|(id, about)| {
-                            (
-                                id,
-                                format!("press inspected region {about} without a score"),
-                            )
-                        }),
-                );
-                match ask_arg("target", "Which region should be pressed?", targets) {
-                    Some(choice) if choice == "last_locate_top" => {
-                        let located = last_locate.as_ref().unwrap();
-                        let top = &located["candidates"][0];
-                        arguments["region"] = top["id"].clone();
-                        arguments["confidence"] = top["confidence"].clone();
-                        if let Some(second) = located["candidates"].get(1) {
-                            arguments["runner_up"] =
-                                json!({"id": second["id"], "confidence": second["confidence"]});
+                let roles = [
+                    "any",
+                    "button",
+                    "link",
+                    "text_field",
+                    "heading",
+                    "navigation",
+                ];
+                if let Some(role) = ask_arg(
+                    "role",
+                    "Which role should the click target have?",
+                    roles
+                        .iter()
+                        .map(|r| (r.to_string(), format!("role {r}")))
+                        .collect(),
+                ) {
+                    if role != "any" {
+                        arguments["role"] = json!(role);
+                    }
+                }
+                let zones = ["none", "left", "right", "top", "bottom", "center"];
+                let suggested = repeated_query_hints(last_locate.as_ref());
+                let failed_pos =
+                    low_confidence_position(last_guard.as_ref(), last_guard_args.as_ref());
+                if let Some(zone) = ask_arg(
+                    "position",
+                    "Where on the page is the click target? Prefer none unless sure.",
+                    position_options(&zones, &suggested, failed_pos.as_deref()),
+                ) {
+                    if zone != "none" {
+                        arguments["position"] = json!(zone);
+                    }
+                }
+                // Optional: pin the last locate's top as proposed.
+                if let Some(located) = &last_locate {
+                    if let Some(top_id) = located["candidates"][0]["id"].as_str() {
+                        let propose = ask_arg(
+                            "proposed",
+                            "Should guard require a specific region as the top match?",
+                            vec![
+                                (
+                                    "none".into(),
+                                    "let guard rank freely from the text query".into(),
+                                ),
+                                (
+                                    "last_locate_top".into(),
+                                    format!("propose locate's top candidate {top_id}"),
+                                ),
+                            ],
+                        );
+                        if propose.as_deref() == Some("last_locate_top") {
+                            arguments["proposed"] = json!(top_id);
                         }
                     }
-                    Some(id) => arguments["region"] = json!(id),
-                    None => skip = Some("no act target"),
                 }
-                let mut options = vec![("none".to_owned(), "no expectation".to_owned())];
-                options.extend(expect_options);
-                if let Some(expect) = ask_arg(
-                    "expect_text",
-                    "Which text should be expected after the press?",
-                    options,
-                ) {
-                    if expect != "none" {
-                        arguments["expect_text"] = json!(expect);
-                    }
+                if let Some(snap) = last_snapshot {
+                    arguments["seen_snapshot"] = json!(snap);
                 }
             }
             "verify" => match ask_arg(
@@ -768,8 +878,8 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
                 None => skip = Some("no quoted text to verify"),
             },
             "diff" => {
-                let act = last_act.as_ref().unwrap();
-                arguments = json!({"before_snapshot": act["before_snapshot"], "after_snapshot": act["after_snapshot"]});
+                let (before, after) = last_diff_pair.as_ref().unwrap();
+                arguments = json!({"before_snapshot": before, "after_snapshot": after});
             }
             other => {
                 skip = Some(if other.is_empty() {
@@ -793,6 +903,12 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
             shown_args["cdp"] = json!("<tab>");
         }
         log.push(json!({"kind": "mcp", "step": step, "tool": tool, "arguments": shown_args, "is_error": is_error, "latency_ms": called.elapsed().as_millis(), "body": body}));
+        // Remember the latest snapshot id for guard's seen_snapshot.
+        if !is_error {
+            if let Some(snap) = body["snapshot"].as_u64() {
+                last_snapshot = Some(snap);
+            }
+        }
         match tool.as_str() {
             "observe" if !is_error => {
                 regions = body["regions"].as_array().cloned().unwrap_or_default();
@@ -805,16 +921,102 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
             "inspect" if !is_error => {
                 inspected.push(arguments["region"].as_str().unwrap_or("").to_owned())
             }
-            "act" if !is_error => {
-                if body["executed"] == true {
-                    // The page may have changed: old regions and locate are stale.
-                    regions.clear();
-                    inspected.clear();
-                    last_locate = None;
+            "guard" if !is_error => {
+                let mut guard_body = body.clone();
+                let decision = body["decision"].as_str().unwrap_or("");
+                if decision == "allow" {
+                    let before_snap = body["snapshot"].as_u64();
+                    let allowed_id = body["target"]["id"].as_str().unwrap_or("").to_owned();
+                    // Resolve geometry via inspect, then harness CDP click.
+                    let (_, inspected_body) =
+                        mcp.tool("inspect", &json!({"cdp": tab.ws, "region": allowed_id}));
+                    tool_calls += 1;
+                    log.push(json!({
+                        "kind": "mcp",
+                        "step": step,
+                        "tool": "inspect",
+                        "arguments": {"cdp": "<tab>", "region": allowed_id},
+                        "is_error": false,
+                        "latency_ms": 0,
+                        "body": inspected_body,
+                        "note": "harness geometry for post-Allow click",
+                    }));
+                    let target = &inspected_body["target"];
+                    let (x, y, w, h) = (
+                        target["x"].as_f64(),
+                        target["y"].as_f64(),
+                        target["width"].as_f64(),
+                        target["height"].as_f64(),
+                    );
+                    match (x, y, w, h) {
+                        (Some(x), Some(y), Some(w), Some(h)) => {
+                            match press_center(&tab, x, y, w, h) {
+                                Ok(()) => {
+                                    clicks_executed += 1;
+                                    guard_body["clicked"] = json!(true);
+                                    // Page changed: stale regions / locate.
+                                    regions.clear();
+                                    inspected.clear();
+                                    last_locate = None;
+                                    // Observe after click for a fresh snapshot (diff + seen).
+                                    let (_, after_obs) =
+                                        mcp.tool("observe", &json!({"cdp": tab.ws}));
+                                    tool_calls += 1;
+                                    log.push(json!({
+                                        "kind": "mcp",
+                                        "step": step,
+                                        "tool": "observe",
+                                        "arguments": {"cdp": "<tab>"},
+                                        "is_error": false,
+                                        "latency_ms": 0,
+                                        "body": after_obs,
+                                        "note": "harness observe after click",
+                                    }));
+                                    if let Some(after_snap) = after_obs["snapshot"].as_u64() {
+                                        last_snapshot = Some(after_snap);
+                                        if let Some(before) = before_snap {
+                                            last_diff_pair = Some((before, after_snap));
+                                        }
+                                    }
+                                    regions = after_obs["regions"]
+                                        .as_array()
+                                        .cloned()
+                                        .unwrap_or_default();
+                                }
+                                Err(err) => {
+                                    guard_body["clicked"] = json!(false);
+                                    guard_body["click_error"] = json!(err);
+                                }
+                            }
+                        }
+                        _ => {
+                            guard_body["clicked"] = json!(false);
+                            guard_body["click_error"] =
+                                json!("inspect missing rectangle for allowed region");
+                        }
+                    }
+                } else {
+                    guard_body["clicked"] = json!(false);
                 }
-                if body["after_snapshot"].is_u64() {
-                    last_act = Some(body.clone());
+                last_guard = Some(guard_body.clone());
+                last_guard_args = Some(arguments.clone());
+                // Replace the logged guard body so the transcript shows click outcome
+                // (inspect/observe pushes may follow the guard call).
+                if let Some(entry) = log
+                    .lines
+                    .iter_mut()
+                    .rev()
+                    .find(|e| e["kind"] == "mcp" && e["tool"] == "guard")
+                {
+                    entry["body"] = guard_body.clone();
                 }
+                history.push(json!({
+                    "step": step,
+                    "tool": tool,
+                    "arguments": shown_args,
+                    "result": summarize(&tool, is_error, &guard_body)
+                }));
+                continue;
             }
             _ => {}
         }
@@ -824,6 +1026,16 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
     let truth = ground_truth(&tab);
     let mcp_events: Vec<&Value> = log.lines.iter().filter(|e| e["kind"] == "mcp").collect();
     let count = |pred: &dyn Fn(&Value) -> bool| mcp_events.iter().filter(|e| pred(e)).count();
+    let refuse_reasons: Vec<Value> = mcp_events
+        .iter()
+        .filter(|e| e["tool"] == "guard" && e["body"]["decision"] != "allow")
+        .map(|e| {
+            json!({
+                "reason": e["body"]["reason"].clone(),
+                "fallback": e["body"]["fallback"].clone(),
+            })
+        })
+        .collect();
     let summary = json!({
         "task": task.id,
         "text": task.text,
@@ -832,10 +1044,14 @@ fn run_task(args: &Args, jev: &Jev, task: &Task, tools: &Value) -> Value {
         "tool_calls": tool_calls,
         "jev_calls": jev_calls,
         "wall_ms": started.elapsed().as_millis(),
-        "acts_executed": count(&|e| e["tool"] == "act" && e["body"]["executed"] == true),
-        "verified_true": count(&|e| (e["tool"] == "act" || e["tool"] == "verify") && e["body"]["verified"] == true),
-        "refused_ambiguous": count(&|e| e["body"]["fallback"] == "ambiguous"),
-        "refused_low_confidence": count(&|e| e["body"]["fallback"] == "low-confidence"),
+        "guards_allow": count(&|e| e["tool"] == "guard" && e["body"]["decision"] == "allow"),
+        "guards_refuse": count(&|e| e["tool"] == "guard" && e["body"]["decision"] != "allow" && e["body"]["decision"].is_string()),
+        "clicks_executed": clicks_executed,
+        "verified_true": count(&|e| e["tool"] == "verify" && e["body"]["verified"] == true),
+        "refuse_reasons": refuse_reasons,
+        "refused_ambiguous": count(&|e| e["body"]["fallback"] == "ambiguous" || e["body"]["reason"] == "ambiguous"),
+        "refused_low_confidence": count(&|e| e["body"]["fallback"] == "low-confidence" || e["body"]["reason"] == "low-confidence"),
+        "refused_proposed_not_top": count(&|e| e["body"]["reason"] == "proposed-not-top" || e["body"]["fallback"] == "proposed-not-top"),
         "no_effect": count(&|e| e["body"]["fallback"] == "no-effect"),
         "repeated_query_signals": count(&|e| e["tool"] == "locate" && e["body"]["signals"].as_array().is_some_and(|s| s.iter().any(|x| x["kind"] == "repeated_query"))),
         "tool_errors": count(&|e| e["is_error"] == true),

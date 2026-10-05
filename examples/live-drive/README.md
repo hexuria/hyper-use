@@ -15,7 +15,21 @@ nothing statistical. Use it to read transcripts and find bugs.
   hidden and an offscreen "Archive" twin. `settings.html` has a disabled and
   an enabled "Save". `help.html` is the link target that changes URL and title.
 - `crates/hyper-use-cli/examples/live_drive.rs`: the harness. It needs the
-  `jev` feature.
+  `jev` feature (add `hgra` when remasuring with `HYPER_USE_MATCHER=hgra`).
+  Thread tasks (`t6`–`t8`) start already on `#thread/q3` (blank tab via
+  `/json/new`, then `Page.navigate` to the full URL so the hash and query
+  survive). `t8` also uses `?preset=twin` so Compose and quick-reply `Send`
+  are both visible.
+
+## Tools
+
+Product tools are **observe**, **guard**, and **verify**. Deprecated `act` is
+not offered.
+
+- `guard` decides Allow / Refuse / Escalate and **never clicks**.
+- After Allow, the harness inspects the allowed region for its rectangle and
+  presses the center through its own CDP connection (`Input.dispatchMouseEvent`).
+- After Refuse, the harness journals the reason and does not click.
 
 ## Run
 
@@ -25,9 +39,10 @@ python3 bench/server.py --port 8765 &
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9333 --remote-debugging-address=127.0.0.1 \
   --user-data-dir=/tmp/hyper-use-live/chrome-profile --window-size=1280,800 &
-cargo build --release -p hyper-use-cli --bin hyper-use
-cargo build --release -p hyper-use-cli --features jev --example live_drive
-TYPESAFE_API_KEY=... HYPER_USE_JEV=1 \
+cargo build --release -p hyper-use-cli --features "jev,hgra" --bin hyper-use
+cargo build --release -p hyper-use-cli --features "jev,hgra" --example live_drive
+set -a && source /path/to/bench/.env && set +a   # TYPESAFE_API_KEY; never echo
+HYPER_USE_JEV=1 \
   ./target/release/examples/live_drive --bin target/release/hyper-use \
     --site http://127.0.0.1:8765/acme-mail/site
 ```
@@ -48,10 +63,24 @@ the page after the run.
 ## What JEV is shown
 
 The state JEV answers from includes the observed regions (with their
-`state`), the last locate's top three candidates and its `signals`, and a
-history of call summaries. When the last locate carried `repeated_query`,
-the position options name the candidate each suggested position would pick.
-The option order does not change, and the harness does not pick for JEV.
+`state`), the last locate's top three candidates and its `signals`, the last
+guard decision, and a history of call summaries. When the last locate carried
+`repeated_query`, the position options name the candidate each suggested
+position would pick. The option order does not change, and the harness does
+not pick for JEV.
+
+## Built-in Acme tasks
+
+| id | start | notes |
+| --- | --- | --- |
+| `t1-compose-send` | `index.html` | Compose → Send |
+| `t2-nav-settings` | `index.html` | left nav Settings |
+| `t3-reveal-cc` | `index.html` | Compose → Add Cc |
+| `t4-enabled-save` | `settings.html` | enabled Save |
+| `t5-help-link` | `index.html` | top-bar Help |
+| `t6-thread-archive` | `index.html#thread/q3` | toolbar Archive (thread already open) |
+| `t7-thread-reply` | `index.html#thread/q3` | quick-reply Send |
+| `t8-twin-send` | `index.html?preset=twin#thread/q3` | twin Send probe |
 
 ## Limits
 

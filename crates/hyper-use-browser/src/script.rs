@@ -26,6 +26,10 @@ pub struct DomSpec {
     /// Extra attributes, in order (for example `role`, `aria-label`,
     /// `aria-modal`). Empty for the plain kept tags.
     pub attributes: Vec<(String, String)>,
+    /// Open shadow roots (emulates `DOM.getDocument` with `pierce: true`).
+    pub shadow_roots: Vec<DomSpec>,
+    /// Same-origin iframe `contentDocument` root (usually a `#document` node).
+    pub content_document: Option<Box<DomSpec>>,
 }
 
 impl DomSpec {
@@ -38,6 +42,8 @@ impl DomSpec {
             rect: Some(rect),
             children: Vec::new(),
             attributes: Vec::new(),
+            shadow_roots: Vec::new(),
+            content_document: None,
         }
     }
 
@@ -61,6 +67,63 @@ impl DomSpec {
                 ("role".to_owned(), role.to_owned()),
                 ("aria-label".to_owned(), label.to_owned()),
             ],
+            shadow_roots: Vec::new(),
+            content_document: None,
+        }
+    }
+
+    /// ARIA option (autocomplete / listbox popup row).
+    pub fn option(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self::container(node_id, backend, "option", label, rect).with_attr("aria-label", label)
+    }
+
+    /// ARIA combobox field.
+    pub fn combobox(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self::button(node_id, backend, label, rect)
+            .with_tag("INPUT")
+            .with_attr("role", "combobox")
+            .with_attr("aria-label", label)
+    }
+
+    /// Attach open shadow roots (host is usually not kept unless labeled).
+    pub fn with_shadow_roots(mut self, roots: Vec<DomSpec>) -> Self {
+        self.shadow_roots = roots;
+        self
+    }
+
+    /// Attach a same-origin iframe content document.
+    pub fn with_content_document(mut self, document: DomSpec) -> Self {
+        self.content_document = Some(Box::new(document));
+        self
+    }
+
+    /// A `#document` wrapper for iframe `contentDocument`.
+    pub fn document(node_id: i64, backend: i64, children: Vec<DomSpec>) -> Self {
+        Self {
+            node_id,
+            backend,
+            tag: "#document",
+            label: String::new(),
+            rect: None,
+            children,
+            attributes: Vec::new(),
+            shadow_roots: Vec::new(),
+            content_document: None,
+        }
+    }
+
+    /// An open `#document-fragment` shadow root.
+    pub fn shadow_root(node_id: i64, backend: i64, children: Vec<DomSpec>) -> Self {
+        Self {
+            node_id,
+            backend,
+            tag: "#document-fragment",
+            label: String::new(),
+            rect: None,
+            children,
+            attributes: Vec::new(),
+            shadow_roots: Vec::new(),
+            content_document: None,
         }
     }
 
@@ -163,6 +226,22 @@ impl Control {
         }
     }
 
+    pub fn combobox(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self {
+            tag: "INPUT",
+            role: "combobox",
+            ..Self::button(node_id, backend, label, rect)
+        }
+    }
+
+    pub fn option(node_id: i64, backend: i64, label: &str, rect: (f64, f64, f64, f64)) -> Self {
+        Self {
+            tag: "DIV",
+            role: "option",
+            ..Self::button(node_id, backend, label, rect)
+        }
+    }
+
     pub fn focused(mut self) -> Self {
         self.focused = true;
         self
@@ -207,13 +286,25 @@ impl PageSpec {
         let dom = controls
             .iter()
             .map(|control| {
-                DomSpec::button(
+                let mut spec = DomSpec::button(
                     control.node_id,
                     control.backend,
                     &control.label,
                     control.rect,
                 )
-                .with_tag(control.tag)
+                .with_tag(control.tag);
+                // Emit ARIA role when the tag alone would not keep the right role
+                // (combobox / option / listbox / dialog / …).
+                if matches!(
+                    control.role,
+                    "combobox" | "option" | "listbox" | "dialog" | "menuitem" | "tab"
+                ) {
+                    spec = spec.with_attr("role", control.role);
+                }
+                if matches!(control.role, "combobox" | "option" | "listbox" | "dialog") {
+                    spec = spec.with_attr("aria-label", &control.label);
+                }
+                spec
             })
             .collect();
         let ax = controls
@@ -306,8 +397,13 @@ impl ScriptBuilder {
         for node in &page.dom {
             flatten(node, &mut flat);
         }
+        // Match `extract::dom_document`: only kept element nodes request a box.
+        // Non-kept hosts (iframe, unlabeled DIV, document wrappers) are walked
+        // for descendants but must not consume a getBoxModel slot.
         for node in flat {
-            self.calls.push(box_call(node.rect));
+            if dom_node_kept(node) && node.tag != "#document" && node.tag != "#document-fragment" {
+                self.calls.push(box_call(node.rect));
+            }
         }
         for node in &page.ax {
             // Match `extract::ax_role`: skipped roles never request a box.
@@ -466,9 +562,27 @@ fn flatten<'a>(node: &'a DomSpec, out: &mut Vec<&'a DomSpec>) {
     for child in &node.children {
         flatten(child, out);
     }
+    for root in &node.shadow_roots {
+        flatten(root, out);
+    }
+    if let Some(doc) = &node.content_document {
+        flatten(doc, out);
+    }
 }
 
 fn dom_json(node: &DomSpec) -> Value {
+    // Document / fragment wrappers used as iframe contentDocument or shadow root.
+    if node.tag == "#document" || node.tag == "#document-fragment" {
+        let node_type = if node.tag == "#document" { 9 } else { 11 };
+        let children: Vec<Value> = node.children.iter().map(dom_json).collect();
+        return json!({
+            "nodeId": node.node_id,
+            "backendNodeId": node.backend,
+            "nodeType": node_type,
+            "nodeName": node.tag,
+            "children": children,
+        });
+    }
     let mut children = Vec::new();
     if !node.label.is_empty() {
         children.push(json!({
@@ -485,14 +599,21 @@ fn dom_json(node: &DomSpec) -> Value {
         .iter()
         .flat_map(|(name, value)| [name.as_str(), value.as_str()])
         .collect();
-    json!({
+    let mut value = json!({
         "nodeId": node.node_id,
         "backendNodeId": node.backend,
         "nodeType": 1,
         "nodeName": node.tag,
         "attributes": attributes,
         "children": children,
-    })
+    });
+    if !node.shadow_roots.is_empty() {
+        value["shadowRoots"] = Value::Array(node.shadow_roots.iter().map(dom_json).collect());
+    }
+    if let Some(doc) = &node.content_document {
+        value["contentDocument"] = dom_json(doc);
+    }
+    value
 }
 
 fn ax_json((index, node): (usize, &AxSpec)) -> Value {
@@ -582,6 +703,7 @@ fn dom_node_kept(node: &DomSpec) -> bool {
             | "INPUT"
             | "TEXTAREA"
             | "SELECT"
+            | "OPTION"
             | "NAV"
             | "H1"
             | "H2"
@@ -649,7 +771,8 @@ fn dom_role_is_clickable(node: &DomSpec) -> bool {
         Some("button") | Some("link") | Some("menuitem") | Some("tab") | Some("slider") => {
             return true;
         }
-        Some("textbox") | Some("searchbox") | Some("checkbox") => return true,
+        Some("textbox") | Some("searchbox") | Some("checkbox") | Some("combobox")
+        | Some("option") | Some("listbox") => return true,
         Some("dialog") | Some("alertdialog") | Some("row") | Some("navigation") => return false,
         _ => node.tag.to_ascii_uppercase(),
     };
@@ -681,6 +804,9 @@ fn ax_role_is_clickable(role: &str) -> bool {
             | "textbox"
             | "searchbox"
             | "textfield"
+            | "combobox"
+            | "listbox"
+            | "option"
             | "checkbox"
             | "menuitem"
             | "tab"
@@ -761,5 +887,109 @@ mod overlay_script_tests {
             .map(|c| c["result"]["backendNodeId"].as_i64().unwrap())
             .collect();
         assert_eq!(hits, vec![500, 510]); // Save covered by backdrop 500
+    }
+}
+
+#[cfg(test)]
+mod pierce_script_tests {
+    use super::*;
+    use crate::{BrowserSession, ReplayTransport};
+    use hyper_use_core::Role;
+
+    fn session(script: ScriptBuilder) -> BrowserSession<ReplayTransport> {
+        BrowserSession::new(ReplayTransport::parse(&script.to_json()).unwrap())
+    }
+
+    #[test]
+    fn observe_keeps_button_inside_open_shadow_root() {
+        let host = DomSpec::button(5, 50, "", (0.0, 0.0, 400.0, 300.0))
+            .with_tag("DIV")
+            .with_shadow_roots(vec![DomSpec::shadow_root(
+                6,
+                60,
+                vec![DomSpec::button(
+                    10,
+                    100,
+                    "Shadow Save",
+                    (40.0, 40.0, 100.0, 28.0),
+                )],
+            )]);
+        // Empty label + DIV without role is not kept; only the shadow button is.
+        let host = DomSpec {
+            label: String::new(),
+            attributes: Vec::new(),
+            ..host
+        };
+        let page = PageSpec::new(
+            vec![host],
+            vec![AxSpec::new(
+                100,
+                "button",
+                "Shadow Save",
+                (40.0, 40.0, 100.0, 28.0),
+            )],
+            "http://127.0.0.1/shadow",
+            "Shadow",
+        );
+        let mut s = session(ScriptBuilder::new().observe(&page));
+        let m = s.observe().unwrap();
+        let region = m.get_str("n100").expect("shadow button");
+        assert_eq!(region.label(), "Shadow Save");
+        assert_eq!(region.role(), Role::Button);
+    }
+
+    #[test]
+    fn observe_keeps_button_inside_same_origin_iframe() {
+        let frame = DomSpec::button(5, 50, "", (0.0, 0.0, 400.0, 300.0))
+            .with_tag("IFRAME")
+            .with_content_document(DomSpec::document(
+                6,
+                60,
+                vec![DomSpec::button(
+                    20,
+                    200,
+                    "Frame Confirm",
+                    (20.0, 20.0, 120.0, 28.0),
+                )],
+            ));
+        let frame = DomSpec {
+            label: String::new(),
+            attributes: Vec::new(),
+            ..frame
+        };
+        let page = PageSpec::new(
+            vec![frame],
+            vec![AxSpec::new(
+                200,
+                "button",
+                "Frame Confirm",
+                (20.0, 20.0, 120.0, 28.0),
+            )],
+            "http://127.0.0.1/frame",
+            "Frame",
+        );
+        let mut s = session(ScriptBuilder::new().observe(&page));
+        let m = s.observe().unwrap();
+        assert_eq!(m.get_str("n200").unwrap().label(), "Frame Confirm");
+    }
+
+    #[test]
+    fn observe_offers_type_on_combobox_and_click_on_option() {
+        let page = PageSpec::of(
+            &[
+                Control::combobox(10, 100, "City", (10.0, 10.0, 200.0, 28.0)),
+                Control::option(11, 110, "Manila", (10.0, 40.0, 200.0, 28.0)),
+            ],
+            "http://127.0.0.1/auto",
+            "Auto",
+        );
+        let mut s = session(ScriptBuilder::new().observe(&page));
+        let m = s.observe().unwrap();
+        let city = m.get_str("n100").unwrap();
+        assert_eq!(city.role(), Role::ComboBox);
+        assert!(city.actions().contains(&hyper_use_core::Action::Type));
+        let opt = m.get_str("n110").unwrap();
+        assert_eq!(opt.role(), Role::Option);
+        assert!(opt.actions().contains(&hyper_use_core::Action::Click));
     }
 }

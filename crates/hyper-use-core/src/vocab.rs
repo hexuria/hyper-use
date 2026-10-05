@@ -22,6 +22,12 @@ pub enum Role {
     /// A dialog or alert dialog. With [`RegionFlags::modal`] it blocks input
     /// to every region outside it. See `hyper-use-guard`'s front layer.
     Dialog,
+    /// ARIA combobox / autocomplete field (type + optional select/click).
+    ComboBox,
+    /// ARIA listbox container for options (visible window only).
+    ListBox,
+    /// ARIA option inside a listbox / popup (click / select).
+    Option,
 }
 
 impl Role {
@@ -40,6 +46,9 @@ impl Role {
             Self::Tab => "tab",
             Self::Heading => "heading",
             Self::Dialog => "dialog",
+            Self::ComboBox => "combobox",
+            Self::ListBox => "listbox",
+            Self::Option => "option",
         }
     }
 
@@ -58,6 +67,9 @@ impl Role {
             "tab" => Self::Tab,
             "heading" => Self::Heading,
             "dialog" | "alertdialog" | "alert_dialog" => Self::Dialog,
+            "combobox" | "combo_box" => Self::ComboBox,
+            "listbox" | "list_box" => Self::ListBox,
+            "option" => Self::Option,
             _ => return None,
         })
     }

@@ -307,14 +307,17 @@ fn run_act<T: CdpTransport>(
     mut session: BrowserSession<T>,
     plan: &ActPlan,
 ) -> (Result<Value, ToolError>, BrowserSession<T>, bool) {
+    // Reuse only an observation no press has followed. After a press (for
+    // example an earlier act with observe_after false) the page may have
+    // changed, so act observes again.
     let reuse = session
-        .manifold()
+        .fresh_manifold()
         .is_some()
         .then(|| server.latest_for(&plan.key))
         .flatten();
     let (before_id, before, before_page) = match reuse {
         Some(id) => {
-            let manifold = session.manifold().expect("checked above").clone();
+            let manifold = session.fresh_manifold().expect("checked above").clone();
             let page = session.page().cloned().unwrap_or_else(PageState::blank);
             (id, manifold, page)
         }
@@ -528,6 +531,7 @@ fn delta_json(delta: &ManifoldDiff, page: &hyper_use_browser::PageDelta) -> Valu
         "text_changed": id_strings(state.text_changed()),
         "focus_changed": state.focus_changed(),
         "url_changed": state.url_changed(),
+        "title_changed": page.title_changed(),
     })
 }
 

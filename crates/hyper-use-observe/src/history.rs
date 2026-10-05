@@ -4,7 +4,6 @@
 //! are never reused, even after the entry is evicted. Nothing is written to
 //! disk. This is not crash recovery and not a persistence layer.
 
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -125,8 +124,8 @@ impl<T> SnapshotRing<T> {
 /// Sorted `(role, label)` multiset of one observation.
 ///
 /// Two regions with the same role and label both count. Rectangles, ids, and
-/// flags are not part of the signature. [`signature_jaccard`] compares these
-/// bags. [`detect`] treats equal signatures as the same state.
+/// flags are not part of the signature. [`detect`] treats equal signatures as
+/// the same state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StateSignature {
     entries: Vec<(Role, String)>,
@@ -141,38 +140,6 @@ impl StateSignature {
         entries.sort();
         Self { entries }
     }
-}
-
-/// Multiset Jaccard of two signatures. Both empty is `1`.
-pub fn signature_jaccard(left: &StateSignature, right: &StateSignature) -> f64 {
-    if left.entries.is_empty() && right.entries.is_empty() {
-        return 1.0;
-    }
-    let mut i = 0;
-    let mut j = 0;
-    let mut intersection = 0usize;
-    let mut union = 0usize;
-    while i < left.entries.len() && j < right.entries.len() {
-        match left.entries[i].cmp(&right.entries[j]) {
-            Ordering::Equal => {
-                intersection += 1;
-                union += 1;
-                i += 1;
-                j += 1;
-            }
-            Ordering::Less => {
-                union += 1;
-                i += 1;
-            }
-            Ordering::Greater => {
-                union += 1;
-                j += 1;
-            }
-        }
-    }
-    union += left.entries.len() - i;
-    union += right.entries.len() - j;
-    intersection as f64 / union as f64
 }
 
 /// What an act did to the signature history. Data only. Not a retry policy.
@@ -323,8 +290,6 @@ mod tests {
     fn no_op_when_after_equals_before() {
         let send = signature(&["Send"]);
         let other = signature(&["Cancel"]);
-        assert_eq!(signature_jaccard(&send, &send), 1.0);
-        assert_eq!(signature_jaccard(&send, &other), 0.0);
         let mut ring = SnapshotRing::with_capacity(8);
         let before = ring.push(sample("page", send.clone()));
         let after = ring.push(sample("page", send));
@@ -369,6 +334,48 @@ mod tests {
         let before = other_origin.push(sample("page", other));
         let after = other_origin.push(sample("page", send));
         assert_eq!(detect(&other_origin, before, after).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn loop_window_is_exactly_four_snapshots_before_after() {
+        let send = signature(&["Send"]);
+        let other = signature(&["Cancel"]);
+        // Window: before, filler, filler, older. older is the 4th and matches.
+        let mut ring = SnapshotRing::with_capacity(16);
+        let older = ring.push(sample("page", send.clone()));
+        ring.push(sample("page", other.clone()));
+        ring.push(sample("page", other.clone()));
+        let before = ring.push(sample("page", other.clone()));
+        let after = ring.push(sample("page", send.clone()));
+        assert_eq!(
+            detect(&ring, before, after).unwrap(),
+            vec![TemporalSignal::LoopDetected {
+                matches: vec![older]
+            }]
+        );
+
+        // One more filler pushes older out of the window of four.
+        let mut ring = SnapshotRing::with_capacity(16);
+        let outside = ring.push(sample("page", send.clone()));
+        for _ in 0..3 {
+            ring.push(sample("page", other.clone()));
+        }
+        let before = ring.push(sample("page", other.clone()));
+        let after = ring.push(sample("page", send.clone()));
+        assert_eq!(detect(&ring, before, after).unwrap(), vec![]);
+        assert_ne!(outside, before);
+
+        // A different-origin snapshot between before and after still counts
+        // toward the four, so an older same-origin match can fall out.
+        let mut mixed = SnapshotRing::with_capacity(16);
+        let older = mixed.push(sample("page", send.clone()));
+        mixed.push(sample("other", other.clone()));
+        mixed.push(sample("other", other.clone()));
+        mixed.push(sample("other", other.clone()));
+        let before = mixed.push(sample("page", other.clone()));
+        let after = mixed.push(sample("page", send));
+        assert_eq!(detect(&mixed, before, after).unwrap(), vec![]);
+        assert_ne!(older, before);
     }
 
     fn sample(origin: &'static str, signature: StateSignature) -> Sample {

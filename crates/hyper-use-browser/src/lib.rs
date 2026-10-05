@@ -455,7 +455,7 @@ mod phase2 {
         let pages = page_delta(&before_page, &after_page);
         assert!(pages.url_changed());
         assert!(!pages.focus_changed());
-        assert_eq!(after_page.url(), "https://example.test/account");
+        assert_eq!(after_page.url(), Some("https://example.test/account"));
         verify_delta(&diff(&before, &after), &pages, &Expectation::url_changed()).unwrap();
     }
 
@@ -565,8 +565,8 @@ mod phase2 {
         let manifold = session.observe().unwrap();
         assert_eq!(manifold.captured_at_ms(), 0);
         let page = session.page().unwrap();
-        assert_eq!(page.url(), "");
-        assert_eq!(page.title(), "");
+        assert_eq!(page.url(), None);
+        assert_eq!(page.title(), None);
         assert!(page.focused().is_none());
     }
 
@@ -594,7 +594,7 @@ mod phase2 {
 
 #[cfg(test)]
 mod exact_errors {
-    use super::script::{DomSpec, PageSpec, ScriptBuilder};
+    use super::script::{AxSpec, DomSpec, PageSpec, ScriptBuilder};
     use super::*;
     use hyper_use_core::{Action, RegionId};
 
@@ -657,6 +657,65 @@ mod exact_errors {
         assert_eq!(
             err,
             BrowserError::DuplicateRegion("duplicate region id `n100`".into())
+        );
+    }
+
+    #[test]
+    fn press_marks_the_observation_stale_and_observe_clears_it() {
+        let page = PageSpec::new(
+            vec![DomSpec::button(
+                10,
+                100,
+                "Sign in",
+                (400.0, 300.0, 80.0, 32.0),
+            )],
+            vec![AxSpec::new(
+                100,
+                "button",
+                "Sign in",
+                (400.0, 300.0, 80.0, 32.0),
+            )],
+            "https://example.test/sign-in",
+            "Sign in",
+        );
+        let after = PageSpec::new(
+            vec![DomSpec::button(
+                20,
+                200,
+                "Welcome",
+                (400.0, 300.0, 80.0, 32.0),
+            )],
+            vec![AxSpec::new(
+                200,
+                "button",
+                "Welcome",
+                (400.0, 300.0, 80.0, 32.0),
+            )],
+            "https://example.test/welcome",
+            "Welcome",
+        );
+        let script = ScriptBuilder::new()
+            .observe(&page)
+            .dom_click(10)
+            .observe(&after)
+            .to_json();
+        let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+        session.observe().unwrap();
+        assert!(!session.is_stale());
+        assert!(session.fresh_manifold().is_some());
+        session
+            .press(&RegionId::try_new("n100").unwrap(), Action::Click)
+            .unwrap();
+        assert!(session.is_stale());
+        assert!(session.fresh_manifold().is_none());
+        // The stored manifold is still there for inspect of the last view, but
+        // it must not be reused as an act's before.
+        assert!(session.manifold().is_some());
+        session.observe().unwrap();
+        assert!(!session.is_stale());
+        assert_eq!(
+            session.manifold().unwrap().get_str("n200").unwrap().label(),
+            "Welcome"
         );
     }
 }

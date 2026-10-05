@@ -322,12 +322,15 @@ fn ax_flag(node: &Value, name: &str) -> bool {
     })
 }
 
-/// URL and title of the current history entry. An empty history omits both.
+/// URL and title of the current history entry. `None` when there is no
+/// current entry, so the page state is unknown.
 /// This does not read a timestamp: `Page.getNavigationHistory` has none.
-pub(crate) fn navigation_entry(history_json: &str) -> Result<(String, String), BrowserError> {
+pub(crate) fn navigation_entry(
+    history_json: &str,
+) -> Result<Option<(String, String)>, BrowserError> {
     let value = parse_json(history_json)?;
     let Some(entries) = value.get("entries").and_then(Value::as_array) else {
-        return Ok((String::new(), String::new()));
+        return Ok(None);
     };
     let index = value
         .get("currentIndex")
@@ -337,7 +340,7 @@ pub(crate) fn navigation_entry(history_json: &str) -> Result<(String, String), B
         .ok()
         .and_then(|index| entries.get(index))
     else {
-        return Ok((String::new(), String::new()));
+        return Ok(None);
     };
     let url = entry
         .get("url")
@@ -349,7 +352,7 @@ pub(crate) fn navigation_entry(history_json: &str) -> Result<(String, String), B
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    Ok((url, title))
+    Ok(Some((url, title)))
 }
 
 fn direct_text(node: &Value) -> String {

@@ -24,9 +24,10 @@
 //!
 //! Accepted downside: two same-label, same-role controls whose centers are
 //! within 8px can fuse even when IoU is low. A second accessibility node for
-//! the same DOM node is left over; it is not deleted.
+//! the same DOM node is left over; it is not deleted. Two AX-only nodes that
+//! share a backend id are kept as `ax{id}` and `ax{id}-{k}`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyper_use_core::{
     token_jaccard, InteractionManifold, InteractionRegion, Rect, RegionFlags, RegionId,
@@ -157,8 +158,9 @@ pub(crate) fn fuse(
     }
 
     let mut ids = Vec::with_capacity(fused.len());
+    let mut used: BTreeSet<RegionId> = BTreeSet::new();
     for node in &fused {
-        ids.push(region_id(node)?);
+        ids.push(unique_region_id(node, &mut used)?);
     }
     let present: std::collections::BTreeSet<&RegionId> = ids.iter().collect();
     let mut regions = Vec::new();
@@ -250,8 +252,8 @@ fn iou(left: Rect, right: Rect) -> f64 {
     }
 }
 
-fn region_id(node: &RawNode) -> Result<RegionId, BrowserError> {
-    let raw = if node.from_dom {
+fn preferred_id(node: &RawNode) -> String {
+    if node.from_dom {
         match node.backend_node_id {
             Some(id) => format!("n{id}"),
             None => match node.dom_node_id {
@@ -264,8 +266,37 @@ fn region_id(node: &RawNode) -> Result<RegionId, BrowserError> {
             Some(id) => format!("ax{id}"),
             None => "ax-unknown".to_owned(),
         }
-    };
-    RegionId::try_new(raw).map_err(|err| BrowserError::DuplicateRegion(err.to_string()))
+    }
+}
+
+/// Prefer `n{backend}` / `ax{backend}`. A second AX-only node that would
+/// collide is minted as `{preferred}-{k}` so observe does not fail. Two DOM
+/// nodes with one backend are still a duplicate: that is a Chrome bug, not a
+/// second AX node.
+fn unique_region_id(
+    node: &RawNode,
+    used: &mut BTreeSet<RegionId>,
+) -> Result<RegionId, BrowserError> {
+    let preferred = preferred_id(node);
+    let mut candidate = RegionId::try_new(&preferred)
+        .map_err(|err| BrowserError::DuplicateRegion(err.to_string()))?;
+    if used.insert(candidate.clone()) {
+        return Ok(candidate);
+    }
+    if node.from_dom {
+        return Err(BrowserError::DuplicateRegion(format!(
+            "duplicate region id `{preferred}`"
+        )));
+    }
+    let mut k = 2u32;
+    loop {
+        candidate = RegionId::try_new(format!("{preferred}-{k}"))
+            .map_err(|err| BrowserError::DuplicateRegion(err.to_string()))?;
+        if used.insert(candidate.clone()) {
+            return Ok(candidate);
+        }
+        k += 1;
+    }
 }
 
 fn to_region(
@@ -442,6 +473,20 @@ mod tests {
             .unwrap()
             .sources()
             .contains(SourceMask::ACCESSIBILITY));
+    }
+
+    #[test]
+    fn two_ax_nodes_with_one_backend_id_stay_separate() {
+        // Reproduce: two accessibility-only nodes share a backend and no DOM
+        // partner. Observe must not fail with DuplicateRegion.
+        let left = with_backend(ax("Sign in", Role::Button, 400.0), 100);
+        let right = with_backend(ax("Cancel", Role::Button, 500.0), 100);
+        let (merged, _) = fuse(viewport(), &[], &[left, right]).unwrap();
+        assert_eq!(merged.len(), 2);
+        let ids: Vec<_> = merged.ids().map(|id| id.as_str().to_owned()).collect();
+        assert_eq!(ids, ["ax100", "ax100-2"]);
+        assert_eq!(merged.get_str("ax100").unwrap().label(), "Sign in");
+        assert_eq!(merged.get_str("ax100-2").unwrap().label(), "Cancel");
     }
 
     #[test]

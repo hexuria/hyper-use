@@ -761,7 +761,8 @@ fn act_closed_loop_reports_delta_and_verifies_welcome() {
             "moved": [],
             "text_changed": [],
             "focus_changed": false,
-            "url_changed": true
+            "url_changed": true,
+            "title_changed": true
         })
     );
     assert_eq!(body["before_snapshot"], 1);
@@ -796,7 +797,8 @@ fn act_closed_loop_verify_failure_is_executed_true_verified_false() {
             "moved": [],
             "text_changed": [],
             "focus_changed": false,
-            "url_changed": false
+            "url_changed": false,
+            "title_changed": false
         })
     );
     assert_eq!(body["signals"], json!([{"kind": "no-op"}]));
@@ -1073,4 +1075,93 @@ fn remaining_tool_errors_are_exact() {
     std::fs::write(&bad, "not a manifold\n").unwrap();
     let err = call("observe", json!({"fixture": bad.to_str().unwrap()})).unwrap_err();
     assert!(matches!(err, ToolError::Fixture(_)), "{err:?}");
+}
+
+#[test]
+fn stale_before_is_not_reused_after_a_press_without_observe_after() {
+    use hyper_use_browser::script::{AxSpec, DomSpec, PageSpec, ScriptBuilder};
+
+    let before = PageSpec::new(
+        vec![DomSpec::button(
+            10,
+            100,
+            "Sign in",
+            (400.0, 300.0, 80.0, 32.0),
+        )],
+        vec![AxSpec::new(
+            100,
+            "button",
+            "Sign in",
+            (400.0, 300.0, 80.0, 32.0),
+        )],
+        "https://example.test/sign-in",
+        "Sign in",
+    );
+    let after_press = PageSpec::new(
+        vec![DomSpec::button(
+            20,
+            200,
+            "Welcome",
+            (400.0, 300.0, 80.0, 32.0),
+        )],
+        vec![AxSpec::new(
+            200,
+            "button",
+            "Welcome",
+            (400.0, 300.0, 80.0, 32.0),
+        )],
+        "https://example.test/welcome",
+        "Welcome",
+    );
+    // observe (first act, observe_after false) + DOM click + observe (second act) + DOM click
+    // + observe (observe_after true on second) .
+    let script = ScriptBuilder::new()
+        .observe(&before)
+        .dom_click(10)
+        .observe(&after_press)
+        .dom_click(20)
+        .observe(&after_press)
+        .to_json();
+    let path = std::env::temp_dir().join("hyper-use-stale-before.cdp.json");
+    std::fs::write(&path, &script).unwrap();
+    let path = path.to_str().unwrap();
+
+    let mut server = Server::new();
+    let first = server
+        .call_tool(
+            "act",
+            &json!({
+                "fixture": path,
+                "region": "n100",
+                "observe_after": false
+            }),
+        )
+        .unwrap();
+    assert_eq!(first["executed"], true);
+    assert_eq!(first["after_snapshot"], Value::Null);
+
+    // A second act on the same fixture rebuilds a fresh session (fixture
+    // origins do not keep a transport). Use a live-shaped path by observing
+    // through one Server with a CDP fixture twice is not live. Exercise the
+    // session API directly instead.
+    use hyper_use_browser::{BrowserSession, ReplayTransport};
+    let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+    session.observe().unwrap();
+    assert!(!session.is_stale());
+    assert!(session.fresh_manifold().is_some());
+    session
+        .press(
+            &hyper_use_core::RegionId::try_new("n100").unwrap(),
+            hyper_use_core::Action::Click,
+        )
+        .unwrap();
+    assert!(session.is_stale());
+    assert!(session.fresh_manifold().is_none());
+    // A new observe clears the flag.
+    session.observe().unwrap();
+    assert!(!session.is_stale());
+    assert_eq!(
+        session.manifold().unwrap().get_str("n200").unwrap().label(),
+        "Welcome"
+    );
 }

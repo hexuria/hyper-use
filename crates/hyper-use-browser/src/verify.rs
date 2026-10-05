@@ -54,7 +54,7 @@ pub enum VerifyError {
         id: String,
     },
     EmptyExpectation,
-    /// The diff is empty and the page state is unchanged.
+    /// The diff is empty and the known page state is unchanged.
     NoEffect,
     RegionDidNotAppear {
         id: String,
@@ -128,13 +128,15 @@ pub fn verify(
 }
 
 /// Delta postcondition. [`VerifyError::NoEffect`] when nothing in the region
-/// diff or the page state changed, before the specific expectation is checked.
+/// diff or the page state changed and both page states are known, before the
+/// specific expectation is checked. With an unknown page state an empty diff is
+/// not called no-effect: the URL may have changed unseen.
 pub fn verify_delta(
     regions: &ManifoldDiff,
     page: &PageDelta,
     expectation: &Expectation,
 ) -> Result<(), VerifyError> {
-    if regions.is_empty() && page.is_unchanged() {
+    if regions.is_empty() && page.is_unchanged() && page.is_known() {
         return Err(VerifyError::NoEffect);
     }
     match expectation {
@@ -237,7 +239,8 @@ mod tests {
         let before = manifold("Sign in", "n100");
         let regions = diff(&before, &before);
         assert!(regions.is_empty());
-        let page = page_delta(&PageState::blank(), &PageState::blank());
+        let known = PageState::new("https://example.test/", "Example", None);
+        let page = page_delta(&known, &known);
         assert!(page.is_unchanged());
         let err = verify_delta(
             &regions,
@@ -294,5 +297,24 @@ mod tests {
             Err(VerifyError::NeedsDelta)
         );
         assert_eq!(VerifyError::UrlUnchanged.to_string(), "url did not change");
+    }
+
+    #[test]
+    fn unknown_page_state_is_never_no_effect() {
+        let before = manifold("Sign in", "n100");
+        let regions = diff(&before, &before);
+        let known = PageState::new("https://example.test/", "Example", None);
+        for (left, right) in [
+            (PageState::blank(), PageState::blank()),
+            (PageState::blank(), known.clone()),
+            (known.clone(), PageState::blank()),
+        ] {
+            let page = page_delta(&left, &right);
+            assert_eq!(
+                verify_delta(&regions, &page, &Expectation::url_changed()),
+                Err(VerifyError::UrlUnchanged),
+                "{left:?} {right:?}"
+            );
+        }
     }
 }

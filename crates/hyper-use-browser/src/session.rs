@@ -42,6 +42,9 @@ pub struct BrowserSession<T: CdpTransport> {
     page: Option<PageState>,
     bindings: BTreeMap<RegionId, NodeBinding>,
     identity: IdentityMap,
+    /// A press ran after the stored observation. The page may have changed,
+    /// so the stored manifold and bindings must not be reused as `before`.
+    stale: bool,
 }
 
 impl<T: CdpTransport> BrowserSession<T> {
@@ -52,6 +55,7 @@ impl<T: CdpTransport> BrowserSession<T> {
             page: None,
             bindings: BTreeMap::new(),
             identity: IdentityMap::default(),
+            stale: false,
         }
     }
 
@@ -69,6 +73,22 @@ impl<T: CdpTransport> BrowserSession<T> {
 
     pub fn page(&self) -> Option<&PageState> {
         self.page.as_ref()
+    }
+
+    /// The stored observation, only if no press ran after it. A caller that
+    /// reuses an observation as an act's `before` must use this, not
+    /// [`Self::manifold`].
+    pub fn fresh_manifold(&self) -> Option<&InteractionManifold> {
+        if self.stale {
+            None
+        } else {
+            self.manifold.as_ref()
+        }
+    }
+
+    /// A press ran after the last observation.
+    pub fn is_stale(&self) -> bool {
+        self.stale
     }
 
     pub fn observe(&mut self) -> Result<&InteractionManifold, BrowserError> {
@@ -108,6 +128,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         self.bindings = bindings;
         self.page = Some(page);
         self.manifold = Some(manifold);
+        self.stale = false;
         Ok(self.manifold.as_ref().expect("observation just stored"))
     }
 
@@ -125,6 +146,8 @@ impl<T: CdpTransport> BrowserSession<T> {
             .get(id)
             .cloned()
             .ok_or_else(|| BrowserError::UnknownRegion(id.to_string()))?;
+        // From here CDP click calls may reach the page, even if one fails.
+        self.stale = true;
         if let Some(node_id) = binding.dom_node_id {
             if self.try_semantic_click(json!({"nodeId": node_id}))? {
                 return Ok(ActMechanism::DomSemantic);
@@ -144,16 +167,15 @@ impl<T: CdpTransport> BrowserSession<T> {
         verify::verify(manifold, expectation).map_err(BrowserError::Verify)
     }
 
-    /// Protocol errors omit the URL and title. Every other failure aborts.
+    /// A protocol error or an empty history leaves URL and title unknown.
+    /// Every other failure aborts.
     fn read_page(&mut self, focused: Option<RegionId>) -> Result<PageState, BrowserError> {
         match self.call("Page.getNavigationHistory", &json!({}).to_string()) {
-            Ok(body) => {
-                let (url, title) = extract::navigation_entry(&body)?;
-                Ok(PageState::new(url, title, focused))
-            }
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => {
-                Ok(PageState::new(String::new(), String::new(), focused))
-            }
+            Ok(body) => Ok(match extract::navigation_entry(&body)? {
+                Some((url, title)) => PageState::new(url, title, focused),
+                None => PageState::unknown(focused),
+            }),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(PageState::unknown(focused)),
             Err(other) => Err(other),
         }
     }

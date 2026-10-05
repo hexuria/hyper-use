@@ -16,6 +16,7 @@ mod fusion;
 mod identity;
 mod page;
 mod replay;
+pub mod script;
 mod session;
 mod transport;
 mod verify;
@@ -587,6 +588,75 @@ mod phase2 {
         assert_eq!(
             err.to_string(),
             "no scripted CDP response for `Page.getNavigationHistory`"
+        );
+    }
+}
+
+#[cfg(test)]
+mod exact_errors {
+    use super::script::{DomSpec, PageSpec, ScriptBuilder};
+    use super::*;
+    use hyper_use_core::{Action, RegionId};
+
+    #[test]
+    fn a_scripted_cdp_error_is_the_exact_protocol_error() {
+        let mut transport =
+            ReplayTransport::parse(r#"{"calls":[{"method":"DOM.resolveNode","error":"boom"}]}"#)
+                .unwrap();
+        assert_eq!(
+            transport.call("DOM.resolveNode", "{}"),
+            Err(CdpError::Protocol {
+                message: "boom".into()
+            })
+        );
+    }
+
+    #[test]
+    fn session_verify_wraps_the_exact_verify_error() {
+        let transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let mut session = BrowserSession::new(transport);
+        session.observe().unwrap();
+        let err = session
+            .verify(&Expectation::text_present("Welcome").unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BrowserError::Verify(VerifyError::ExpectedTextMissing {
+                expected: "Welcome".into()
+            })
+        );
+    }
+
+    #[test]
+    fn press_on_an_unknown_region_is_exact() {
+        let transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        let mut session = BrowserSession::new(transport);
+        session.observe().unwrap();
+        let err = session
+            .press(&RegionId::try_new("nope").unwrap(), Action::Click)
+            .unwrap_err();
+        assert_eq!(err, BrowserError::UnknownRegion("nope".into()));
+    }
+
+    #[test]
+    fn two_dom_nodes_with_one_backend_id_are_the_exact_duplicate_error() {
+        let page = PageSpec::new(
+            vec![
+                DomSpec::button(10, 100, "Sign in", (400.0, 300.0, 80.0, 32.0)),
+                DomSpec::button(20, 100, "Cancel", (400.0, 360.0, 80.0, 32.0)),
+            ],
+            Vec::new(),
+            "https://example.test/",
+            "Example",
+        );
+        let script = ScriptBuilder::new().observe(&page).to_json();
+        let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+        let err = session.observe().unwrap_err();
+        assert_eq!(
+            err,
+            BrowserError::DuplicateRegion("duplicate region id `n100`".into())
         );
     }
 }

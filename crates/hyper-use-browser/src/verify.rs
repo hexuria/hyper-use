@@ -248,4 +248,51 @@ mod tests {
         assert_eq!(err, VerifyError::NoEffect);
         assert_eq!(err.to_string(), "act changed nothing");
     }
+
+    #[test]
+    fn delta_expectations_are_exact_errors() {
+        let before = manifold("Sign in", "n100");
+        let after = manifold("Welcome", "n300");
+        let regions = diff(&before, &after);
+        let page = page_delta(&PageState::blank(), &PageState::blank());
+        let n100 = RegionId::try_new("n100").unwrap();
+        let n300 = RegionId::try_new("n300").unwrap();
+        assert_eq!(
+            verify_delta(&regions, &page, &Expectation::appeared(n100.clone())),
+            Err(VerifyError::RegionDidNotAppear { id: "n100".into() })
+        );
+        assert_eq!(
+            verify_delta(&regions, &page, &Expectation::disappeared(n300.clone())),
+            Err(VerifyError::RegionDidNotDisappear { id: "n300".into() })
+        );
+        assert_eq!(
+            verify_delta(&regions, &page, &Expectation::url_changed()),
+            Err(VerifyError::UrlUnchanged)
+        );
+        assert_eq!(
+            verify_delta(
+                &regions,
+                &page,
+                &Expectation::text_present("Welcome").unwrap()
+            ),
+            Err(VerifyError::NotADeltaExpectation)
+        );
+        assert_eq!(
+            verify_delta(&regions, &page, &Expectation::appeared(n300.clone())),
+            Ok(())
+        );
+        assert_eq!(
+            verify_delta(&regions, &page, &Expectation::disappeared(n100)),
+            Ok(())
+        );
+        assert_eq!(
+            verify(&after, &Expectation::appeared(n300)),
+            Err(VerifyError::NeedsDelta)
+        );
+        assert_eq!(
+            verify(&after, &Expectation::url_changed()),
+            Err(VerifyError::NeedsDelta)
+        );
+        assert_eq!(VerifyError::UrlUnchanged.to_string(), "url did not change");
+    }
 }

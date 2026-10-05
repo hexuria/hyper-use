@@ -1015,3 +1015,62 @@ fn raw_confidence_just_below_the_gate_does_not_press() {
     assert_eq!(body["fallback"], "low-confidence");
     assert_eq!(body["mechanism"], Value::Null);
 }
+
+#[test]
+fn remaining_tool_errors_are_exact() {
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cdp.json"),
+            "region": "n100",
+            "executor": "nope"
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::UnknownExecutor("nope".into()));
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "UnknownExecutor", "name": "nope"})
+    );
+
+    let err = call(
+        "diff",
+        json!({
+            "before_snapshot": -1,
+            "after_snapshot": 1
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(err, ToolError::BadSnapshot("-1".into()));
+    assert_eq!(
+        err.to_value(),
+        json!({"variant": "BadSnapshot", "value": "-1"})
+    );
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cdp.json"),
+            "region": "n100",
+            "executor": "browser-use"
+        }),
+    )
+    .unwrap_err();
+    assert!(matches!(err, ToolError::BrowserUseScript { .. }), "{err:?}");
+
+    let err = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in.cdp.json"),
+            "region": "n100",
+            "executor": "cua"
+        }),
+    )
+    .unwrap_err();
+    assert!(matches!(err, ToolError::CuaScript { .. }), "{err:?}");
+
+    let bad = std::env::temp_dir().join("hyper-use-bad.manifold");
+    std::fs::write(&bad, "not a manifold\n").unwrap();
+    let err = call("observe", json!({"fixture": bad.to_str().unwrap()})).unwrap_err();
+    assert!(matches!(err, ToolError::Fixture(_)), "{err:?}");
+}

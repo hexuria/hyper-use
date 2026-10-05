@@ -1127,4 +1127,50 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn compare_errors_are_exact() {
+        use hyper_use_core::Rect;
+
+        let missing = std::env::temp_dir().join("hyper-use-missing-fixtures");
+        let err = fixture_compare(&missing).unwrap_err();
+        assert!(matches!(err, CompareError::Io { .. }), "{err:?}");
+
+        let err = CompareError::Fixture("broken".into());
+        assert_eq!(err.to_string(), "fixture: broken");
+        let err = CompareError::Locate("empty text".into());
+        assert_eq!(err.to_string(), "locate: empty text");
+        let err = CompareError::Corpus {
+            path: "cases.tsv".into(),
+            message: "no cases".into(),
+        };
+        assert_eq!(err.to_string(), "eval corpus cases.tsv: no cases");
+        assert_eq!(
+            CompareError::TransportCalledBelowThreshold.to_string(),
+            "scored confidence is below 0.55 but the transport was called"
+        );
+
+        // EmptyRank through a real empty manifold.
+        let page = InteractionManifold::try_new(
+            Rect::try_viewport(0.0, 0.0, 100.0, 100.0).unwrap(),
+            Vec::new(),
+            0,
+        )
+        .unwrap();
+        let ranked = WeightedMatcher::default()
+            .rank(&LocateQuery::new().text("x").unwrap(), &page)
+            .unwrap();
+        assert!(ranked.is_empty());
+        assert_eq!(
+            CompareError::EmptyRank {
+                fixture: "empty".into()
+            }
+            .to_string(),
+            "empty has no regions to rank"
+        );
+
+        // TransportCalledBelowThreshold is unreachable with BrowserExecutor:
+        // gate_confidence runs before press, so a refusal never logs a CDP call.
+        // The Display assert above is the owner for that variant.
+    }
 }

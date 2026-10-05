@@ -36,6 +36,8 @@ path = "src/main.rs"
 default = []
 # Optional System One client. Not part of `cargo build` or `cargo test`.
 jev = ["dep:typesafe-sdk", "dep:serde_json"]
+# Experimental HGRA matcher (wires into hyper-use-mcp / mcp locate+guard).
+hgra = ["hyper-use-mcp/hgra"]
 
 [dependencies.typesafe-sdk]
 version = "0.2.0"

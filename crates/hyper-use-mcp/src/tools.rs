@@ -23,6 +23,8 @@ use hyper_use_protocol::{GuardDecision, StateDelta};
 use hyper_use_resonance::{
     separating_zone, ContextScope, Match, RegionMatcher, RegionState, WeightedMatcher,
 };
+#[cfg(feature = "hgra")]
+use hyper_use_resonance::{Dims, HgraMatcher, ResonanceModel};
 use serde_json::{json, Value};
 
 use crate::error::ToolError;
@@ -89,6 +91,30 @@ fn world_json(manifold: &InteractionManifold, page: &PageState) -> (Value, Value
         })
         .collect();
     (focused, Value::Array(layer))
+}
+
+
+/// Explicit `matcher` arg wins; else `HYPER_USE_MATCHER`; else weighted.
+fn resolve_matcher_name(arguments: &Value) -> Result<String, ToolError> {
+    if let Some(name) = opt_str(arguments, "matcher")? {
+        return Ok(name.to_owned());
+    }
+    match std::env::var("HYPER_USE_MATCHER") {
+        Ok(name) if !name.is_empty() => Ok(name),
+        _ => Ok("weighted".into()),
+    }
+}
+
+#[cfg(feature = "hgra")]
+fn hgra_matcher(arguments: &Value) -> Result<HgraMatcher, ToolError> {
+    let dims = match opt_u64(arguments, "dims")? {
+        Some(n) => {
+            let width = usize::try_from(n).map_err(|_| ToolError::BadDims(n.to_string()))?;
+            Dims::try_from_usize(width).map_err(|_| ToolError::BadDims(n.to_string()))?
+        }
+        None => Dims::DEFAULT,
+    };
+    Ok(HgraMatcher::new(dims, ResonanceModel::V1))
 }
 
 /// Run one tool against a fresh [`Server`]. Keeps no state between calls.
@@ -181,12 +207,12 @@ fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     let near = parse_near(arguments)?;
     let query = with_near(build_query(arguments)?, near.as_ref(), &page);
     let manifold = with_front_layer(&raw);
-    let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
+    let matcher_name = resolve_matcher_name(arguments)?;
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
         return Err(ToolError::DimsRequireHgra);
     }
-    let ranked = rank(&manifold, &query, matcher_name, arguments)?;
-    let key = QueryKey::new(&query, matcher_name, opt_u64(arguments, "dims")?);
+    let ranked = rank(&manifold, &query, &matcher_name, arguments)?;
+    let key = QueryKey::new(&query, &matcher_name, opt_u64(arguments, "dims")?);
     let count = server.record_locate(&origin_key(&origin), &raw, key);
     let top = ranked.first();
     let target = match top {
@@ -252,19 +278,30 @@ fn rank(
     matcher: &str,
     arguments: &Value,
 ) -> Result<Vec<Match>, ToolError> {
-    let dims = opt_str(arguments, "dims")?;
     match matcher {
         "weighted" => {
-            if dims.is_some() {
+            if opt_u64(arguments, "dims")?.is_some() {
                 return Err(ToolError::DimsRequireHgra);
             }
             WeightedMatcher::default()
                 .rank(query, manifold)
                 .map_err(|err| ToolError::Ranker(err.to_string()))
         }
-        "hgra" => Err(ToolError::UnknownMatcher(
-            "hgra is an experiment; build with hyper-use-resonance feature `hgra`".into(),
-        )),
+        "hgra" => {
+            #[cfg(feature = "hgra")]
+            {
+                hgra_matcher(arguments)?
+                    .rank(query, manifold)
+                    .map_err(|err| ToolError::Ranker(err.to_string()))
+            }
+            #[cfg(not(feature = "hgra"))]
+            {
+                let _ = arguments;
+                Err(ToolError::UnknownMatcher(
+                    "hgra is an experiment; build with hyper-use-resonance feature `hgra`".into(),
+                ))
+            }
+        }
         other => Err(ToolError::UnknownMatcher(other.to_owned())),
     }
 }
@@ -318,9 +355,19 @@ fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError
         }
         None => None,
     };
-    let matcher_name = opt_str(arguments, "matcher")?.unwrap_or("weighted");
-    if matcher_name != "weighted" {
-        return Err(ToolError::UnknownMatcher(matcher_name.to_owned()));
+    let matcher_name = resolve_matcher_name(arguments)?;
+    if arguments.get("dims").is_some() && matcher_name != "hgra" {
+        return Err(ToolError::DimsRequireHgra);
+    }
+    match matcher_name.as_str() {
+        "weighted" | "hgra" => {}
+        other => return Err(ToolError::UnknownMatcher(other.to_owned())),
+    }
+    #[cfg(not(feature = "hgra"))]
+    if matcher_name == "hgra" {
+        return Err(ToolError::UnknownMatcher(
+            "hgra is an experiment; build with hyper-use-resonance feature `hgra`".into(),
+        ));
     }
     // The observation the host decided on. Its world snapshot (focus, dialogs,
     // clickable ids, occluded set) is compared with the world observed now.
@@ -350,9 +397,16 @@ fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError
     if let Some(seen) = seen {
         request = request.seen_world(seen);
     }
-    let decision = guard_with(&manifold, &request, &WeightedMatcher::default())
-        .map_err(|err| ToolError::Ranker(err.to_string()))?;
+    let decision = match matcher_name.as_str() {
+        "weighted" => guard_with(&manifold, &request, &WeightedMatcher::default())
+            .map_err(|err| ToolError::Ranker(err.to_string()))?,
+        #[cfg(feature = "hgra")]
+        "hgra" => guard_with(&manifold, &request, &hgra_matcher(arguments)?)
+            .map_err(|err| ToolError::Ranker(err.to_string()))?,
+        _ => unreachable!("matcher vetted above"),
+    };
     let mut body = decision_json("guard", snapshot, &manifold, decision);
+    insert(&mut body, "matcher", json!(matcher_name));
     let (focused, front_layer) = world_json(&manifold, &page);
     insert(&mut body, "focused", focused);
     insert(&mut body, "front_layer", front_layer);

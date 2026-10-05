@@ -33,12 +33,12 @@ use hyper_use_core::{token_recall, InteractionRegion, LocateQuery, Rect};
 use hyper_use_core::{InteractionManifold, RegionId, SourceMask};
 use hyper_use_geometry::{is_fully_offscreen, normalize, zones};
 #[cfg(feature = "hgra")]
-use hyper_use_hyper::{cosine, Dims, Encoder};
+use hyper_use_hyper::{cosine, Encoder};
 
 pub use context::ContextScope;
 pub use error::ResonanceError;
 #[cfg(feature = "hgra")]
-pub use hyper_use_hyper::BipolarVector;
+pub use hyper_use_hyper::{BipolarVector, Dims};
 pub use model::{PenaltyBasisPoints, ResonanceModel, WeightBasisPoints};
 pub use state::{separating_zone, Availability, RegionState, Visibility};
 

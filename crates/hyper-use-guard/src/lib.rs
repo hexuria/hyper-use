@@ -50,7 +50,9 @@ pub use ticket::consume_ticket;
 pub use ticket::{
     consume_ticket_once, issue_ticket, revalidate, world_fingerprint, ConsumeError, TicketLedger,
 };
-pub use world::{blocker, neighborhood_of, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
+pub use world::{
+    blocker, neighborhood_of, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot,
+};
 
 /// Raw confidence below this never allows. Not a probability.
 /// Host / MCP preflight allow floor. The owned agent path does **not** use
@@ -345,10 +347,7 @@ fn decide(
     // already filtered most of these; this keeps MCP Allow tickets aligned
     // with `gate` (including future hard refuses such as readonly on Type).
     if let Err(reason) = crate::gate::check(raw, raw_region, request.action()) {
-        return Ok(GuardDecision::Refuse {
-            reason,
-            candidates,
-        });
+        return Ok(GuardDecision::Refuse { reason, candidates });
     }
 
     if top_conf < MIN_ALLOW_CONFIDENCE {

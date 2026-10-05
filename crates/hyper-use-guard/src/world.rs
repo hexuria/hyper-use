@@ -209,7 +209,6 @@ pub fn with_front_layer(manifold: &InteractionManifold) -> InteractionManifold {
     out
 }
 
-
 /// Maximum center-to-center distance (CSS px) for two root-level regions to
 /// count as "nearby siblings" when they share no parent link.
 const NEIGHBOR_RADIUS_PX: f64 = 160.0;
@@ -545,7 +544,8 @@ mod tests {
                 "",
             ),
         ]);
-        let ticket_world = WorldSnapshot::of_target(&before, None, &RegionId::try_new("go").unwrap());
+        let ticket_world =
+            WorldSnapshot::of_target(&before, None, &RegionId::try_new("go").unwrap());
         let with_banner = page(vec![
             region(
                 "go",
@@ -576,7 +576,8 @@ mod tests {
                 "",
             ),
         ]);
-        let after_world = WorldSnapshot::of_target(&with_banner, None, &RegionId::try_new("go").unwrap());
+        let after_world =
+            WorldSnapshot::of_target(&with_banner, None, &RegionId::try_new("go").unwrap());
         assert_eq!(ticket_world, after_world);
 
         // Whole-page snapshot still sees the banner.
@@ -588,17 +589,15 @@ mod tests {
 
     #[test]
     fn target_scoped_world_sees_target_swap_and_modal() {
-        let before = page(vec![
-            region(
-                "go",
-                Role::Button,
-                "Go",
-                (20.0, 20.0, 80.0, 30.0),
-                None,
-                DOM,
-                "",
-            ),
-        ]);
+        let before = page(vec![region(
+            "go",
+            Role::Button,
+            "Go",
+            (20.0, 20.0, 80.0, 30.0),
+            None,
+            DOM,
+            "",
+        )]);
         let world = WorldSnapshot::of_target(&before, None, &RegionId::try_new("go").unwrap());
 
         // Nearby twin replaces the action space around the target.

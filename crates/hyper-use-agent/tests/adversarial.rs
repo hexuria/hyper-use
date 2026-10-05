@@ -388,14 +388,12 @@ fn multi_step_type_then_click_runs_both_clauses() {
     use hyper_use_agent::TickResult;
     // Keep Go on the page; add a result so the click is state-changed. Removing
     // Go would make the post-click predict abstain before PUA can choose DONE.
-    let after_go = m(
-        r#"
+    let after_go = m(r#"
         viewport w=800 h=600
         region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
         region id=go role=button label="Go" x=320 y=10 w=60 h=24 actions=click sources=dom,accessibility
         region id=result role=text label="ok" x=10 y=50 w=100 h=20 actions=focus sources=dom,accessibility
-        "#,
-    );
+        "#);
     let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
         .max_steps(10)
         .build(r#"Type "rust" into Search then click Go"#);
@@ -434,18 +432,14 @@ fn multi_step_type_then_click_runs_both_clauses() {
 
 #[test]
 fn readonly_flipped_after_predict_refuses_at_executor_gate() {
-    let editable = m(
-        r#"
+    let editable = m(r#"
         viewport w=800 h=600
         region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
-        "#,
-    );
-    let locked = m(
-        r#"
+        "#);
+    let locked = m(r#"
         viewport w=800 h=600
         region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility flags=readonly
-        "#,
-    );
+        "#);
     let mut agent = AgentBuilder::new(MockBrowser::new(editable), PuaPolicy::default())
         .max_steps(3)
         .build(r#"Type "x" into Search"#);

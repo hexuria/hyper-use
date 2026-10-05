@@ -590,8 +590,12 @@ where
 #[derive(Clone, Debug)]
 pub enum TickResult {
     Stepped(StepRecord),
-    StaleDiscarded { reason: String },
+    StaleDiscarded {
+        reason: String,
+    },
     /// Multi-step goal moved to the next `then` clause; keep ticking.
-    ClauseAdvanced { next_clause: String },
+    ClauseAdvanced {
+        next_clause: String,
+    },
     Finished(AgentOutcome),
 }

@@ -279,7 +279,6 @@ mod tests {
         assert!(out.contains("CLICK:go"), "{out}");
     }
 
-
     #[test]
     fn checked_in_agent_fixtures_run_full_loop() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
@@ -304,16 +303,13 @@ mod tests {
                 eprintln!("skip missing fixture {}", path.display());
                 continue;
             }
-            let out = run_command(&a(&[
-                "--goal",
-                goal,
-                "--fixture",
-                path.to_str().unwrap(),
-            ]))
-            .unwrap_or_else(|e| panic!("{file}: {e}"));
+            let out = run_command(&a(&["--goal", goal, "--fixture", path.to_str().unwrap()]))
+                .unwrap_or_else(|e| panic!("{file}: {e}"));
             assert!(out.contains(needle), "{file}: {out}");
             assert!(
-                out.contains("outcome done") || out.contains("-> success") || out.contains("-> state-changed"),
+                out.contains("outcome done")
+                    || out.contains("-> success")
+                    || out.contains("-> state-changed"),
                 "{file}: {out}"
             );
         }
@@ -326,11 +322,15 @@ mod tests {
             return;
         }
         use hyper_use_browser::script::{Control, PageSpec, ScriptBuilder};
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures");
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
         // TYPE_TEXT full loop
         let search = PageSpec::of(
-            &[Control::text_field(10, 100, "Search", (20.0, 20.0, 300.0, 28.0))],
+            &[Control::text_field(
+                10,
+                100,
+                "Search",
+                (20.0, 20.0, 300.0, 28.0),
+            )],
             "http://127.0.0.1/search",
             "Search",
         );
@@ -341,7 +341,11 @@ mod tests {
             .observe(&search)
             .dom_read_value(10, "rust", "")
             .observe(&search);
-        std::fs::write(root.join("agent-type-search.cdp.json"), type_script.to_json()).unwrap();
+        std::fs::write(
+            root.join("agent-type-search.cdp.json"),
+            type_script.to_json(),
+        )
+        .unwrap();
         // CLICK full loop
         let click_page = PageSpec::of(
             &[Control::button(20, 200, "Go", (20.0, 60.0, 80.0, 28.0))],
@@ -378,6 +382,10 @@ mod tests {
             .observe(&select_page)
             .dom_read_value(30, "Business", "Business")
             .observe(&select_page);
-        std::fs::write(root.join("agent-select-cabin.cdp.json"), select_script.to_json()).unwrap();
+        std::fs::write(
+            root.join("agent-select-cabin.cdp.json"),
+            select_script.to_json(),
+        )
+        .unwrap();
     }
 }

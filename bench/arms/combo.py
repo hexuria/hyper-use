@@ -3,7 +3,7 @@ A8 (Luna + JEV + hyper-use + Browser Use). Protocol: ``bench/arms/COMBO.md``.
 
 Roles, one owner each:
 - Luna (GPT 6 Luna, OpenCodex) is the planner: a tool-calling loop that states intents.
-- hyper-use (``hyper-use mcp`` over CDP) observes, locates, presses, and reports the page delta.
+- hyper-use (``hyper-use mcp`` over CDP) observes and locates; this harness CDP-clicks after a confidence-gated pick (product ``act``/``guard`` never clicks).
 - JEV (TypeSafe systemone) picks one candidate id whenever the deterministic ranker
   cannot separate the top two (hyper-use's own act gate: top >= 0.55 and margin >= 0.05),
   and for executor fallbacks when the label match is not clear. JEV always has a NONE option.
@@ -126,6 +126,45 @@ def cdp_eval(cdp_http: str, server: str, expression: str):
         return None
     finally:
         ws.close()
+
+
+
+def cdp_click(cdp_http: str, server: str, x: float, y: float) -> str | None:
+    """Harness-owned click (firewall ``act``/``guard`` never presses). Returns None on success."""
+    import websocket
+
+    ws_url = page_ws_url(cdp_http, server)
+    if not ws_url:
+        return "no page websocket"
+    try:
+        ws = websocket.create_connection(ws_url, timeout=5, suppress_origin=True)
+    except Exception as err:
+        return f"ws connect failed: {err}"
+    try:
+        for i, kind in enumerate(("mousePressed", "mouseReleased"), start=1):
+            ws.send(json.dumps({
+                "id": i,
+                "method": "Input.dispatchMouseEvent",
+                "params": {"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1},
+            }))
+            ws.recv()
+    except Exception as err:
+        return f"dispatchMouseEvent failed: {err}"
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+    time.sleep(0.35)
+    return None
+
+
+def region_ids(observe_raw: str) -> set[str]:
+    try:
+        data = json.loads(observe_raw.removeprefix("ERROR: "))
+    except json.JSONDecodeError:
+        return set()
+    return {str(r.get("id")) for r in (data.get("regions") or []) if r.get("id")}
 
 
 CONTAINER_JS = """(() => {
@@ -327,22 +366,68 @@ class Combo:
         if runner:
             act_args["runner_up"] = {"id": runner["id"], "confidence": round(runner["confidence"], 4)}
         self.trace.write("press", picker=picker, region=region, confidence=act_args["confidence"], runner_up=runner)
-        res = self.hcall("act", act_args)
-        if not isinstance(res, dict) or not res.get("executed"):
+        # Firewall-era ``act`` is guard-only (never clicks) and re-ranks with an empty
+        # query when only ``region``+``confidence`` are passed, so JEV's host pick
+        # always hits proposed-not-top. Restore the COMBO.md contract: after the
+        # confidence gate, this harness CDP-clicks the picked region (same as
+        # live_drive after Allow). Optionally refuse when guard says front-layer.
+        gargs = {"text": target, "proposed": region}
+        if args.get("role"):
+            gargs["role"] = args["role"]
+        if args.get("position") in {"left", "right", "top", "bottom", "center"}:
+            gargs["position"] = args["position"]
+        guard = self.hcall("guard", gargs)
+        if isinstance(guard, dict):
+            reason = guard.get("reason") or guard.get("fallback")
+            if reason == "front-layer":
+                self.stats["press_refused"] += 1
+                self.last_press_failed = target
+                return (f"REFUSED by hyper-use gate ({picker} pick {region}, confidence {act_args['confidence']}): "
+                        f"{{\"reason\": \"front-layer\"}}. Nothing was clicked.\n" + self.observe_text())
+            # proposed-not-top / low-confidence / etc.: host already disambiguated via
+            # JEV or a clear locate; click the pick (pre-firewall act semantics).
+        found = self.hcall("inspect", {"region": region})
+        if not isinstance(found, dict):
             self.stats["press_refused"] += 1
             self.last_press_failed = target
-            reason = res if isinstance(res, str) else json.dumps({k: res.get(k) for k in ("refusal", "reason", "error", "signals") if k in res})
-            return f"REFUSED by hyper-use gate ({picker} pick {region}, confidence {act_args['confidence']}): {str(reason)[:400]}. Nothing was clicked.\n" + self.observe_text()
+            return f"REFUSED: inspect failed for {region}: {str(found)[:300]}. Nothing was clicked.\n" + self.observe_text()
+        box = found.get("target") or found
+        try:
+            cx = float(box["x"]) + float(box["width"]) / 2.0
+            cy = float(box["y"]) + float(box["height"]) / 2.0
+        except (KeyError, TypeError, ValueError) as err:
+            self.stats["press_refused"] += 1
+            self.last_press_failed = target
+            return f"REFUSED: no box for {region}: {err}. Nothing was clicked.\n" + self.observe_text()
+        before_raw = self.hu.call("observe", {"cdp": self.cdp})
+        before_ids = region_ids(before_raw)
+        click_err = cdp_click(self.cdp, self.spec["server"], cx, cy)
+        if click_err:
+            self.stats["press_refused"] += 1
+            self.last_press_failed = target
+            return f"REFUSED: CDP click failed for {region}: {click_err}. Nothing was clicked.\n" + self.observe_text()
+        after_raw = self.hu.call("observe", {"cdp": self.cdp})
+        after_ids = region_ids(after_raw)
+        added_ids = sorted(after_ids - before_ids)
+        removed_ids = sorted(before_ids - after_ids)
+        # Detect label/state churn on the pressed control via a second inspect.
+        after_found = self.hcall("inspect", {"region": region})
+        changed = {}
+        if isinstance(after_found, dict):
+            at = after_found.get("target") or after_found
+            bt = box
+            if (at.get("label") or "") != (bt.get("label") or ""):
+                changed["text_changed"] = [region]
+            bst = (bt.get("state") if isinstance(bt.get("state"), dict) else {}) or {}
+            ast = (at.get("state") if isinstance(at.get("state"), dict) else {}) or {}
+            if bst != ast:
+                changed.setdefault("changed", [region])
         self.stats["press_" + ("jev" if picker == "jev" else "hyper_use")] += 1
-        delta = res.get("state_delta") or {}
-        added, removed = len(delta.get("added") or []), len(delta.get("removed") or [])
-        changed = {k: v for k, v in delta.items() if k not in ("added", "removed") and v}
-        no_effect = not added and not removed and not changed
+        no_effect = not added_ids and not removed_ids and not changed
         self.last_press_failed = target if no_effect else None
-        signals = [s.get("kind", s) if isinstance(s, dict) else s for s in res.get("signals") or []]
-        return (f"PRESSED {region} ({picker} pick, confidence {act_args['confidence']}). delta: +{added} -{removed} regions"
+        return (f"PRESSED {region} ({picker} pick, confidence {act_args['confidence']}). delta: +{len(added_ids)} -{len(removed_ids)} regions"
                 f"{' ' + json.dumps(changed)[:300] if changed else ''}{' (no visible effect)' if no_effect else ''}"
-                f"{' signals: ' + json.dumps(signals) if signals else ''}\n" + self.observe_text())
+                f"\n" + compact_observe(after_raw))
 
     def pick_executor(self, kind: str, query: str, context: str, elements: list[dict]) -> tuple[dict | None, str]:
         """elements: [{"id", "desc", "context"}] of the executor kind. Label match, JEV on ambiguity."""

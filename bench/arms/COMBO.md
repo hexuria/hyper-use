@@ -9,7 +9,7 @@ goal text, seed, viewport, and scoring as A1 to A6 (`../README.md`).
 | Piece | Owns | Does not do |
 |---|---|---|
 | Luna (planner) | The tool-calling loop: reads the page, states one intent per call (`press`, `type_text`, `select_option`, `scroll`, `fallback_click`), decides done / give up | Never sees region ids for clicks, never passes confidences |
-| hyper-use (`hyper-use mcp`, CDP) | `observe` (the page view Luna gets after every action), `locate` (ranking), `inspect` (box), `act` (the click, behind its confidence gate), state delta | Typing, select, scroll (it cannot do them today) |
+| hyper-use (`hyper-use mcp`, CDP) | `observe` (the page view Luna gets after every action), `locate` (ranking), `inspect` (box), `guard` (front-layer check; never clicks) | Typing, select, scroll, and the click itself (harness CDP-clicks after a confidence-gated pick) |
 | JEV (TypeSafe systemone, `jev-latest`) | Picks one candidate id when the deterministic ranker cannot separate the top two. Always offered a `NONE` option | Planning, writing text |
 | Executor: CUA driver (A7) / Browser Use (A8) | `type_text`, `select_option`, `scroll`, `read_page` (its own page format), and `fallback_click` | Clicking anything hyper-use could press |
 
@@ -27,9 +27,11 @@ goal text, seed, viewport, and scoring as A1 to A6 (`../README.md`).
    4. Otherwise (tie, look-alikes, or `context` given with several plausible candidates): each
       candidate gets its hyper-use `inspect` box and the text of its enclosing row / card / dialog
       (one read-only `Runtime.evaluate` at the box centre). JEV picks one id or `NONE`.
-   5. hyper-use `act(region, confidence=JEV p, runner_up=JEV second)`. The act gate still applies,
-      now on JEV's probabilities: an unsure JEV (p < 0.55 or margin < 0.05) is refused and nothing
-      is clicked. `NONE` is a refusal.
+   5. Confidence gate on the pick (hyper-use totals or JEV p): top >= 0.55 and margin >= 0.05;
+      unsure or `NONE` refuses and nothing is clicked. Product `act`/`guard` never clicks, so the
+      harness then CDP-clicks the picked region's center (`Input.dispatchMouseEvent`), after a
+      `guard` front-layer check. `proposed-not-top` does not block a confidence-gated host pick
+      (JEV already separated look-alike labels the matcher cannot).
    6. A press that executes with an empty state delta is reported as "no visible effect" and also
       unlocks `fallback_click`.
 4. `type_text(field, text)` / `select_option(field, option)` / `fallback_click(target)`: the executor

@@ -4,8 +4,11 @@
 //! are never reused, even after the entry is evicted. Nothing is written to
 //! disk. This is not crash recovery and not a persistence layer.
 
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::fmt;
+
+use hyper_use_core::{InteractionManifold, Role};
 
 /// Identity of one stored snapshot. Monotonic within one ring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -119,6 +122,124 @@ impl<T> SnapshotRing<T> {
     }
 }
 
+/// Sorted `(role, label)` multiset of one observation.
+///
+/// Two regions with the same role and label both count. Rectangles, ids, and
+/// flags are not part of the signature. [`signature_jaccard`] compares these
+/// bags. [`detect`] treats equal signatures as the same state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StateSignature {
+    entries: Vec<(Role, String)>,
+}
+
+impl StateSignature {
+    pub fn from_manifold(manifold: &InteractionManifold) -> Self {
+        let mut entries: Vec<(Role, String)> = manifold
+            .regions()
+            .map(|region| (region.role(), region.label().to_owned()))
+            .collect();
+        entries.sort();
+        Self { entries }
+    }
+}
+
+/// Multiset Jaccard of two signatures. Both empty is `1`.
+pub fn signature_jaccard(left: &StateSignature, right: &StateSignature) -> f64 {
+    if left.entries.is_empty() && right.entries.is_empty() {
+        return 1.0;
+    }
+    let mut i = 0;
+    let mut j = 0;
+    let mut intersection = 0usize;
+    let mut union = 0usize;
+    while i < left.entries.len() && j < right.entries.len() {
+        match left.entries[i].cmp(&right.entries[j]) {
+            Ordering::Equal => {
+                intersection += 1;
+                union += 1;
+                i += 1;
+                j += 1;
+            }
+            Ordering::Less => {
+                union += 1;
+                i += 1;
+            }
+            Ordering::Greater => {
+                union += 1;
+                j += 1;
+            }
+        }
+    }
+    union += left.entries.len() - i;
+    union += right.entries.len() - j;
+    intersection as f64 / union as f64
+}
+
+/// What an act did to the signature history. Data only. Not a retry policy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TemporalSignal {
+    /// `after` has the same signature as `before`.
+    NoOp,
+    /// `after` matches an older same-origin signature in the four snapshots
+    /// immediately before it, other than `before`.
+    LoopDetected { matches: Vec<SnapshotId> },
+}
+
+/// A ring entry [`detect`] can read. The MCP snapshot implements this.
+pub trait SignedSnapshot {
+    fn origin(&self) -> &str;
+    fn state_signature(&self) -> StateSignature;
+}
+
+/// Compare `after` with `before` and with the four older ring entries.
+///
+/// `NoOp` is signature equality of the act pair. `LoopDetected` is signature
+/// equality with an older snapshot of the same origin inside that window.
+/// A match on `before` is `NoOp`, not a loop. Both can be returned. This does
+/// not click, navigate, or choose a retry.
+pub fn detect<T: SignedSnapshot>(
+    ring: &SnapshotRing<T>,
+    before: SnapshotId,
+    after: SnapshotId,
+) -> Result<Vec<TemporalSignal>, HistoryError> {
+    let before_state = ring.get(before)?;
+    let after_state = ring.get(after)?;
+    let before_signature = before_state.state_signature();
+    let after_signature = after_state.state_signature();
+    let origin = after_state.origin().to_owned();
+
+    let mut signals = Vec::new();
+    if before_signature == after_signature {
+        signals.push(TemporalSignal::NoOp);
+    }
+
+    let mut matches = Vec::new();
+    let mut window = 0usize;
+    for (id, state) in ring.iter_recent() {
+        if id >= after {
+            continue;
+        }
+        if window == 4 {
+            break;
+        }
+        window += 1;
+        if id == before {
+            continue;
+        }
+        if state.origin() != origin {
+            continue;
+        }
+        if state.state_signature() == after_signature {
+            matches.push(id);
+        }
+    }
+    if !matches.is_empty() {
+        matches.sort();
+        signals.push(TemporalSignal::LoopDetected { matches });
+    }
+    Ok(signals)
+}
+
 impl<T> Default for SnapshotRing<T> {
     fn default() -> Self {
         Self::with_capacity(Self::DEFAULT_CAP)
@@ -128,6 +249,10 @@ impl<T> Default for SnapshotRing<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyper_use_core::{
+        Action, InteractionRegion, Rect, RegionFlags, RegionId, RegionParts, SourceMask,
+        UnitInterval,
+    };
     use proptest::prelude::*;
 
     #[test]
@@ -177,5 +302,104 @@ mod tests {
                 prop_assert!(ring.len() <= cap);
             }
         }
+    }
+
+    struct Sample {
+        origin: &'static str,
+        signature: StateSignature,
+    }
+
+    impl SignedSnapshot for Sample {
+        fn origin(&self) -> &str {
+            self.origin
+        }
+
+        fn state_signature(&self) -> StateSignature {
+            self.signature.clone()
+        }
+    }
+
+    #[test]
+    fn no_op_when_after_equals_before() {
+        let send = signature(&["Send"]);
+        let other = signature(&["Cancel"]);
+        assert_eq!(signature_jaccard(&send, &send), 1.0);
+        assert_eq!(signature_jaccard(&send, &other), 0.0);
+        let mut ring = SnapshotRing::with_capacity(8);
+        let before = ring.push(sample("page", send.clone()));
+        let after = ring.push(sample("page", send));
+        assert_eq!(
+            detect(&ring, before, after).unwrap(),
+            vec![TemporalSignal::NoOp]
+        );
+        let changed = ring.push(sample("page", other));
+        assert_eq!(detect(&ring, after, changed).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn loop_when_after_equals_an_older_snapshot() {
+        let send = signature(&["Send"]);
+        let other = signature(&["Cancel"]);
+        let mut ring = SnapshotRing::with_capacity(8);
+        let older = ring.push(sample("page", send.clone()));
+        let before = ring.push(sample("page", other.clone()));
+        let after = ring.push(sample("page", send.clone()));
+        assert_eq!(
+            detect(&ring, before, after).unwrap(),
+            vec![TemporalSignal::LoopDetected {
+                matches: vec![older]
+            }]
+        );
+
+        // Five snapshots sit between the duplicate and `after`, so it is
+        // outside the last four and is not a loop.
+        let mut far = SnapshotRing::with_capacity(16);
+        let outside = far.push(sample("page", send.clone()));
+        for _ in 0..4 {
+            far.push(sample("page", other.clone()));
+        }
+        let before = far.push(sample("page", other.clone()));
+        let after = far.push(sample("page", send.clone()));
+        assert_eq!(detect(&far, before, after).unwrap(), vec![]);
+        assert_ne!(outside, before);
+
+        // Same signature on another origin is not this page's loop.
+        let mut other_origin = SnapshotRing::with_capacity(8);
+        other_origin.push(sample("other", send.clone()));
+        let before = other_origin.push(sample("page", other));
+        let after = other_origin.push(sample("page", send));
+        assert_eq!(detect(&other_origin, before, after).unwrap(), vec![]);
+    }
+
+    fn sample(origin: &'static str, signature: StateSignature) -> Sample {
+        Sample { origin, signature }
+    }
+
+    fn signature(labels: &[&str]) -> StateSignature {
+        let regions = labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                InteractionRegion::try_new(RegionParts {
+                    id: RegionId::try_new(format!("n{index}")).unwrap(),
+                    role: Role::Button,
+                    label: (*label).into(),
+                    rect: Rect::try_new(0.0, index as f64, 40.0, 20.0).unwrap(),
+                    actions: vec![Action::Click],
+                    parent: None,
+                    sources: SourceMask::DOM,
+                    flags: RegionFlags::none(),
+                    temporal_stability: UnitInterval::ONE,
+                })
+                .unwrap()
+            })
+            .collect();
+        let manifold = InteractionManifold::try_new(
+            Rect::try_viewport(0.0, 0.0, 800.0, 600.0).unwrap(),
+            regions,
+            0,
+        )
+        .unwrap();
+        StateSignature::from_manifold(&manifold)
     }
 }

@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 
 use hyper_use_browser::{BrowserSession, PageState, WebSocketTransport};
 use hyper_use_core::InteractionManifold;
-use hyper_use_observe::history::{HistoryError, SnapshotId, SnapshotRing};
+use hyper_use_observe::history::{
+    detect, HistoryError, SignedSnapshot, SnapshotId, SnapshotRing, StateSignature, TemporalSignal,
+};
 use serde_json::Value;
 
 use crate::error::ToolError;
@@ -28,6 +30,16 @@ pub struct Server {
     sessions: BTreeMap<String, BrowserSession<WebSocketTransport>>,
     session_order: Vec<String>,
     history: SnapshotRing<Snapshot>,
+}
+
+impl SignedSnapshot for Snapshot {
+    fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    fn state_signature(&self) -> StateSignature {
+        StateSignature::from_manifold(&self.manifold)
+    }
 }
 
 impl Server {
@@ -73,6 +85,16 @@ impl Server {
                 HistoryError::Unknown(id) => ToolError::UnknownSnapshot(id.get()),
                 other => ToolError::Browser(other.to_string()),
             })
+    }
+
+    /// Signature no-op and loop signals for an act pair already in the ring.
+    /// Data only. This does not retry.
+    pub(crate) fn temporal_signals(
+        &self,
+        before: SnapshotId,
+        after: SnapshotId,
+    ) -> Result<Vec<TemporalSignal>, HistoryError> {
+        detect(&self.history, before, after)
     }
 
     /// Newest snapshot recorded for `origin`, if it is still in the ring.

@@ -682,3 +682,32 @@ Verifiers: `moved_only_rect_is_moved_not_relabeled`,
 `focus_moves_to_the_text_field`, `executed_act_with_no_delta_is_no_effect`,
 `navigation_history_protocol_error_omits_url_and_title`, and
 `missing_navigation_history_step_is_fatal`. No second formal model.
+
+## Temporal signals are data, and the corpus names no winner
+
+`StateSignature` is the sorted multiset of `(role, label)` on one manifold.
+Rectangles, ids, and flags are not in it. `detect` compares signatures already
+stored in the snapshot ring. `NoOp` means the after signature equals the before
+signature. `LoopDetected` means the after signature equals an older snapshot
+of the same origin among the four ring entries immediately before it, not
+counting `before`. Both can be present. MCP `act` returns them as `signals`.
+There is no retry, no navigate tool, and no second ranker.
+
+An empty region diff with an unchanged page is still `VerifyError::NoEffect`
+and `fallback` `"no-effect"`. A no-op signal does not replace that path and
+does not schedule another press.
+
+`eval_corpus` reads `evals/locate/cases.tsv` and ranks each row with
+`WeightedMatcher` and `HgraMatcher`. The report has each top id, the margin in
+millis, and whether the existing act gate would refuse. It has no winner.
+The product default stays `WeightedMatcher`. `expected_id` is the region that
+matcher ranks first. An HGRA disagreement is recorded and is not a corpus
+failure. This does not invent a Browser Use score, a token count, or a latency.
+
+Downside accepted: a rectangle-only move is still `NoOp`, because the signature
+ignores geometry. `NoEffect` remains the diff-and-page check, so the two can
+disagree. A loop older than the four preceding entries is not reported.
+
+Verifiers: `no_op_when_after_equals_before`,
+`loop_when_after_equals_an_older_snapshot`, and
+`eval_corpus_reports_both_matchers_without_a_winner`. No second formal model.

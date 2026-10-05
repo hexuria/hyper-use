@@ -766,6 +766,7 @@ fn act_closed_loop_reports_delta_and_verifies_welcome() {
     );
     assert_eq!(body["before_snapshot"], 1);
     assert_eq!(body["after_snapshot"], 2);
+    assert_eq!(body["signals"], json!([]));
 }
 
 #[test]
@@ -798,6 +799,19 @@ fn act_closed_loop_verify_failure_is_executed_true_verified_false() {
             "url_changed": false
         })
     );
+    assert_eq!(body["signals"], json!([{"kind": "no-op"}]));
+    let bare = call(
+        "act",
+        json!({
+            "fixture": fixture("sign-in-noop.cdp.json"),
+            "region": "n100",
+            "observe_after": true
+        }),
+    )
+    .unwrap();
+    assert_eq!(bare["executed"], true);
+    assert_eq!(bare["fallback"], "no-effect");
+    assert_eq!(bare["signals"], json!([{"kind": "no-op"}]));
 }
 
 #[test]
@@ -810,6 +824,7 @@ fn act_without_expectation_on_a_fixture_does_not_observe_after() {
     assert_eq!(body["executed"], true);
     assert_eq!(body["before_snapshot"], 1);
     assert_eq!(body["after_snapshot"], Value::Null);
+    assert_eq!(body["signals"], json!([]));
     let err = call(
         "act",
         json!({

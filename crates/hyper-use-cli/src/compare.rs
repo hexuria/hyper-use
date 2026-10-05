@@ -2,6 +2,7 @@
 //!
 //! Four local fixtures are ranked with `WeightedMatcher`. The press fixture is
 //! the only one handed to `BrowserExecutor`. A manifold file cannot act.
+//! [`eval_corpus`] ranks the locate corpus with both matchers and names no winner.
 //! This is not a Browser Use score and it is not a `ComputerResult`: that type
 //! always sets `executed` and `verified`, so a locate would look like a fake
 //! refusal.
@@ -14,8 +15,11 @@ use std::path::Path;
 
 use hyper_use_browser::{BrowserSession, ReplayTransport};
 use hyper_use_core::{parse_fixture, InteractionManifold, LocateQuery, RegionId, Role, Zone};
-use hyper_use_executor::{ActionExecutor, ActionRequest, BrowserExecutor, ExecutorError};
-use hyper_use_resonance::{Match, RegionMatcher, WeightedMatcher};
+use hyper_use_executor::{
+    gate_ranked_confidence, gate_scored_confidence, ActionExecutor, ActionRequest, BrowserExecutor,
+    ExecutorError,
+};
+use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, WeightedMatcher};
 
 #[cfg(any(test, feature = "jev"))]
 use hyper_use_core::InteractionRegion;
@@ -41,6 +45,10 @@ pub enum CompareError {
     NonFiniteConfidence,
     /// The executor reported a low score and still logged a CDP call.
     TransportCalledBelowThreshold,
+    Corpus {
+        path: String,
+        message: String,
+    },
     #[cfg(feature = "jev")]
     Jev(String),
     #[cfg(feature = "jev")]
@@ -65,6 +73,7 @@ impl std::fmt::Display for CompareError {
             Self::TransportCalledBelowThreshold => {
                 f.write_str("scored confidence is below 0.55 but the transport was called")
             }
+            Self::Corpus { path, message } => write!(f, "eval corpus {path}: {message}"),
             #[cfg(feature = "jev")]
             Self::Jev(message) => write!(f, "system one: {message}"),
             #[cfg(feature = "jev")]
@@ -538,6 +547,283 @@ fn manifold_state(manifold: &InteractionManifold) -> serde_json::Value {
     })
 }
 
+/// One matcher's top hit. Totals are not comparable across matchers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusHit {
+    matcher: &'static str,
+    top_id: String,
+    margin_millis: Option<i32>,
+    gate_would_refuse: bool,
+}
+
+impl CorpusHit {
+    pub fn matcher(&self) -> &'static str {
+        self.matcher
+    }
+    pub fn top_id(&self) -> &str {
+        &self.top_id
+    }
+    pub fn margin_millis(&self) -> Option<i32> {
+        self.margin_millis
+    }
+    pub fn gate_would_refuse(&self) -> bool {
+        self.gate_would_refuse
+    }
+}
+
+/// One corpus row. `hits` is weighted, then hgra. There is no winner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusCase {
+    fixture: String,
+    text: String,
+    role: String,
+    position: String,
+    expected_id: String,
+    hits: Vec<CorpusHit>,
+}
+
+impl CorpusCase {
+    pub fn fixture(&self) -> &str {
+        &self.fixture
+    }
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+    pub fn position(&self) -> &str {
+        &self.position
+    }
+    pub fn expected_id(&self) -> &str {
+        &self.expected_id
+    }
+    pub fn hits(&self) -> &[CorpusHit] {
+        &self.hits
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusReport {
+    cases: Vec<CorpusCase>,
+}
+
+impl CorpusReport {
+    pub fn cases(&self) -> &[CorpusCase] {
+        &self.cases
+    }
+
+    /// Both matchers, top id, margin, and whether the act gate would refuse.
+    /// No winner field.
+    pub fn render(&self) -> String {
+        let mut out = String::from("{\n  \"cases\": [\n");
+        for (index, case) in self.cases.iter().enumerate() {
+            let comma = if index + 1 == self.cases.len() {
+                ""
+            } else {
+                ","
+            };
+            out.push_str("    {\n");
+            out.push_str(&format!(
+                "      \"fixture\": \"{}\",\n",
+                json_escape(&case.fixture)
+            ));
+            out.push_str(&format!(
+                "      \"text\": \"{}\",\n",
+                json_escape(&case.text)
+            ));
+            out.push_str(&format!(
+                "      \"role\": \"{}\",\n",
+                json_escape(&case.role)
+            ));
+            out.push_str(&format!(
+                "      \"position\": \"{}\",\n",
+                json_escape(&case.position)
+            ));
+            out.push_str(&format!(
+                "      \"expected_id\": \"{}\",\n",
+                json_escape(&case.expected_id)
+            ));
+            out.push_str("      \"hits\": [\n");
+            for (hit_index, hit) in case.hits.iter().enumerate() {
+                let hit_comma = if hit_index + 1 == case.hits.len() {
+                    ""
+                } else {
+                    ","
+                };
+                out.push_str("        {\n");
+                out.push_str(&format!("          \"matcher\": \"{}\",\n", hit.matcher));
+                out.push_str(&format!(
+                    "          \"top_id\": \"{}\",\n",
+                    json_escape(&hit.top_id)
+                ));
+                out.push_str("          \"margin_millis\": ");
+                match hit.margin_millis {
+                    Some(margin) => out.push_str(&margin.to_string()),
+                    None => out.push_str("null"),
+                }
+                out.push_str(",\n          \"gate_would_refuse\": ");
+                out.push_str(if hit.gate_would_refuse {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.push('\n');
+                out.push_str(&format!("        }}{hit_comma}\n"));
+            }
+            out.push_str("      ]\n");
+            out.push_str(&format!("    }}{comma}\n"));
+        }
+        out.push_str("  ]\n}\n");
+        out
+    }
+}
+
+/// Rank every row in `dir/cases.tsv` with the weighted matcher and with HGRA.
+///
+/// The product default stays [`WeightedMatcher`]. This report does not compare
+/// the two totals and does not name a winner. `expected_id` is checked by the
+/// corpus test against the weighted top, not against HGRA.
+pub fn eval_corpus(dir: &Path) -> Result<CorpusReport, CompareError> {
+    let path = dir.join("cases.tsv");
+    let body = fs::read_to_string(&path).map_err(|err| CompareError::Io {
+        path: path.display().to_string(),
+        message: err.to_string(),
+    })?;
+    let rows = parse_cases(&path, &body)?;
+    let mut cases = Vec::with_capacity(rows.len());
+    for row in rows {
+        let fixture_body = read_fixture(dir, &row.fixture)?;
+        let manifold = load_manifold(&fixture_body)?;
+        let query = corpus_query(&row)?;
+        let hits = vec![
+            corpus_hit(
+                "weighted",
+                &WeightedMatcher::default(),
+                &query,
+                &manifold,
+                &row,
+            )?,
+            corpus_hit("hgra", &HgraMatcher::default(), &query, &manifold, &row)?,
+        ];
+        cases.push(CorpusCase {
+            fixture: row.fixture,
+            text: row.text,
+            role: row.role,
+            position: row.position,
+            expected_id: row.expected_id,
+            hits,
+        });
+    }
+    Ok(CorpusReport { cases })
+}
+
+struct CorpusRow {
+    fixture: String,
+    text: String,
+    role: String,
+    position: String,
+    expected_id: String,
+}
+
+fn parse_cases(path: &Path, body: &str) -> Result<Vec<CorpusRow>, CompareError> {
+    let mut lines = body.lines().filter(|line| !line.trim().is_empty());
+    let header = lines.next().ok_or_else(|| CompareError::Corpus {
+        path: path.display().to_string(),
+        message: "missing header".into(),
+    })?;
+    if header.split('\t').collect::<Vec<_>>()
+        != ["fixture", "text", "role", "position", "expected_id"]
+    {
+        return Err(CompareError::Corpus {
+            path: path.display().to_string(),
+            message: "header must be fixture, text, role, position, expected_id".into(),
+        });
+    }
+    let mut rows = Vec::new();
+    for (index, line) in lines.enumerate() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() != 5 {
+            return Err(CompareError::Corpus {
+                path: path.display().to_string(),
+                message: format!("row {} does not have 5 columns", index + 2),
+            });
+        }
+        rows.push(CorpusRow {
+            fixture: fields[0].to_owned(),
+            text: fields[1].to_owned(),
+            role: fields[2].to_owned(),
+            position: fields[3].to_owned(),
+            expected_id: fields[4].to_owned(),
+        });
+    }
+    if rows.is_empty() {
+        return Err(CompareError::Corpus {
+            path: path.display().to_string(),
+            message: "no cases".into(),
+        });
+    }
+    Ok(rows)
+}
+
+fn corpus_query(row: &CorpusRow) -> Result<LocateQuery, CompareError> {
+    let mut query = LocateQuery::new()
+        .text(&row.text)
+        .map_err(|_| CompareError::Locate("empty text".to_owned()))?;
+    if !row.role.is_empty() {
+        let role = Role::parse(&row.role).ok_or_else(|| CompareError::Corpus {
+            path: row.fixture.clone(),
+            message: format!("unknown role {}", row.role),
+        })?;
+        query = query.role(role);
+    }
+    if !row.position.is_empty() {
+        let position = Zone::parse(&row.position).ok_or_else(|| CompareError::Corpus {
+            path: row.fixture.clone(),
+            message: format!("unknown position {}", row.position),
+        })?;
+        query = query.position(position);
+    }
+    Ok(query)
+}
+
+fn corpus_hit(
+    matcher: &'static str,
+    ranker: &impl RegionMatcher,
+    query: &LocateQuery,
+    manifold: &InteractionManifold,
+    row: &CorpusRow,
+) -> Result<CorpusHit, CompareError> {
+    let ranked = ranker
+        .rank(query, manifold)
+        .map_err(|err| CompareError::Locate(err.to_string()))?;
+    let top = ranked.first().ok_or_else(|| CompareError::EmptyRank {
+        fixture: row.fixture.clone(),
+    })?;
+    let runner_up = ranked.get(1).map(Match::confidence);
+    let (margin_millis, gate_would_refuse) = gate_report(top.confidence(), runner_up);
+    Ok(CorpusHit {
+        matcher,
+        top_id: top.id().as_str().to_owned(),
+        margin_millis,
+        gate_would_refuse,
+    })
+}
+
+/// The product act gate. A missing runner-up checks only the 0.55 threshold.
+fn gate_report(top: f64, runner_up: Option<f64>) -> (Option<i32>, bool) {
+    let margin_millis = runner_up.map(|second| {
+        let top_millis = (top * 1000.0).round() as i32;
+        let second_millis = (second * 1000.0).round() as i32;
+        top_millis - second_millis
+    });
+    let refused = match runner_up {
+        Some(second) => gate_ranked_confidence(top, second).is_err(),
+        None => gate_scored_confidence(top).is_err(),
+    };
+    (margin_millis, refused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,5 +1044,92 @@ mod tests {
         assert!(described.contains("button"));
         assert!(described.contains("Settings"));
         assert!(described.contains("x="));
+    }
+
+    #[test]
+    fn eval_corpus_reports_both_matchers_without_a_winner() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../evals/locate");
+        let report = eval_corpus(&dir).unwrap();
+        let rendered = report.render();
+        assert!(!rendered.contains("winner"), "{rendered}");
+        assert_eq!(report.cases().len(), 5, "{rendered}");
+        let mut seen = Vec::new();
+        for case in report.cases() {
+            assert_eq!(case.hits().len(), 2, "{rendered}");
+            assert_eq!(case.hits()[0].matcher(), "weighted");
+            assert_eq!(case.hits()[1].matcher(), "hgra");
+            assert_eq!(
+                case.hits()[0].top_id(),
+                case.expected_id(),
+                "weighted top for {} / {}\n{rendered}",
+                case.fixture(),
+                case.text()
+            );
+            assert!(!case.hits()[1].top_id().is_empty());
+            seen.push((
+                case.text().to_owned(),
+                case.hits()[0].top_id().to_owned(),
+                case.hits()[0].margin_millis(),
+                case.hits()[0].gate_would_refuse(),
+                case.hits()[1].top_id().to_owned(),
+                case.hits()[1].margin_millis(),
+                case.hits()[1].gate_would_refuse(),
+            ));
+        }
+        assert_eq!(
+            seen.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
+            ["Send", "Settings", "Export", "Admin", "Undo"]
+        );
+        assert!(!rendered.contains("winner"));
+        assert_eq!(
+            seen,
+            vec![
+                (
+                    "Send".into(),
+                    "z-send".into(),
+                    Some(125),
+                    false,
+                    "z-send".into(),
+                    Some(28),
+                    true
+                ),
+                (
+                    "Settings".into(),
+                    "nav-settings".into(),
+                    Some(300),
+                    false,
+                    "nav-settings".into(),
+                    Some(132),
+                    false,
+                ),
+                (
+                    "Export".into(),
+                    "z-export".into(),
+                    Some(250),
+                    false,
+                    "z-export".into(),
+                    Some(184),
+                    false,
+                ),
+                (
+                    "Admin".into(),
+                    "z-admin".into(),
+                    Some(450),
+                    false,
+                    "z-admin".into(),
+                    Some(195),
+                    false,
+                ),
+                (
+                    "Undo".into(),
+                    "z-undo".into(),
+                    Some(350),
+                    false,
+                    "z-undo".into(),
+                    Some(184),
+                    false,
+                ),
+            ]
+        );
     }
 }

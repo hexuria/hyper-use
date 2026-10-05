@@ -239,3 +239,25 @@ Reason: page state is parsed from one extra CDP result and the diff accessors re
 Affected invariants: a region that only moves is moved and not relabeled; a URL change is reported when no region id changes; focus comes from the AX focused property; an empty diff with an unchanged page is VerifyError::NoEffect; a protocol error on Page.getNavigationHistory omits url and title; a missing history step is fatal; captured_at_ms stays 0 when the history payload has no time; the field is url_changed, not navigated.
 Tests or proofs updated: moved_only_rect_is_moved_not_relabeled, url_change_is_reported_without_a_region_change, focus_moves_to_the_text_field, executed_act_with_no_delta_is_no_effect, navigation_history_protocol_error_omits_url_and_title, missing_navigation_history_step_is_fatal. No second formal model.
 ```
+
+## Temporal signals and the locate corpus
+
+```
+Verification impact
+
+[x] Pure Rust deterministic behavior
+[ ] Concurrency / interleaving
+[ ] System model
+[ ] Crash-recovery / replay
+[ ] Persistence
+[ ] TLA+
+[ ] Proof kernel
+[ ] Workflow / DSL
+[ ] Unsafe / memory
+[ ] Property-test / fuzz surface
+[ ] No verification architecture impact
+
+Reason: detect reads the in-memory snapshot ring. The corpus ranks local fixtures. No system model was added. No Loom, Kani, Miri, TLA+, or Lean.
+Affected invariants: a signature equal to the act's before snapshot is NoOp; a signature equal to an older same-origin snapshot in the previous four, other than before, is LoopDetected; signals do not retry and do not replace VerifyError::NoEffect; eval_corpus reports weighted and hgra top-1 hits, margin, and gate refusal and names no winner; the default matcher stays WeightedMatcher.
+Tests or proofs updated: no_op_when_after_equals_before, loop_when_after_equals_an_older_snapshot, eval_corpus_reports_both_matchers_without_a_winner. No second formal model.
+```

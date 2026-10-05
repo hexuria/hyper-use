@@ -7,6 +7,7 @@
 //! Every observation is recorded in the server's snapshot ring and its id is
 //! returned as `snapshot`. `act` observes before, presses, and (when asked, or
 //! on a live session) observes after, diffs, and verifies in the same call.
+//! `signals` reports a signature no-op or a loop. It does not retry.
 
 use std::fs;
 use std::path::Path;
@@ -25,7 +26,11 @@ use hyper_use_executor::{
     ExecutorKind, StubExecutor,
 };
 use hyper_use_hyper::Dims;
-use hyper_use_observe::{diff, history::SnapshotId, ManifoldDiff};
+use hyper_use_observe::{
+    diff,
+    history::{SnapshotId, TemporalSignal},
+    ManifoldDiff,
+};
 use hyper_use_protocol::{FallbackReason, StateDelta};
 use hyper_use_resonance::{HgraMatcher, Match, RegionMatcher, ResonanceModel, WeightedMatcher};
 use serde_json::{json, Value};
@@ -343,6 +348,7 @@ fn run_act<T: CdpTransport>(
                 |mut body| {
                     insert(&mut body, "before_snapshot", json!(before_id.get()));
                     insert(&mut body, "after_snapshot", Value::Null);
+                    insert(&mut body, "signals", json!([]));
                     body
                 },
             );
@@ -410,6 +416,14 @@ fn run_act<T: CdpTransport>(
     if let Some(error) = verify_error {
         insert(&mut body, "verify_error", error);
     }
+    let signals = match after_id {
+        Some(after) => match server.temporal_signals(before_id, after) {
+            Ok(signals) => signals,
+            Err(err) => return (Err(ToolError::Browser(err.to_string())), session, true),
+        },
+        None => Vec::new(),
+    };
+    insert(&mut body, "signals", signals_json(&signals));
     (Ok(body), session, true)
 }
 
@@ -1099,6 +1113,21 @@ fn insert(body: &mut Value, key: &str, value: Value) {
     body.as_object_mut()
         .expect("tool result is a JSON object")
         .insert(key.to_owned(), value);
+}
+
+fn signals_json(signals: &[TemporalSignal]) -> Value {
+    Value::Array(
+        signals
+            .iter()
+            .map(|signal| match signal {
+                TemporalSignal::NoOp => json!({"kind": "no-op"}),
+                TemporalSignal::LoopDetected { matches } => json!({
+                    "kind": "loop-detected",
+                    "matches": matches.iter().map(|id| id.get()).collect::<Vec<_>>(),
+                }),
+            })
+            .collect(),
+    )
 }
 
 fn empty_delta() -> Value {

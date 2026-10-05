@@ -52,6 +52,7 @@ pub(crate) struct RawNode {
     pub actions: Vec<hyper_use_core::Action>,
     pub disabled: bool,
     pub hidden: bool,
+    pub modal: bool,
     pub from_dom: bool,
     pub from_ax: bool,
     /// Backend ids of kept DOM ancestors, nearest first.
@@ -69,6 +70,7 @@ impl RawNode {
             actions: element.actions.clone(),
             disabled: element.disabled,
             hidden: element.hidden,
+            modal: element.modal,
             from_dom: true,
             from_ax: false,
             ancestors: element.ancestors.clone(),
@@ -85,6 +87,7 @@ impl RawNode {
             actions: crate::extract::actions_for_role(element.role),
             disabled: element.disabled,
             hidden: false,
+            modal: element.modal,
             from_dom: false,
             from_ax: true,
             ancestors: Vec::new(),
@@ -211,6 +214,7 @@ fn merge(dom: &RawNode, ax: &RawNode) -> RawNode {
         actions,
         disabled: dom.disabled || ax.disabled,
         hidden: dom.hidden || ax.hidden,
+        modal: dom.modal || ax.modal,
         from_dom: true,
         from_ax: true,
         ancestors: dom.ancestors.clone(),
@@ -315,6 +319,8 @@ fn to_region(
     let mut flags = RegionFlags::none();
     flags.set_disabled(node.disabled);
     flags.set_hidden(node.hidden);
+    // A modal bit on a non-dialog says nothing about layering; drop it.
+    flags.set_modal(node.modal && node.role == Role::Dialog);
     if is_fully_offscreen(node.rect, viewport) {
         flags.set_offscreen(true);
     }
@@ -351,6 +357,7 @@ mod tests {
             actions: vec![Action::Click],
             disabled: false,
             hidden: false,
+            modal: false,
             from_dom: true,
             from_ax: false,
             ancestors: Vec::new(),
@@ -367,6 +374,7 @@ mod tests {
             actions: vec![Action::Click],
             disabled: false,
             hidden: false,
+            modal: false,
             from_dom: false,
             from_ax: true,
             ancestors: Vec::new(),

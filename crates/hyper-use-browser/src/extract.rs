@@ -290,7 +290,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         backend_node_id,
         role,
         label,
-        actions: actions_for_role(role),
+        actions: dom_actions(name, role),
         disabled,
         hidden,
         modal,
@@ -352,6 +352,20 @@ fn dom_role(name: &str, role_attr: Option<&str>, input_type: Option<&str>) -> Ro
         },
         _ => Role::Generic,
     }
+}
+
+/// DOM element claims. A native `<select>` has no manifold role of its own
+/// (it observes as `generic`), so the tag adds the `select` claim.
+fn dom_actions(name: &str, role: Role) -> Vec<Action> {
+    let mut actions = actions_for_role(role);
+    if name.eq_ignore_ascii_case("SELECT") {
+        for action in [Action::Click, Action::Select] {
+            if !actions.contains(&action) {
+                actions.push(action);
+            }
+        }
+    }
+    actions
 }
 
 pub(crate) fn actions_for_role(role: Role) -> Vec<Action> {

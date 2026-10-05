@@ -377,6 +377,58 @@ impl ScriptBuilder {
         self
     }
 
+    /// A DOM input (type / select) by node id that the page accepts.
+    pub fn dom_input(mut self, node_id: i64) -> Self {
+        let object = format!("obj-{node_id}");
+        self.calls.push(result(
+            "DOM.resolveNode",
+            json!({"object": {"type": "object", "objectId": object}}),
+        ));
+        self.calls.push(result(
+            "Runtime.callFunctionOn",
+            json!({"result": {"type": "boolean", "value": true}}),
+        ));
+        self
+    }
+
+    /// A DOM input by node id that the page refuses (the function throws).
+    pub fn dom_input_rejected(mut self, node_id: i64, message: &str) -> Self {
+        let object = format!("obj-{node_id}");
+        self.calls.push(result(
+            "DOM.resolveNode",
+            json!({"object": {"type": "object", "objectId": object}}),
+        ));
+        self.calls.push(result(
+            "Runtime.callFunctionOn",
+            json!({
+                "result": {"type": "object", "subtype": "error"},
+                "exceptionDetails": {"text": "Uncaught", "exception": {"description": format!("Error: {message}")}}
+            }),
+        ));
+        self
+    }
+
+    /// Read-back of a field value (`BrowserSession::field_value`).
+    pub fn dom_read_value(mut self, node_id: i64, value: &str, text: &str) -> Self {
+        let object = format!("obj-{node_id}");
+        self.calls.push(result(
+            "DOM.resolveNode",
+            json!({"object": {"type": "object", "objectId": object}}),
+        ));
+        self.calls.push(result(
+            "Runtime.callFunctionOn",
+            json!({"result": {"type": "object", "value": [value, text]}}),
+        ));
+        self
+    }
+
+    /// One page scroll wheel event.
+    pub fn scroll(mut self) -> Self {
+        self.calls
+            .push(result("Input.dispatchMouseEvent", json!({})));
+        self
+    }
+
     /// Number of scripted CDP calls so far.
     pub fn len(&self) -> usize {
         self.calls.len()

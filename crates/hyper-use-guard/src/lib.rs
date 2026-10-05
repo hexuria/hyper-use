@@ -29,6 +29,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod gate;
 pub mod ticket;
 pub mod world;
 
@@ -40,12 +41,14 @@ use hyper_use_resonance::{
     default_matcher, weighted_semantic, Match, RegionMatcher, RegionState, TEXT_MISS_CAP,
 };
 
+pub use gate::{check as gate_check, gate};
 pub use hyper_use_protocol::{
     ActionTicket, GuardCandidate, GuardDecision, GuardEvidence, GuardReason, TicketInvalid,
 };
+#[allow(deprecated)]
+pub use ticket::consume_ticket;
 pub use ticket::{
-    consume_ticket, consume_ticket_once, issue_ticket, revalidate, world_fingerprint, ConsumeError,
-    TicketLedger,
+    consume_ticket_once, issue_ticket, revalidate, world_fingerprint, ConsumeError, TicketLedger,
 };
 pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
 

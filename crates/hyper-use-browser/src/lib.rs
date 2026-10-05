@@ -27,7 +27,10 @@ pub use error::{ActMechanism, BrowserError, CdpError};
 pub use fusion::{MAX_CENTROID_PX, MIN_IOU, MIN_LABEL_JACCARD};
 pub use page::{page_delta, PageDelta, PageState};
 pub use replay::ReplayTransport;
-pub use session::{BrowserSession, DOM_CLICK_FUNCTION};
+pub use session::{
+    BrowserSession, ScrollDirection, DOM_CLICK_FUNCTION, DOM_READ_VALUE_FUNCTION,
+    DOM_SELECT_FUNCTION, DOM_TYPE_FUNCTION, SCROLL_VIEWPORT_FRACTION,
+};
 pub use transport::CdpTransport;
 pub use verify::{verify, verify_delta, Expectation, VerifyError};
 pub use ws::{WebSocketTransport, DEFAULT_CDP_HTTP};

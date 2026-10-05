@@ -121,7 +121,8 @@ fn type_into_pattern(goal: &str, field: &str) -> Option<String> {
     // "type VALUE into FIELD"
     let type_idx = lower.find("type ")?;
     let into_idx = lower.find(" into ")?;
-    if into_idx <= type_idx {
+    // "type into X" has no value between the verb and " into ".
+    if into_idx < type_idx + 5 {
         return None;
     }
     let value = goal[type_idx + 5..into_idx].trim();
@@ -179,6 +180,18 @@ mod tests {
             context_fingerprint: 2,
         };
         assert_eq!(r.resolve(&ctx).unwrap().text, "hello world");
+    }
+
+    #[test]
+    fn type_into_without_value_is_missing_not_panic() {
+        let mut r = DeterministicTextResolver;
+        let ctx = TextContext {
+            goal: AgentGoal::new("type into Search"),
+            field_label: "Search".into(),
+            field_role: "text_field".into(),
+            context_fingerprint: 4,
+        };
+        assert_eq!(r.resolve(&ctx), Err(TextError::Missing));
     }
 
     #[test]

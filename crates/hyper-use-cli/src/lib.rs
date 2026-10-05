@@ -75,6 +75,12 @@ pub enum CliError {
     },
     /// `mcp` is served by the binary, which owns stdin. This library call does not.
     McpIsStdio,
+    /// `run` ended in a failed agent outcome; the transcript is attached.
+    Agent(String),
+    BadNumber {
+        flag: &'static str,
+        value: String,
+    },
 }
 
 impl std::fmt::Display for CliError {
@@ -154,6 +160,8 @@ impl std::fmt::Display for CliError {
             Self::McpIsStdio => {
                 f.write_str("mcp serves JSON-RPC on stdio; run the hyper-use binary")
             }
+            Self::Agent(transcript) => write!(f, "agent run failed\n{transcript}"),
+            Self::BadNumber { flag, value } => write!(f, "{flag} expects a number, got `{value}`"),
         }
     }
 }
@@ -161,7 +169,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "hyper-use observe|locate|inspect|guard|verify|diff|mcp\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
+    "hyper-use run|observe|locate|inspect|guard|verify|diff|mcp\nrun --goal <text> (--cdp [url] [--url <page>] | --fixture <replay.cdp.json|page.manifold>) [--max-steps N]\n  owned agent loop: observe -> PUA -> gate -> ticket -> execute -> verify (no LLM, no MCP)\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -178,6 +186,7 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
         "verify" => crate::session_cmd::verify_command(&args[1..]),
         "diff" => crate::session_cmd::diff_command(&args[1..]),
         "inspect" => crate::session_cmd::inspect_command(&args[1..]),
+        "run" => crate::run_cmd::run_command(&args[1..]),
         "mcp" => Err(CliError::McpIsStdio),
         other => Err(CliError::UnknownCommand(other.to_owned())),
     }
@@ -421,6 +430,7 @@ fn json_escape(text: &str) -> String {
 }
 
 mod compare;
+pub(crate) mod run_cmd;
 pub(crate) mod session_cmd;
 
 #[cfg(feature = "jev")]

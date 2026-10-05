@@ -58,6 +58,13 @@ pub enum BrowserError {
     BadViewport(String),
     DuplicateRegion(String),
     Verify(crate::verify::VerifyError),
+    /// The page refused an input (disabled, readonly, no unique option, …).
+    /// Nothing was changed.
+    InputRejected(String),
+    /// Neither the node id nor the backend id of the observed region resolved.
+    TargetUnresolved,
+    /// `Page.navigate` reported an error.
+    Navigation(String),
 }
 
 impl fmt::Display for BrowserError {
@@ -73,6 +80,9 @@ impl fmt::Display for BrowserError {
             Self::BadViewport(message) => write!(f, "viewport: {message}"),
             Self::DuplicateRegion(id) => write!(f, "duplicate fused region `{id}`"),
             Self::Verify(err) => write!(f, "{err}"),
+            Self::InputRejected(message) => write!(f, "page rejected input: {message}"),
+            Self::TargetUnresolved => f.write_str("observed node no longer resolves"),
+            Self::Navigation(message) => write!(f, "navigation failed: {message}"),
         }
     }
 }

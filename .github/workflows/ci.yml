@@ -20,6 +20,8 @@ jobs:
       # Optional HGRA experiment still compiles behind its feature.
       - run: cargo test -p hyper-use-resonance --features hgra
       - run: cargo check -p hyper-use-cli --features jev
+      # Optional remote escalation (arm D) behind its feature.
+      - run: cargo test -p hyper-use-policy -p hyper-use-agent --features hyper-use-agent/remote,hyper-use-policy/remote
   deny:
     runs-on: ubuntu-latest
     steps:

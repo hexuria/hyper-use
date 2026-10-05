@@ -41,7 +41,7 @@ impl BrowserPolicy for PuaPolicy {
         &mut self,
         space: &ActionSpace,
         goal: &AgentGoal,
-        _history: &[HistoryEntry],
+        history: &[HistoryEntry],
     ) -> Result<PolicyOutcome, PolicyError> {
         if goal.is_empty() {
             return Err(PolicyError::EmptyGoal);
@@ -84,6 +84,20 @@ impl BrowserPolicy for PuaPolicy {
                 .get(&chosen_kind)
                 .copied()
                 .unwrap_or(Confidence::ZERO);
+            // A page control (scroll / wait) that just ran with a verified
+            // effect satisfied a single-intent goal: DONE, not a loop.
+            if !chosen_kind_is_terminal(chosen_kind) && satisfied_by_history(history, action.id()) {
+                if let Some(done) = space.get_str(ActionKind::Done.as_str()) {
+                    return Ok(PolicyOutcome::Choice(PolicyDecision {
+                        action_id: done.id().clone(),
+                        kind: ActionKind::Done,
+                        target_label: done.label().to_owned(),
+                        confidence_millis: Confidence::MAX.get(),
+                        operation_ranked: op_ranked,
+                        target_ranked: Vec::new(),
+                    }));
+                }
+            }
             return Ok(PolicyOutcome::Choice(PolicyDecision {
                 action_id: action.id().clone(),
                 kind: chosen_kind,
@@ -125,6 +139,22 @@ impl BrowserPolicy for PuaPolicy {
             .map(|(_, c)| *c)
             .unwrap_or(Confidence::ZERO);
 
+        // Repeated-action avoidance: the winner is exactly the action that
+        // just executed with a verified effect. The goal's single intent is
+        // satisfied; repeating it would double-submit. Choose DONE instead.
+        if satisfied_by_history(history, action.id()) {
+            if let Some(done) = space.get_str(ActionKind::Done.as_str()) {
+                return Ok(PolicyOutcome::Choice(PolicyDecision {
+                    action_id: done.id().clone(),
+                    kind: ActionKind::Done,
+                    target_label: done.label().to_owned(),
+                    confidence_millis: Confidence::MAX.get(),
+                    operation_ranked: op_ranked,
+                    target_ranked,
+                }));
+            }
+        }
+
         Ok(PolicyOutcome::Choice(PolicyDecision {
             action_id: action.id().clone(),
             kind: action.kind(),
@@ -134,6 +164,21 @@ impl BrowserPolicy for PuaPolicy {
             target_ranked,
         }))
     }
+}
+
+fn chosen_kind_is_terminal(kind: ActionKind) -> bool {
+    matches!(kind, ActionKind::Done | ActionKind::Blocked)
+}
+
+/// The last executed step was `id` and verification saw a real effect.
+fn satisfied_by_history(history: &[HistoryEntry], id: &ActionId) -> bool {
+    history.last().is_some_and(|entry| {
+        &entry.action_id == id
+            && matches!(
+                entry.verification.as_str(),
+                "success" | "state-changed" | "navigation"
+            )
+    })
 }
 
 fn offered_kinds(space: &ActionSpace) -> Vec<ActionKind> {
@@ -357,6 +402,36 @@ mod tests {
         assert_eq!(choice.target_label, "Sign in");
         assert_eq!(choice.action_id.as_str(), "CLICK:signin");
         assert!(choice.confidence_millis >= 750);
+    }
+
+    #[test]
+    fn verified_repeat_of_last_action_becomes_done() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=q role=text_field label="Search" x=10 y=10 w=200 h=24 actions=click,type sources=dom,accessibility
+            "#,
+        );
+        let goal = AgentGoal::new(r#"Type "rust" into Search"#);
+        let mut policy = PuaPolicy::default();
+        let first = policy.decide(&space, &goal, &[]).unwrap();
+        let first = first
+            .as_choice()
+            .unwrap_or_else(|| panic!("{first:?}"))
+            .clone();
+        assert_eq!(first.kind, ActionKind::TypeText);
+        let entry = |verification: &str| HistoryEntry {
+            step: 1,
+            action_id: first.action_id.clone(),
+            kind: first.kind,
+            label: first.target_label.clone(),
+            verification: verification.to_owned(),
+        };
+        let done = policy.decide(&space, &goal, &[entry("success")]).unwrap();
+        assert_eq!(done.as_choice().unwrap().kind, ActionKind::Done);
+        // No verified effect: not satisfied, repeat stays the choice.
+        let again = policy.decide(&space, &goal, &[entry("no-effect")]).unwrap();
+        assert_eq!(again.as_choice().unwrap().kind, ActionKind::TypeText);
     }
 
     #[test]

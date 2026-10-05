@@ -97,7 +97,13 @@ pub fn revalidate(
 
 /// Host boundary: revalidate, then invoke `press` for the exact ticket target.
 ///
-/// Hyper-Use MCP never calls this. Harnesses / invisible interceptors do.
+/// **Not one-shot**: nothing stops the same ticket from being consumed twice.
+/// Use [`consume_ticket_once`] (host harnesses) or
+/// `hyper_use_agent::execute_ticketed` (owned loop) instead.
+#[deprecated(
+    since = "0.1.0",
+    note = "not one-shot; use consume_ticket_once or hyper_use_agent::execute_ticketed"
+)]
 pub fn consume_ticket<E>(
     ticket: &ActionTicket,
     manifold: &InteractionManifold,
@@ -251,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn consume_ticket_presses_only_after_revalidate() {
         let m = manifold(vec![button("ok", "Sign in", 100.0)]);
         let decision = guard(

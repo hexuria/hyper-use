@@ -3,26 +3,21 @@
 //! Product operations are observe, guard, verify. Hyper-Use does not click and
 //! does not plan navigation. Locate / inspect / diff remain internal helpers.
 //!
-//! [`GuardDecision`] plus [`ActionTicket`] are the product contract. Legacy
-//! [`ComputerTask`] / [`ComputerResult`] types remain for transitional hosts
-//! and are not the recommended surface.
+//! [`GuardDecision`] plus [`ActionTicket`] are the guard contract; the owned
+//! agent loop lives in `hyper-use-agent`. Legacy JEV task/result types and the
+//! unused `Request` enum were removed (ADR 0003).
 
 #![forbid(unsafe_code)]
 
-use hyper_use_core::{Action, LocateQuery, RegionId};
-
-mod contract;
 mod guard;
 mod ticket;
+mod values;
 
-pub use contract::{
-    ComputerResult, ComputerTask, Constraints, ExpectedOutcome, FallbackReason, Intent,
-    MatcherConfidence, ProtocolError, ReportedExecutor, StateDelta,
-};
 pub use guard::{
     FirewallPhase, GuardCandidate, GuardDecision, GuardEvidence, GuardReason, FIREWALL_ORDER,
 };
 pub use ticket::{ActionTicket, TicketInvalid};
+pub use values::{MatcherConfidence, ProtocolError, StateDelta};
 
 /// Legacy six-phase loop. Prefer [`FirewallPhase`] / [`FIREWALL_ORDER`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -57,33 +52,9 @@ impl LoopPhase {
     }
 }
 
-/// A request a host or MCP tool can hand to a future runtime.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Request {
-    Observe,
-    Locate(LocateQuery),
-    Inspect {
-        region_id: RegionId,
-    },
-    /// Legacy. Prefer guard; Hyper-Use does not click on the product path.
-    Act {
-        region_id: RegionId,
-        action: Action,
-    },
-    Guard {
-        query: LocateQuery,
-    },
-    Verify {
-        region_id: RegionId,
-    },
-    Diff,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper_use_core::Role;
 
     #[test]
     fn firewall_order_is_observe_guard_verify() {
@@ -108,22 +79,10 @@ mod tests {
         assert_eq!(GuardReason::Disabled.as_str(), "disabled");
         assert_eq!(GuardReason::FrontLayer.as_str(), "front-layer");
         assert_eq!(GuardReason::WorldChanged.as_str(), "world-changed");
-    }
-
-    #[test]
-    fn computer_task_is_locate_or_act_and_refusal_does_not_claim_execution() {
-        let task = ComputerTask::locate(
-            LocateQuery::new().text("Sign in").unwrap(),
-            Constraints::none(),
-            ExpectedOutcome::text_present("Welcome").unwrap(),
+        assert_eq!(
+            GuardReason::UnsupportedAction.as_str(),
+            "unsupported-action"
         );
-        assert!(matches!(task.intent(), Intent::Locate(_)));
-        let refused = ComputerResult::refused(
-            MatcherConfidence::try_new(0.49).unwrap(),
-            FallbackReason::LowConfidence,
-        );
-        assert!(!refused.executed());
-        assert_eq!(refused.fallback(), Some(FallbackReason::LowConfidence));
     }
 
     #[test]
@@ -134,16 +93,5 @@ mod tests {
             ProtocolError::ConfidenceOutOfRange
         );
         assert_eq!(MatcherConfidence::try_new(-0.2).unwrap().get(), -0.2);
-    }
-
-    #[test]
-    fn request_guard_carries_a_query() {
-        let request = Request::Guard {
-            query: LocateQuery::new()
-                .text("Settings")
-                .unwrap()
-                .role(Role::Button),
-        };
-        assert!(matches!(request, Request::Guard { .. }));
     }
 }

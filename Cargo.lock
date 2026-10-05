@@ -474,6 +474,8 @@ dependencies = [
  "hyper-use-observe",
  "hyper-use-policy",
  "hyper-use-protocol",
+ "proptest",
+ "serde_json",
 ]
 
 [[package]]
@@ -493,11 +495,13 @@ dependencies = [
 name = "hyper-use-cli"
 version = "0.1.0"
 dependencies = [
+ "hyper-use-agent",
  "hyper-use-browser",
  "hyper-use-core",
  "hyper-use-guard",
  "hyper-use-mcp",
  "hyper-use-observe",
+ "hyper-use-policy",
  "hyper-use-protocol",
  "hyper-use-resonance",
  "serde_json",
@@ -563,6 +567,7 @@ dependencies = [
  "pua-core",
  "pua-lexicon",
  "pua-text",
+ "serde_json",
 ]
 
 [[package]]

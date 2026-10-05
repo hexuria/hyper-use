@@ -1,17 +1,33 @@
 //! Agent state machine: Ready ↔ Predicted → Done/Blocked.
+//!
+//! One tick:
+//!
+//! ```text
+//! observe → ActionSpace (front layer applied) → policy (PUA first)
+//!   → DONE / BLOCKED?            terminal, no input
+//!   → TYPE_TEXT / SELECT payload  TextResolver (never PUA)
+//!   → hard gate on the decided observation → ActionTicket
+//!   → executor: ledger → fresh observe → revalidate → gate → consume → input
+//!   → settle → observe → diff / value check → history
+//! ```
+//!
+//! A stale ticket discards the prediction and returns to Ready (observe and
+//! decide again). It is not a failed task, but consecutive stale discards are
+//! bounded.
 
-use hyper_use_core::{Action, ActionKind, ActionSpace, InteractionManifold, LocateQuery};
-use hyper_use_guard::{guard, world_fingerprint, GuardRequest, TicketLedger, WorldSnapshot};
+use hyper_use_browser::ScrollDirection;
+use hyper_use_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
+use hyper_use_guard::{gate, with_front_layer, world_fingerprint, TicketLedger, WorldSnapshot};
 use hyper_use_policy::{
     AgentGoal, BrowserPolicy, DeterministicTextResolver, HistoryEntry, PolicyDecision,
     PolicyOutcome, TextContext, TextResolver,
 };
-use hyper_use_protocol::{GuardDecision, TicketInvalid};
 
 use crate::error::AgentError;
+use crate::executor::{execute_ticketed, ExecError};
 use crate::outcome::{AgentOutcome, StepRecord, VerificationKind};
-use crate::runtime::BrowserRuntime;
-use crate::verify_map::classify_delta;
+use crate::runtime::{BrowserRuntime, Input};
+use crate::verify_map::{classify_delta, classify_value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentState {
@@ -25,10 +41,14 @@ pub enum AgentState {
 #[derive(Clone, Debug)]
 pub struct Predicted {
     pub decision: PolicyDecision,
-    pub typed_text: Option<String>,
+    /// TYPE_TEXT text or SELECT option, from the [`TextResolver`].
+    pub payload: Option<String>,
     pub text_fingerprint: Option<u64>,
     pub observation_fingerprint: u64,
     pub space_captured_at_ms: u64,
+    /// The observation the decision was made on (ticket is issued against it).
+    pub manifold: InteractionManifold,
+    pub focused: Option<RegionId>,
 }
 
 pub struct Agent<B, P, T = DeterministicTextResolver> {
@@ -43,10 +63,13 @@ pub struct Agent<B, P, T = DeterministicTextResolver> {
     ledger: TicketLedger,
     max_steps: u32,
     max_policy_calls: u32,
+    max_consecutive_no_effect: u32,
+    max_consecutive_stale: u32,
     steps_taken: u32,
     policy_calls: u32,
     consecutive_no_effect: u32,
-    max_consecutive_no_effect: u32,
+    consecutive_stale: u32,
+    stale_total: u32,
 }
 
 pub struct AgentBuilder<B, P, T = DeterministicTextResolver> {
@@ -56,6 +79,7 @@ pub struct AgentBuilder<B, P, T = DeterministicTextResolver> {
     max_steps: u32,
     max_policy_calls: u32,
     max_consecutive_no_effect: u32,
+    max_consecutive_stale: u32,
 }
 
 impl<B, P> AgentBuilder<B, P, DeterministicTextResolver> {
@@ -67,6 +91,7 @@ impl<B, P> AgentBuilder<B, P, DeterministicTextResolver> {
             max_steps: 60,
             max_policy_calls: 120,
             max_consecutive_no_effect: 3,
+            max_consecutive_stale: 5,
         }
     }
 }
@@ -80,6 +105,7 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             max_steps: self.max_steps,
             max_policy_calls: self.max_policy_calls,
             max_consecutive_no_effect: self.max_consecutive_no_effect,
+            max_consecutive_stale: self.max_consecutive_stale,
         }
     }
 
@@ -90,6 +116,16 @@ impl<B, P, T> AgentBuilder<B, P, T> {
 
     pub fn max_policy_calls(mut self, n: u32) -> Self {
         self.max_policy_calls = n;
+        self
+    }
+
+    pub fn max_consecutive_no_effect(mut self, n: u32) -> Self {
+        self.max_consecutive_no_effect = n.max(1);
+        self
+    }
+
+    pub fn max_consecutive_stale(mut self, n: u32) -> Self {
+        self.max_consecutive_stale = n.max(1);
         self
     }
 
@@ -106,11 +142,24 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             ledger: TicketLedger::new(),
             max_steps: self.max_steps,
             max_policy_calls: self.max_policy_calls,
+            max_consecutive_no_effect: self.max_consecutive_no_effect,
+            max_consecutive_stale: self.max_consecutive_stale,
             steps_taken: 0,
             policy_calls: 0,
             consecutive_no_effect: 0,
-            max_consecutive_no_effect: self.max_consecutive_no_effect,
+            consecutive_stale: 0,
+            stale_total: 0,
         }
+    }
+}
+
+/// Region capability a target-bound agent operation needs.
+pub fn region_action(kind: ActionKind) -> Option<Action> {
+    match kind {
+        ActionKind::Click => Some(Action::Click),
+        ActionKind::TypeText => Some(Action::Type),
+        ActionKind::Select => Some(Action::Select),
+        _ => None,
     }
 }
 
@@ -136,11 +185,31 @@ where
         &mut self.browser
     }
 
+    /// Hand the browser back (e.g. to run the next goal on the same page).
+    pub fn into_browser(self) -> B {
+        self.browser
+    }
+
+    pub fn policy_calls(&self) -> u32 {
+        self.policy_calls
+    }
+
+    /// Stale predictions discarded so far (ticket revalidation caught a change).
+    pub fn stale_discards(&self) -> u32 {
+        self.stale_total
+    }
+
     pub fn observe(&mut self) -> Result<&InteractionManifold, AgentError> {
         self.browser.observe()
     }
 
-    /// Policy decide on a fresh observation. Stale predictions are discarded.
+    /// The finite action space for an observation: front layer applied, so a
+    /// control behind an open dialog is never offered.
+    pub fn action_space(manifold: &InteractionManifold) -> ActionSpace {
+        ActionSpace::from_manifold(&with_front_layer(manifold))
+    }
+
+    /// Policy decides on a fresh observation. Any previous prediction is discarded.
     pub fn predict(&mut self) -> Result<Option<&Predicted>, AgentError> {
         if !matches!(self.state, AgentState::Ready | AgentState::Predicted) {
             return Err(AgentError::InvalidState("predict from terminal state"));
@@ -148,90 +217,97 @@ where
         if self.policy_calls >= self.max_policy_calls {
             return Err(AgentError::MaxPolicyCalls);
         }
+        self.predicted = None;
+        self.state = AgentState::Ready;
 
         let manifold = self.browser.observe()?.clone();
-        let space = ActionSpace::from_manifold(&manifold);
+        let focused = self.browser.focused();
+        let space = Self::action_space(&manifold);
         self.policy_calls += 1;
         let outcome = self
             .policy
             .decide(&space, &self.goal, &self.policy_history)
             .map_err(|e| AgentError::Policy(e.to_string()))?;
 
-        match outcome {
-            PolicyOutcome::Abstain { reason, .. } => {
-                self.predicted = None;
-                self.state = AgentState::Ready;
-                Err(AgentError::Policy(format!("abstain: {reason}")))
-            }
-            PolicyOutcome::Choice(decision) => {
-                if decision.kind == ActionKind::Done {
-                    self.state = AgentState::Done;
-                    self.predicted = None;
-                    return Ok(None);
-                }
-                if decision.kind == ActionKind::Blocked {
-                    self.state = AgentState::Blocked;
-                    self.predicted = None;
-                    return Ok(None);
-                }
-
-                let mut typed_text = None;
-                let mut text_fingerprint = None;
-                if decision.kind == ActionKind::TypeText {
-                    let action = space.get(&decision.action_id).ok_or_else(|| {
-                        AgentError::Policy("chosen TYPE_TEXT missing from space".into())
-                    })?;
-                    let ctx = TextContext {
-                        goal: self.goal.clone(),
-                        field_label: action.label().to_owned(),
-                        field_role: action
-                            .role()
-                            .map(|r| r.as_str().to_owned())
-                            .unwrap_or_default(),
-                        context_fingerprint: action.target_fingerprint(),
-                    };
-                    let resolution = self
-                        .text
-                        .resolve(&ctx)
-                        .map_err(|e| AgentError::Text(e.to_string()))?;
-                    // Re-observe after text resolution latency (even if deterministic).
-                    let manifold_after = self.browser.observe()?.clone();
-                    let space_after = ActionSpace::from_manifold(&manifold_after);
-                    if space_after
-                        .get(&decision.action_id)
-                        .map(|a| a.target_fingerprint())
-                        != Some(action.target_fingerprint())
-                    {
-                        // Page mutated during text resolve — discard and let caller predict again.
-                        self.predicted = None;
-                        self.state = AgentState::Ready;
-                        return Err(AgentError::Ticket(
-                            "page changed during text resolution".into(),
-                        ));
-                    }
-                    text_fingerprint = Some(resolution.context_fingerprint);
-                    typed_text = Some(resolution.text);
-                }
-
-                let focused = self.browser.focused();
-                let world = WorldSnapshot::of(&manifold, focused.clone());
-                let predicted = Predicted {
-                    decision,
-                    typed_text,
-                    text_fingerprint,
-                    observation_fingerprint: world_fingerprint(&world),
-                    space_captured_at_ms: space.captured_at_ms(),
-                };
-                self.predicted = Some(predicted);
-                self.state = AgentState::Predicted;
-                Ok(self.predicted.as_ref())
-            }
+        let decision = match outcome {
+            PolicyOutcome::Abstain { reason, .. } => return Err(AgentError::Abstain(reason)),
+            PolicyOutcome::Choice(decision) => decision,
+        };
+        // Off-menu guard: whatever the policy (local or remote) returned must
+        // be an offered action of the matching kind.
+        let offered = space.get(&decision.action_id).ok_or_else(|| {
+            AgentError::Policy(format!("off-menu action `{}`", decision.action_id))
+        })?;
+        if offered.kind() != decision.kind {
+            return Err(AgentError::Policy(format!(
+                "action `{}` is {} not {}",
+                decision.action_id,
+                offered.kind(),
+                decision.kind
+            )));
         }
+        match decision.kind {
+            ActionKind::Done => {
+                self.state = AgentState::Done;
+                return Ok(None);
+            }
+            ActionKind::Blocked => {
+                self.state = AgentState::Blocked;
+                return Ok(None);
+            }
+            _ => {}
+        }
+
+        let mut payload = None;
+        let mut text_fingerprint = None;
+        if matches!(decision.kind, ActionKind::TypeText | ActionKind::Select) {
+            let ctx = TextContext {
+                goal: self.goal.clone(),
+                field_label: offered.label().to_owned(),
+                field_role: if decision.kind == ActionKind::Select {
+                    "select".to_owned()
+                } else {
+                    offered
+                        .role()
+                        .map(|r| r.as_str().to_owned())
+                        .unwrap_or_default()
+                },
+                context_fingerprint: offered.target_fingerprint(),
+            };
+            let resolution = self
+                .text
+                .resolve(&ctx)
+                .map_err(|e| AgentError::Text(e.to_string()))?;
+            if resolution.context_fingerprint != ctx.fingerprint() {
+                return Err(AgentError::Text(
+                    "resolution belongs to a different context".into(),
+                ));
+            }
+            // The target is revalidated after resolution by the executor
+            // (fresh observe + ticket), so resolver latency cannot go stale
+            // unnoticed.
+            text_fingerprint = Some(resolution.context_fingerprint);
+            payload = Some(resolution.text);
+        }
+
+        let world = WorldSnapshot::of(&manifold, focused.clone());
+        self.predicted = Some(Predicted {
+            decision,
+            payload,
+            text_fingerprint,
+            observation_fingerprint: world_fingerprint(&world),
+            space_captured_at_ms: space.captured_at_ms(),
+            manifold,
+            focused,
+        });
+        self.state = AgentState::Predicted;
+        Ok(self.predicted.as_ref())
     }
 
-    /// Guard + issue ticket + revalidate/consume + execute + verify.
+    /// Gate → ticket → executor (revalidate/consume/input) → verify.
     ///
-    /// Stale tickets discard the prediction and return to Ready (not a failed task).
+    /// A stale ticket discards the prediction and returns
+    /// [`AgentError::Stale`] with the agent back in Ready.
     pub fn act(&mut self) -> Result<StepRecord, AgentError> {
         if self.state != AgentState::Predicted {
             return Err(AgentError::InvalidState("act requires Predicted"));
@@ -239,251 +315,193 @@ where
         if self.steps_taken >= self.max_steps {
             return Err(AgentError::MaxSteps);
         }
-
         let predicted = self
             .predicted
             .take()
             .ok_or(AgentError::InvalidState("missing prediction"))?;
+        self.state = AgentState::Ready;
 
-        // Single attempt; stale discards prediction and returns Ready (caller may predict again).
-        match self.try_act_once(&predicted) {
-            Ok(record) => {
-                self.history.push(record.clone());
-                self.policy_history.push(HistoryEntry {
-                    step: record.step,
-                    action_id: record.action_id.clone(),
-                    kind: record.kind,
-                    label: record.label.clone(),
-                    verification: record.verification.as_str().to_owned(),
-                });
-                if record.verification == VerificationKind::NoEffect {
-                    self.consecutive_no_effect += 1;
-                    if self.consecutive_no_effect >= self.max_consecutive_no_effect {
-                        self.state = AgentState::Blocked;
-                        return Ok(record);
-                    }
-                } else {
-                    self.consecutive_no_effect = 0;
-                }
-                self.steps_taken += 1;
-                self.state = AgentState::Ready;
-                self.predicted = None;
-                Ok(record)
+        let record = match self.try_act_once(&predicted) {
+            Ok(record) => record,
+            Err(AgentError::Stale(msg)) => {
+                self.consecutive_stale += 1;
+                self.stale_total += 1;
+                return Err(AgentError::Stale(msg));
             }
-            Err(AgentError::Ticket(msg))
-                if msg.contains("stale")
-                    || msg.contains("world-changed")
-                    || msg.contains("target-changed")
-                    || msg.contains("target-gone")
-                    || msg.contains("page changed") =>
-            {
-                let _ = self.browser.observe()?;
-                self.state = AgentState::Ready;
-                self.predicted = None;
-                Err(AgentError::Ticket(format!("stale action discarded: {msg}")))
+            Err(e) => return Err(e),
+        };
+        self.consecutive_stale = 0;
+        self.steps_taken += 1;
+        self.history.push(record.clone());
+        self.policy_history.push(HistoryEntry {
+            step: record.step,
+            action_id: record.action_id.clone(),
+            kind: record.kind,
+            label: record.label.clone(),
+            verification: record.verification.as_str().to_owned(),
+        });
+        if matches!(
+            record.verification,
+            VerificationKind::NoEffect | VerificationKind::WrongEffect
+        ) {
+            self.consecutive_no_effect += 1;
+            if self.consecutive_no_effect >= self.max_consecutive_no_effect {
+                self.state = AgentState::Blocked;
             }
-            Err(e) => {
-                self.state = AgentState::Ready;
-                self.predicted = None;
-                Err(e)
-            }
+        } else {
+            self.consecutive_no_effect = 0;
         }
+        Ok(record)
     }
 
     fn try_act_once(&mut self, predicted: &Predicted) -> Result<StepRecord, AgentError> {
-        let before_manifold = self.browser.observe()?.clone();
-        let before_page = self.browser.page().cloned();
-        let focused = self.browser.focused();
-        let now_world = WorldSnapshot::of(&before_manifold, focused.clone());
-        if world_fingerprint(&now_world) != predicted.observation_fingerprint {
-            return Err(AgentError::Ticket(
-                "stale: world changed since prediction".into(),
-            ));
-        }
-        let space = ActionSpace::from_manifold(&before_manifold);
-        let action = space.get(&predicted.decision.action_id).ok_or_else(|| {
-            AgentError::Ticket("stale: chosen action missing from fresh ActionSpace".into())
-        })?;
+        let kind = predicted.decision.kind;
+        let step = self.steps_taken + 1;
+        let stale_retries = self.consecutive_stale;
+        let record = |verification| StepRecord {
+            step,
+            action_id: predicted.decision.action_id.clone(),
+            kind,
+            label: predicted.decision.target_label.clone(),
+            verification,
+            stale_retries,
+        };
 
-        // Controls that do not press a target.
-        if predicted.decision.kind.is_control()
-            && !matches!(
-                predicted.decision.kind,
-                ActionKind::ScrollUp | ActionKind::ScrollDown
-            )
-        {
-            // WAIT: no press. DONE/BLOCKED handled in predict.
-            let after_manifold = self.browser.observe()?.clone();
+        // Page-level controls: no target, no ticket.
+        let scroll = match kind {
+            ActionKind::ScrollUp => Some(ScrollDirection::Up),
+            ActionKind::ScrollDown => Some(ScrollDirection::Down),
+            _ => None,
+        };
+        if scroll.is_some() || kind == ActionKind::Wait {
+            let before = predicted.manifold.clone();
+            let before_page = self.browser.page().cloned();
+            if let Some(direction) = scroll {
+                self.browser.scroll(direction)?;
+            }
+            self.browser.settle();
+            let after = self.browser.observe()?.clone();
             let after_page = self.browser.page().cloned();
             let page_d = match (before_page.as_ref(), after_page.as_ref()) {
                 (Some(b), Some(a)) => Some(self.browser.page_delta_between(b, a)),
                 _ => None,
             };
-            let verification = classify_delta(&before_manifold, &after_manifold, page_d.as_ref());
-            return Ok(StepRecord {
-                step: self.steps_taken + 1,
-                action_id: predicted.decision.action_id.clone(),
-                kind: predicted.decision.kind,
-                label: predicted.decision.target_label.clone(),
-                verification,
-                stale_retries: 0,
-            });
+            return Ok(record(classify_delta(&before, &after, page_d.as_ref())));
         }
 
-        let target = action
+        let action = region_action(kind)
+            .ok_or(AgentError::InvalidState("non-executable kind reached act"))?;
+        let offered = Self::action_space(&predicted.manifold)
+            .get(&predicted.decision.action_id)
+            .cloned()
+            .ok_or_else(|| AgentError::Policy("prediction not in its own action space".into()))?;
+        let target = offered
             .target()
+            .cloned()
             .ok_or_else(|| AgentError::Guard("target-bound action missing region id".into()))?;
 
-        let query = LocateQuery::new()
-            .text(action.label())
-            .map_err(|e| AgentError::Guard(e.to_string()))?;
-        let seen_world = WorldSnapshot::of(&before_manifold, focused.clone());
-        let request = GuardRequest::click(query)
-            .proposed(target.clone())
-            .focused(focused.clone())
-            .seen_world(seen_world)
-            .snapshot_id(predicted.space_captured_at_ms);
+        let ticket = gate(
+            &predicted.manifold,
+            &target,
+            action,
+            predicted.focused.clone(),
+            predicted.space_captured_at_ms,
+        )
+        .map_err(|reason| AgentError::Guard(format!("refuse: {reason}")))?;
 
-        let decision =
-            guard(&before_manifold, &request).map_err(|e| AgentError::Guard(e.to_string()))?;
-        let ticket = match decision {
-            GuardDecision::Allow { ticket, .. } => ticket,
-            GuardDecision::Refuse { reason, .. } => {
-                return Err(AgentError::Guard(format!("refuse: {reason}")));
-            }
-            GuardDecision::Escalate { reason, .. } => {
-                return Err(AgentError::Guard(format!("escalate: {reason}")));
-            }
-            _ => return Err(AgentError::Guard("unknown guard decision".into())),
+        let input = match kind {
+            ActionKind::Click => Input::Click,
+            ActionKind::TypeText => Input::Type(
+                predicted
+                    .payload
+                    .clone()
+                    .ok_or_else(|| AgentError::Text("TYPE_TEXT without resolved text".into()))?,
+            ),
+            ActionKind::Select => Input::Select(
+                predicted
+                    .payload
+                    .clone()
+                    .ok_or_else(|| AgentError::Text("SELECT without resolved option".into()))?,
+            ),
+            _ => unreachable!("region_action filtered kinds"),
         };
 
-        // Map agent kind → core Action for press.
-        let press_action = match predicted.decision.kind {
-            ActionKind::Click => Action::Click,
-            ActionKind::TypeText => Action::Type,
-            ActionKind::Select => Action::Select,
-            ActionKind::ScrollUp | ActionKind::ScrollDown => Action::Scroll,
-            _ => Action::Click,
+        let executed = match execute_ticketed(&mut self.browser, &mut self.ledger, &ticket, &input)
+        {
+            Ok(executed) => executed,
+            Err(err) if err.is_stale() => return Err(AgentError::Stale(err.to_string())),
+            Err(ExecError::Rejected(msg)) => return Err(AgentError::InputRejected(msg)),
+            Err(ExecError::Gate(reason)) => {
+                return Err(AgentError::Guard(format!("refuse at executor: {reason}")))
+            }
+            Err(other) => return Err(AgentError::Ticket(other.to_string())),
         };
 
-        // Ensure ticket action matches what we will press (guard today always Click).
-        // For non-click kinds we still bind the target via ticket identity checks.
-        let _ = &ticket;
-
-        let fresh = self.browser.observe()?.clone();
-        let focused_now = self.browser.focused();
-        if self.ledger.is_consumed(ticket.ticket_id) {
-            return Err(AgentError::Ticket("ticket already consumed".into()));
-        }
-        if let Err(err) = hyper_use_guard::revalidate(&ticket, &fresh, focused_now) {
-            return Err(match err {
-                TicketInvalid::WorldChanged
-                | TicketInvalid::TargetChanged
-                | TicketInvalid::TargetGone => {
-                    AgentError::Ticket("stale: ticket revalidation failed".into())
-                }
-                other => AgentError::Ticket(other.to_string()),
-            });
-        }
-        let target_id = ticket.target_id.clone();
-        self.browser.press(&target_id, press_action)?;
-        self.ledger
-            .mark_consumed(ticket.ticket_id)
-            .map_err(|e| AgentError::Ticket(e.to_string()))?;
-
-        // typed_text is recorded in history label annotation; live typing CDP is Phase gap.
-        let _ = &predicted.typed_text;
-
-        let after_manifold = self.browser.observe()?.clone();
+        self.browser.settle();
+        let after = self.browser.observe()?.clone();
         let after_page = self.browser.page().cloned();
-        let page_d = match (before_page.as_ref(), after_page.as_ref()) {
+        let page_d = match (executed.before_page.as_ref(), after_page.as_ref()) {
             (Some(b), Some(a)) => Some(self.browser.page_delta_between(b, a)),
             _ => None,
         };
-        let verification = classify_delta(&before_manifold, &after_manifold, page_d.as_ref());
-
-        Ok(StepRecord {
-            step: self.steps_taken + 1,
-            action_id: predicted.decision.action_id.clone(),
-            kind: predicted.decision.kind,
-            label: predicted.decision.target_label.clone(),
-            verification,
-            stale_retries: 0,
-        })
+        let verification = match input.payload() {
+            Some(expected) => {
+                let value = self.browser.read_value(&executed.target);
+                classify_value(expected, value.as_ref())
+                    .unwrap_or_else(|| classify_delta(&executed.before, &after, page_d.as_ref()))
+            }
+            None => classify_delta(&executed.before, &after, page_d.as_ref()),
+        };
+        Ok(record(verification))
     }
 
-    /// One predict+act cycle. Abstain / stale returns Ready without failing the task permanently.
+    /// One predict+act cycle.
     pub fn tick(&mut self) -> Result<TickResult, AgentError> {
         match self.state {
-            AgentState::Done => {
-                return Ok(TickResult::Finished(AgentOutcome::Done {
-                    steps: self.history.clone(),
-                    reason: "done".into(),
-                }))
-            }
+            AgentState::Done => return Ok(TickResult::Finished(self.finish_done("done"))),
             AgentState::Blocked => {
-                return Ok(TickResult::Finished(AgentOutcome::Blocked {
-                    steps: self.history.clone(),
-                    reason: "blocked".into(),
-                }))
+                return Ok(TickResult::Finished(self.finish_blocked("blocked".into())))
             }
             AgentState::Ready | AgentState::Predicted => {}
         }
 
         if self.state == AgentState::Ready {
-            let predicted = self.predict();
-            match predicted {
+            match self.predict() {
                 Ok(None) => {
-                    if self.state == AgentState::Done {
-                        return Ok(TickResult::Finished(AgentOutcome::Done {
-                            steps: self.history.clone(),
-                            reason: "policy chose DONE".into(),
-                        }));
-                    }
-                    if self.state == AgentState::Blocked {
-                        return Ok(TickResult::Finished(AgentOutcome::Blocked {
-                            steps: self.history.clone(),
-                            reason: "policy chose BLOCKED".into(),
-                        }));
-                    }
+                    return Ok(TickResult::Finished(match self.state {
+                        AgentState::Blocked => self.finish_blocked("policy chose BLOCKED".into()),
+                        _ => self.finish_done("policy chose DONE"),
+                    }));
                 }
                 Ok(Some(_)) => {}
-                Err(AgentError::Policy(msg)) if msg.starts_with("abstain:") => {
+                Err(AgentError::Abstain(reason)) => {
                     return Ok(TickResult::Finished(AgentOutcome::Abstained {
                         steps: self.history.clone(),
-                        reason: msg,
+                        reason: format!("abstain: {reason}"),
                     }));
                 }
                 Err(e) => return Err(e),
             }
         }
 
-        if self.state == AgentState::Predicted {
-            match self.act() {
-                Ok(record) => {
-                    if self.state == AgentState::Blocked {
-                        return Ok(TickResult::Finished(AgentOutcome::Blocked {
-                            steps: self.history.clone(),
-                            reason: format!("repeated no-effect after {}", record.label),
-                        }));
-                    }
-                    return Ok(TickResult::Stepped(record));
+        match self.act() {
+            Ok(record) => {
+                if self.state == AgentState::Blocked {
+                    return Ok(TickResult::Finished(self.finish_blocked(format!(
+                        "{} consecutive no-effect/wrong-effect actions (last: {})",
+                        self.consecutive_no_effect, record.label
+                    ))));
                 }
-                Err(AgentError::Ticket(msg)) if msg.contains("stale") => {
-                    return Ok(TickResult::StaleDiscarded { reason: msg });
-                }
-                Err(e) => return Err(e),
+                Ok(TickResult::Stepped(record))
             }
+            Err(AgentError::Stale(reason)) => {
+                if self.consecutive_stale >= self.max_consecutive_stale {
+                    return Err(AgentError::TooManyStale(self.consecutive_stale));
+                }
+                Ok(TickResult::StaleDiscarded { reason })
+            }
+            Err(e) => Err(e),
         }
-
-        Ok(TickResult::Stepped(StepRecord {
-            step: self.steps_taken,
-            action_id: predicted_dummy_id(),
-            kind: ActionKind::Wait,
-            label: String::new(),
-            verification: VerificationKind::Skipped,
-            stale_retries: 0,
-        }))
     }
 
     pub fn run(&mut self) -> AgentOutcome {
@@ -506,10 +524,20 @@ where
             }
         }
     }
-}
 
-fn predicted_dummy_id() -> hyper_use_core::ActionId {
-    hyper_use_core::ActionId::try_new("WAIT").expect("WAIT")
+    fn finish_done(&self, reason: &str) -> AgentOutcome {
+        AgentOutcome::Done {
+            steps: self.history.clone(),
+            reason: reason.to_owned(),
+        }
+    }
+
+    fn finish_blocked(&self, reason: String) -> AgentOutcome {
+        AgentOutcome::Blocked {
+            steps: self.history.clone(),
+            reason,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -518,5 +546,3 @@ pub enum TickResult {
     StaleDiscarded { reason: String },
     Finished(AgentOutcome),
 }
-
-// GuardRequest focused helper — check if focused_opt exists

@@ -26,6 +26,7 @@ pub struct ReplayTransport {
     steps: Vec<Step>,
     cursor: usize,
     log: Vec<String>,
+    params_log: Vec<(String, String)>,
 }
 
 impl ReplayTransport {
@@ -34,6 +35,7 @@ impl ReplayTransport {
             steps: Vec::new(),
             cursor: 0,
             log: Vec::new(),
+            params_log: Vec::new(),
         };
         transport.append(text)?;
         Ok(transport)
@@ -94,6 +96,16 @@ impl ReplayTransport {
     pub fn logged_methods(&self) -> &[String] {
         &self.log
     }
+
+    /// `(method, params_json)` of every consumed step, in call order.
+    pub fn logged_calls(&self) -> &[(String, String)] {
+        &self.params_log
+    }
+
+    /// Scripted steps not consumed yet.
+    pub fn remaining(&self) -> usize {
+        self.steps.len().saturating_sub(self.cursor)
+    }
 }
 
 impl CdpTransport for ReplayTransport {
@@ -122,6 +134,8 @@ impl CdpTransport for ReplayTransport {
         let outcome = step.outcome.clone();
         self.cursor += 1;
         self.log.push(method.to_owned());
+        self.params_log
+            .push((method.to_owned(), params_json.to_owned()));
         match outcome {
             Outcome::Result(value) => Ok(value.to_string()),
             Outcome::Protocol(message) => Err(CdpError::Protocol { message }),

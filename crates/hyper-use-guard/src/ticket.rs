@@ -163,9 +163,20 @@ impl TicketLedger {
     }
 }
 
-/// Revalidate, ensure the ticket was not already consumed, invoke `press` for the
-/// **exact** ticket target/action, then mark the ticket consumed (even if press
-/// fails after starting — callers that need retry must issue a new ticket).
+/// Host boundary, one-shot. Same order as `hyper_use_agent::execute_ticketed`
+/// (ADR 0003 §1, ADR 0005):
+///
+/// 1. refuse a ticket the ledger already consumed (`ticket-consumed`);
+/// 2. [`revalidate`] against `manifold` (the host's observation **now**);
+///    a stale ticket is **not** consumed, so the host re-observes and gets a
+///    new ticket from a new decision;
+/// 3. mark the ticket consumed **before** `press`;
+/// 4. invoke `press` for the exact `ticket.target_id` / `ticket.action`.
+///
+/// Because consumption precedes input, a press that fails or partially reaches
+/// the page can never be replayed with the same lease: the second call returns
+/// `ticket-consumed` without calling `press`. Retrying means a new decision and
+/// a new ticket.
 pub fn consume_ticket_once<E>(
     ledger: &mut TicketLedger,
     ticket: &ActionTicket,
@@ -177,11 +188,10 @@ pub fn consume_ticket_once<E>(
         return Err(ConsumeError::Invalid(TicketInvalid::TicketConsumed));
     }
     revalidate(ticket, manifold, focused).map_err(ConsumeError::Invalid)?;
-    press(&ticket.target_id, ticket.action).map_err(ConsumeError::Press)?;
     ledger
         .mark_consumed(ticket.ticket_id)
         .map_err(ConsumeError::Invalid)?;
-    Ok(())
+    press(&ticket.target_id, ticket.action).map_err(ConsumeError::Press)
 }
 
 #[cfg(test)]
@@ -190,6 +200,8 @@ mod tests {
         Action, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionFlags, RegionId,
         RegionParts, Role, SourceMask, UnitInterval,
     };
+
+    use crate::world::WorldSnapshot;
     use hyper_use_protocol::GuardReason;
 
     use super::*;
@@ -330,6 +342,154 @@ mod tests {
             other => panic!("expected TicketConsumed, got {other}"),
         }
         assert_eq!(presses, 1);
+    }
+
+    fn allowed_sign_in(m: &InteractionManifold) -> ActionTicket {
+        let decision = guard(
+            m,
+            &GuardRequest::click(LocateQuery::new().text("Sign in").unwrap()),
+        )
+        .unwrap();
+        let GuardDecision::Allow { ticket, .. } = decision else {
+            panic!("expected allow, got {decision:?}");
+        };
+        ticket
+    }
+
+    /// R1 regression: a press that fails after the lease was taken must not be
+    /// retryable with the same ticket (consume happens before press).
+    #[test]
+    fn consume_ticket_once_marks_consumed_before_press_so_failed_press_cannot_retry() {
+        let m = manifold(vec![button("ok", "Sign in", 100.0)]);
+        let ticket = allowed_sign_in(&m);
+        let mut ledger = TicketLedger::new();
+        let mut presses = 0u32;
+        let mut retried_press = false;
+        let err = consume_ticket_once(&mut ledger, &ticket, &m, None, |_id, _action| {
+            presses += 1;
+            Err::<(), GuardReason>(GuardReason::Ambiguous)
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, ConsumeError::Press(GuardReason::Ambiguous)),
+            "{err}"
+        );
+        assert_eq!(presses, 1);
+        assert!(ledger.is_consumed(ticket.ticket_id));
+        // Retry with the same lease: refused, press never called again.
+        let err = consume_ticket_once(&mut ledger, &ticket, &m, None, |_id, _action| {
+            presses += 1;
+            retried_press = true;
+            Ok::<(), GuardReason>(())
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, ConsumeError::Invalid(TicketInvalid::TicketConsumed)),
+            "{err}"
+        );
+        assert_eq!(presses, 1);
+        assert!(!retried_press);
+    }
+
+    /// A stale ticket is refused without consuming it and without pressing.
+    #[test]
+    fn consume_ticket_once_stale_does_not_consume_or_press() {
+        let before = manifold(vec![button("ok", "Sign in", 100.0)]);
+        let ticket = allowed_sign_in(&before);
+        let after = manifold(vec![button("ok", "Sign out", 100.0)]);
+        let mut ledger = TicketLedger::new();
+        let mut presses = 0u32;
+        let err = consume_ticket_once(&mut ledger, &ticket, &after, None, |_id, _action| {
+            presses += 1;
+            Ok::<(), GuardReason>(())
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, ConsumeError::Invalid(TicketInvalid::TargetChanged)),
+            "{err}"
+        );
+        assert_eq!(presses, 0);
+        assert!(!ledger.is_consumed(ticket.ticket_id));
+    }
+
+    /// Each bound target attribute is checked on its own: a ticket whose role,
+    /// label, or region fingerprint alone disagrees with the live region is
+    /// `target-changed` (kills `||` → `&&` in `revalidate`).
+    #[test]
+    fn revalidate_checks_role_label_and_fingerprint_independently() {
+        let m = manifold(vec![button("ok", "Sign in", 100.0)]);
+        let ticket = allowed_sign_in(&m);
+        revalidate(&ticket, &m, None).unwrap();
+
+        let mut role = ticket.clone();
+        role.target_role = Role::Link;
+        assert_eq!(
+            revalidate(&role, &m, None),
+            Err(TicketInvalid::TargetChanged)
+        );
+
+        let mut label = ticket.clone();
+        label.target_label = "Sign out".into();
+        assert_eq!(
+            revalidate(&label, &m, None),
+            Err(TicketInvalid::TargetChanged)
+        );
+
+        let mut fingerprint = ticket.clone();
+        fingerprint.target_fingerprint ^= 1;
+        assert_eq!(
+            revalidate(&fingerprint, &m, None),
+            Err(TicketInvalid::TargetChanged)
+        );
+    }
+
+    /// The world fingerprint separates many distinct worlds (focus id and
+    /// clickable sets). Pins the FNV mix and its segment separator.
+    #[test]
+    fn world_fingerprint_has_no_collisions_across_distinct_worlds() {
+        let mut seen = std::collections::BTreeMap::new();
+        for n in 1..=12usize {
+            let regions: Vec<_> = (0..n)
+                .map(|i| button(&format!("b{i}"), &format!("B{i}"), 10.0 + 40.0 * i as f64))
+                .collect();
+            let m = manifold(regions);
+            for f in 0..=n {
+                let focused = (f < n).then(|| RegionId::try_new(format!("b{f}")).unwrap());
+                let world = WorldSnapshot::of(&m, focused);
+                let key = format!("n={n} f={f}");
+                if let Some(prev) = seen.insert(world_fingerprint(&world), key.clone()) {
+                    panic!("fingerprint collision: {prev} vs {key}");
+                }
+            }
+        }
+        // Segment boundaries matter: focus `ab` + clickable `c` is not focus
+        // `a` + clickable `bc`.
+        let ab = manifold(vec![button("ab", "X", 10.0), button("c", "Y", 300.0)]);
+        let a = manifold(vec![button("a", "X", 10.0), button("bc", "Y", 300.0)]);
+        assert_ne!(
+            world_fingerprint(&WorldSnapshot::of(
+                &ab,
+                Some(RegionId::try_new("ab").unwrap())
+            )),
+            world_fingerprint(&WorldSnapshot::of(
+                &a,
+                Some(RegionId::try_new("a").unwrap())
+            )),
+        );
+    }
+
+    #[test]
+    fn consume_error_display_and_source_are_exact() {
+        use std::error::Error as _;
+        // `E = TicketInvalid` only because it implements `Error`; any host
+        // error type works the same.
+        let invalid: ConsumeError<TicketInvalid> =
+            ConsumeError::Invalid(TicketInvalid::WorldChanged);
+        assert_eq!(invalid.to_string(), "ticket invalid: world-changed");
+        assert_eq!(invalid.source().unwrap().to_string(), "world-changed");
+        let press: ConsumeError<TicketInvalid> = ConsumeError::Press(TicketInvalid::TargetGone);
+        assert_eq!(press.to_string(), "press failed: target-gone");
+        assert_eq!(press.source().unwrap().to_string(), "target-gone");
     }
 
     #[test]

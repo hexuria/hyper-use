@@ -162,7 +162,7 @@ fn tool_spec(name: &str) -> Value {
             vec!["region"],
         ),
         "guard" => (
-            "Decide allow / refuse / escalate for a proposed click against the page as observed now. Never clicks. Pass target (or text), optional role/position, optional within (container id) or near (\"focus\" or region id), optional proposed region id, optional seen_snapshot (the observation the host decided on). Refuses front-layer when the target is behind an open dialog; escalates world-changed when the open dialogs differ from seen_snapshot. Returns decision, evidence, candidates, focused, front_layer, scope.",
+            "Decide allow / refuse / escalate for a proposed click against the page as observed now. Never clicks. Pass target (or text), optional role/position, optional within (container id) or near (\"focus\" or region id), optional proposed region id, optional seen_snapshot (the observation the host decided on). Refuses front-layer when the target is behind an open dialog; escalates world-changed when focus, open dialogs, clickable ids, or occluded regions differ from seen_snapshot. Returns decision, evidence, candidates, focused, front_layer, scope.",
             {
                 let mut props = locate_props();
                 props.insert(

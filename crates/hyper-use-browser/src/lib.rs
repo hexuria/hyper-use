@@ -18,6 +18,7 @@ mod page;
 mod replay;
 pub mod script;
 mod session;
+mod stacking;
 mod transport;
 mod verify;
 mod ws;

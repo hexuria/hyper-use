@@ -28,15 +28,24 @@
 //! accessibility-only, its parent link is unknown, so "inside" falls back to
 //! `R`'s box lying fully inside `D`'s box.
 //!
-//! Known gaps (see docs/DECISIONS.md): hit-test occlusion lives in
-//! `hyper-use-browser` observe (`DOM.getNodeForLocation`) and marks buried
-//! regions `occluded` before the guard runs, so cookie banners and custom
-//! backdrops refuse as `occluded` rather than as dialog `front-layer`; a
+//! Occlusion outside dialogs: observe builds a stacking map from computed
+//! styles and hit-tests clickable centers (`DOM.getNodeForLocation`), then
+//! marks buried regions `occluded` before the guard runs. Cookie banners and
+//! custom backdrops therefore refuse as `occluded` rather than as dialog
+//! `front-layer`.
+//!
+//! Known gaps (see docs/DECISIONS.md): stacking compares each kept region's
+//! own style, not the full ancestor stacking-context chain through non-kept
+//! nodes; canvas / cross-origin iframes / closed shadows are invisible; a
 //! native `<dialog>` opened with `showModal()` without `aria-modal` is modal
 //! only if Chrome's accessibility tree says so; two sibling modals block
 //! each other's content, which refuses rather than guesses.
 
-use hyper_use_core::{InteractionManifold, InteractionRegion, Rect, RegionId, Role, SourceMask};
+use std::collections::BTreeSet;
+
+use hyper_use_core::{
+    Action, InteractionManifold, InteractionRegion, Rect, RegionId, Role, SourceMask,
+};
 use hyper_use_resonance::{RegionState, Visibility};
 
 /// One dialog in the front layer.
@@ -70,6 +79,66 @@ impl FrontLayer {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+/// The world variables the guard compares across observations.
+///
+/// Built from one manifold (and optional focused id). A host that decided on
+/// an older observation passes that snapshot as [`crate::GuardRequest::seen_world`];
+/// when any field differs from the world observed now, the guard escalates
+/// [`hyper_use_protocol::GuardReason::WorldChanged`].
+///
+/// Compared fields:
+///
+/// - [`Self::focused`]: accessibility focus (cargo-runner cursor);
+/// - [`Self::front_layer`]: open dialogs;
+/// - [`Self::clickable`]: clickable region ids present;
+/// - [`Self::occluded`]: regions already marked occluded by observe (hit-test
+///   or stacking). Front-layer blocking applied only inside the guard is
+///   tracked by [`Self::front_layer`], not by baking dialog occlusion here.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WorldSnapshot {
+    focused: Option<RegionId>,
+    front_layer: FrontLayer,
+    clickable: BTreeSet<RegionId>,
+    occluded: BTreeSet<RegionId>,
+}
+
+impl WorldSnapshot {
+    pub fn of(manifold: &InteractionManifold, focused: Option<RegionId>) -> Self {
+        let clickable = manifold
+            .regions()
+            .filter(|region| region.actions().contains(&Action::Click))
+            .map(|region| region.id().clone())
+            .collect();
+        let occluded = manifold
+            .regions()
+            .filter(|region| region.flags().occluded())
+            .map(|region| region.id().clone())
+            .collect();
+        Self {
+            focused,
+            front_layer: FrontLayer::of(manifold),
+            clickable,
+            occluded,
+        }
+    }
+
+    pub fn focused(&self) -> Option<&RegionId> {
+        self.focused.as_ref()
+    }
+
+    pub fn front_layer(&self) -> &FrontLayer {
+        &self.front_layer
+    }
+
+    pub fn clickable(&self) -> &BTreeSet<RegionId> {
+        &self.clickable
+    }
+
+    pub fn occluded(&self) -> &BTreeSet<RegionId> {
+        &self.occluded
     }
 }
 

@@ -8,7 +8,7 @@
 //! shows that failure before it shows the context that fixes it.
 
 use hyper_use_core::{parse_fixture, InteractionManifold, LocateQuery, RegionId, Role};
-use hyper_use_guard::{guard, FrontLayer, GuardDecision, GuardReason, GuardRequest};
+use hyper_use_guard::{guard, FrontLayer, GuardDecision, GuardReason, GuardRequest, WorldSnapshot};
 use hyper_use_resonance::{RegionMatcher, WeightedMatcher};
 
 const TWINS: &str = include_str!("../../../fixtures/twin-suspend-rows.manifold");
@@ -184,11 +184,11 @@ fn the_same_page_without_the_dialog_allows_the_page_button() {
 fn a_host_that_decided_before_the_dialog_opened_is_escalated_world_changed() {
     let before = load(CLOSED);
     let now = load(MODAL);
-    let seen = FrontLayer::of(&before);
-    assert!(seen.is_empty());
+    let seen = WorldSnapshot::of(&before, None);
+    assert!(seen.front_layer().is_empty());
     // Even for a target inside the dialog: the host never saw it.
     for text in ["Delete project", "Cancel"] {
-        let request = GuardRequest::click(button(text)).seen_layer(seen.clone());
+        let request = GuardRequest::click(button(text)).seen_world(seen.clone());
         assert_eq!(
             escalated(&guard(&now, &request).unwrap()),
             GuardReason::WorldChanged,
@@ -196,8 +196,90 @@ fn a_host_that_decided_before_the_dialog_opened_is_escalated_world_changed() {
         );
     }
     // A host that saw the dialog gets the normal decision.
-    let request = GuardRequest::click(button("Cancel")).seen_layer(FrontLayer::of(&now));
+    let request = GuardRequest::click(button("Cancel")).seen_world(WorldSnapshot::of(&now, None));
     assert_eq!(allowed(&guard(&now, &request).unwrap()), "confirm-cancel");
+}
+
+#[test]
+fn world_changed_when_focus_moves_between_observations() {
+    let m = load(TWINS);
+    let seen = WorldSnapshot::of(&m, Some(id("beta-host")));
+    let request = GuardRequest::click(button("Suspend").near(Some(id("alpha-host"))))
+        .focused(Some(id("alpha-host")))
+        .seen_world(seen);
+    assert_eq!(
+        escalated(&guard(&m, &request).unwrap()),
+        GuardReason::WorldChanged
+    );
+    let same = GuardRequest::click(button("Suspend").near(Some(id("alpha-host"))))
+        .focused(Some(id("alpha-host")))
+        .seen_world(WorldSnapshot::of(&m, Some(id("alpha-host"))));
+    assert_eq!(allowed(&guard(&m, &same).unwrap()), "alpha-suspend");
+}
+
+#[test]
+fn world_changed_when_occluded_set_grows() {
+    let clear = hyper_use_core::parse_fixture(
+        "viewport w=1440 h=900\n\
+         region id=save role=button label=\"Save\" x=1200 y=780 w=100 h=36 actions=click sources=dom\n\
+         region id=accept role=button label=\"Accept all\" x=1200 y=40 w=120 h=36 actions=click sources=dom\n",
+    )
+    .unwrap();
+    let covered = hyper_use_core::parse_fixture(
+        "viewport w=1440 h=900\n\
+         region id=save role=button label=\"Save\" x=1200 y=780 w=100 h=36 actions=click sources=dom flags=occluded\n\
+         region id=accept role=button label=\"Accept all\" x=1200 y=40 w=120 h=36 actions=click sources=dom\n",
+    )
+    .unwrap();
+    let seen = WorldSnapshot::of(&clear, None);
+    let request = GuardRequest::click(button("Accept all")).seen_world(seen);
+    assert_eq!(
+        escalated(&guard(&covered, &request).unwrap()),
+        GuardReason::WorldChanged
+    );
+}
+
+#[test]
+fn world_changed_when_a_clickable_region_appears() {
+    let before = hyper_use_core::parse_fixture(
+        "viewport w=800 h=600\n\
+         region id=a role=button label=\"Go\" x=40 y=40 w=80 h=30 actions=click sources=dom\n",
+    )
+    .unwrap();
+    let after = hyper_use_core::parse_fixture(
+        "viewport w=800 h=600\n\
+         region id=a role=button label=\"Go\" x=40 y=40 w=80 h=30 actions=click sources=dom\n\
+         region id=b role=button label=\"Extra\" x=140 y=40 w=80 h=30 actions=click sources=dom\n",
+    )
+    .unwrap();
+    let request = GuardRequest::click(button("Go")).seen_world(WorldSnapshot::of(&before, None));
+    assert_eq!(
+        escalated(&guard(&after, &request).unwrap()),
+        GuardReason::WorldChanged
+    );
+}
+
+#[test]
+fn stacking_shaped_occlusion_refuses_under_a_higher_z_overlay() {
+    let m = hyper_use_core::parse_fixture(
+        "viewport w=1440 h=900\n\
+         region id=save role=button label=\"Save\" x=1200 y=780 w=100 h=36 actions=click sources=dom flags=occluded\n\
+         region id=toast role=button label=\"Dismiss\" x=1180 y=760 w=160 h=80 actions=click sources=dom\n",
+    )
+    .unwrap();
+    assert!(FrontLayer::of(&m).is_empty());
+    let req = GuardRequest::click(LocateQuery::new().text("Save").unwrap().role(Role::Button));
+    assert_eq!(refused(&guard(&m, &req).unwrap()), GuardReason::Occluded);
+    let toast = GuardRequest::click(
+        LocateQuery::new()
+            .text("Dismiss")
+            .unwrap()
+            .role(Role::Button),
+    );
+    assert!(matches!(
+        guard(&m, &toast).unwrap(),
+        GuardDecision::Allow { .. }
+    ));
 }
 
 #[test]

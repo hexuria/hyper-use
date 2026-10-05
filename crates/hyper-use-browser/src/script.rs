@@ -195,6 +195,10 @@ pub struct PageSpec {
     /// Use this to script a cookie banner or custom backdrop covering a
     /// control: map the buried control's backend to the overlay's backend.
     pub hit_overrides: BTreeMap<i64, i64>,
+    /// Optional computed-style overrides keyed by DOM `nodeId`. Absent keys
+    /// get a default static stacking style. Enables stacking-map fixtures
+    /// without relying on hit-test overrides.
+    pub style_overrides: BTreeMap<i64, Vec<(String, String)>>,
 }
 
 impl PageSpec {
@@ -243,12 +247,25 @@ impl PageSpec {
                 title: title.to_owned(),
             },
             hit_overrides: BTreeMap::new(),
+            style_overrides: BTreeMap::new(),
         }
     }
 
     /// Cover `target_backend`'s center with `hit_backend` (hit-test overlay).
     pub fn cover(mut self, target_backend: i64, hit_backend: i64) -> Self {
         self.hit_overrides.insert(target_backend, hit_backend);
+        self
+    }
+
+    /// Set computed style for a DOM `nodeId` (stacking-map fixtures).
+    pub fn style(mut self, node_id: i64, pairs: Vec<(&str, &str)>) -> Self {
+        self.style_overrides.insert(
+            node_id,
+            pairs
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        );
         self
     }
 }
@@ -306,6 +323,20 @@ impl ScriptBuilder {
             HistorySpec::ProtocolError => error("Page.getNavigationHistory", "history failed"),
             HistorySpec::NoEntries => result("Page.getNavigationHistory", json!({})),
         });
+        // Stacking map: CSS.enable + computed style per kept DOM node, in
+        // RegionId order (same as BrowserSession::apply_stacking_occlusion).
+        self.calls.push(result("CSS.enable", json!({})));
+        for (node_id, pairs) in style_targets(page) {
+            let computed = pairs
+                .iter()
+                .map(|(name, value)| json!({"name": name, "value": value}))
+                .collect::<Vec<_>>();
+            self.calls.push(result(
+                "CSS.getComputedStyleForNode",
+                json!({"computedStyle": computed}),
+            ));
+            let _ = node_id; // params are not checked by ReplayTransport unless set
+        }
         // Hit-test each clickable fused region in RegionId order (same order
         // BrowserSession::apply_hit_test_occlusion walks the manifold).
         for (_id, backend, _x, _y) in clickable_targets(page) {
@@ -433,6 +464,80 @@ fn ax_json((index, node): (usize, &AxSpec)) -> Value {
         value["properties"] = json!(properties);
     }
     value
+}
+
+/// Kept DOM nodes that receive a stacking style, in RegionId (`n{backend}`) order.
+fn style_targets(page: &PageSpec) -> Vec<(i64, Vec<(String, String)>)> {
+    let mut flat = Vec::new();
+    for node in &page.dom {
+        flatten(node, &mut flat);
+    }
+    let mut targets: Vec<(String, i64, i64)> = Vec::new();
+    for node in flat {
+        if node.rect.is_none() {
+            continue;
+        }
+        // Only nodes observe keeps as regions get styles. Keep rule matches
+        // extract::keep_element for the tags ScriptBuilder emits.
+        if !dom_node_kept(node) {
+            continue;
+        }
+        targets.push((format!("n{}", node.backend), node.node_id, node.backend));
+    }
+    targets.sort_by(|left, right| left.0.cmp(&right.0));
+    targets
+        .into_iter()
+        .map(|(_id, node_id, _backend)| {
+            let pairs = page
+                .style_overrides
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_else(default_stacking_style);
+            (node_id, pairs)
+        })
+        .collect()
+}
+
+fn default_stacking_style() -> Vec<(String, String)> {
+    vec![
+        ("z-index".into(), "auto".into()),
+        ("position".into(), "static".into()),
+        ("opacity".into(), "1".into()),
+        ("transform".into(), "none".into()),
+        ("filter".into(), "none".into()),
+        ("isolation".into(), "auto".into()),
+        ("mix-blend-mode".into(), "normal".into()),
+        ("will-change".into(), "auto".into()),
+        ("pointer-events".into(), "auto".into()),
+    ]
+}
+
+fn dom_node_kept(node: &DomSpec) -> bool {
+    let role_attr = node
+        .attributes
+        .iter()
+        .find(|(name, _)| name == "role")
+        .map(|(_, value)| value.as_str());
+    let label = node.label.trim();
+    if role_attr.is_some() {
+        return true;
+    }
+    let tag = node.tag.to_ascii_uppercase();
+    matches!(
+        tag.as_str(),
+        "BUTTON"
+            | "A"
+            | "INPUT"
+            | "TEXTAREA"
+            | "SELECT"
+            | "NAV"
+            | "H1"
+            | "H2"
+            | "H3"
+            | "H4"
+            | "H5"
+            | "H6"
+    ) || (!label.is_empty() && matches!(tag.as_str(), "LABEL" | "SPAN" | "P" | "DIV"))
 }
 
 /// Clickable fused regions in `n{backend}` / `ax{backend}` id order.

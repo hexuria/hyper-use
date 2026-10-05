@@ -14,8 +14,8 @@ use hyper_use_hyper::{Dims, Encoder};
 #[cfg(feature = "hgra")]
 use crate::locate_with;
 use crate::{
-    actionability_score, cap_text_miss, geometric_score, penalty_total, ResonanceError,
-    ResonanceModel,
+    actionability_score, cap_text_miss, geometric_score, penalty_total, ContextScope,
+    ResonanceError, ResonanceModel,
 };
 
 /// One ranked region. `rank` is 1-based. `confidence` is that matcher's total,
@@ -116,8 +116,9 @@ impl WeightedModel {
 
 const _: () = assert!(WeightedModel::V1.basis_point_sum() == 100);
 
-/// Deterministic baseline. Semantic text and role combine by minimum, so a
-/// role hit cannot hide a text miss. The text term is
+/// Deterministic baseline. Semantic text, role, and world context
+/// ([`ContextScope`]: `within` and `near`) combine by minimum, so a role hit
+/// cannot hide a text miss and a text hit cannot hide a context miss. The text term is
 /// `recall * (0.5 + 0.5 * precision)`: every query token must be in the label
 /// for full credit, and label tokens the query did not ask for cost up to half
 /// of it, so "Send" outranks "Send feedback". An absent constraint scores `1` (it was
@@ -148,9 +149,10 @@ impl RegionMatcher for WeightedMatcher {
         query: &LocateQuery,
         manifold: &InteractionManifold,
     ) -> Result<Vec<Match>, ResonanceError> {
+        let scope = ContextScope::resolve(query, manifold);
         let mut ranked = Vec::with_capacity(manifold.len());
         for region in manifold.regions() {
-            let confidence = weighted_total(self.model, manifold, region, query);
+            let confidence = weighted_total(self.model, manifold, region, query, &scope);
             debug_assert!(confidence.is_finite());
             ranked.push(Match {
                 rank: 0,
@@ -219,8 +221,10 @@ fn weighted_total(
     manifold: &InteractionManifold,
     region: &InteractionRegion,
     query: &LocateQuery,
+    scope: &ContextScope,
 ) -> f64 {
-    let semantic = weighted_semantic(query, region);
+    // Context (within / near) is a constraint like text and role: minimum.
+    let semantic = weighted_semantic(query, region).min(scope.score(manifold, region));
     let geometric = geometric_score(manifold.viewport(), region.rect(), query);
     let actionability = actionability_score(region, query);
     let penalty = penalty_total(manifold.viewport(), region, ResonanceModel::V1);

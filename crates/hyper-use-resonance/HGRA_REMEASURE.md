@@ -81,7 +81,15 @@ cap, not the vector. The first column reproduces the "before" totals exactly.
 ## Not changed (deferred)
 
 - Ancestor / container context channel in the query (nested Suspend-row case).
-  No fixture has nested twins yet.
+  Now handled outside the hypervector: `LocateQuery::within` / `near` fold
+  into the shared semantic minimum (`src/context.rs`), so HGRA obeys them too.
+  Fixture: `fixtures/twin-suspend-rows.manifold`. The HGRA vector itself still
+  does not encode context.
+
+This corpus is label ranking on static pages. It is **not** the product bar:
+it never opens a dialog and never puts one label under two parents. The bar
+for variable change is `crates/hyper-use-guard/tests/world_context.rs` (see
+"World context gate" in `docs/DECISIONS.md`).
 - `temporal_stability`: `locate_with` reads the region value; extractors still
   set it to 1, so the 5% weight carries no signal. Out of scope here.
 - The signature still bundles state, sources, and neighbors that no query

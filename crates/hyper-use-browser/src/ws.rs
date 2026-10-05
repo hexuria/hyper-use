@@ -102,16 +102,25 @@ fn resolve_websocket_url(endpoint: &str) -> Result<String, CdpError> {
             message: format!("CDP endpoint `{endpoint}` must be http:// or ws://"),
         });
     }
-    let body = http_get(&format!("{http}/json/version"))?;
-    let value: Value = serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+    // `/json/version` names the browser target, which has no `Page` domain.
+    // The tools need a page, so pick the first page target from `/json/list`.
+    page_websocket_url(&http_get(&format!("{http}/json/list"))?)
+}
+
+/// First `"type": "page"` target's websocket URL in a `/json/list` body.
+fn page_websocket_url(body: &str) -> Result<String, CdpError> {
+    let value: Value = serde_json::from_str(body).map_err(|err| CdpError::BadJson {
         message: err.to_string(),
     })?;
     value
-        .get("webSocketDebuggerUrl")
-        .and_then(Value::as_str)
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|target| target.get("type").and_then(Value::as_str) == Some("page"))
+        .find_map(|target| target.get("webSocketDebuggerUrl").and_then(Value::as_str))
         .map(str::to_owned)
         .ok_or_else(|| CdpError::Transport {
-            message: "json/version has no webSocketDebuggerUrl".into(),
+            message: "json/list has no page target with a webSocketDebuggerUrl".into(),
         })
 }
 
@@ -226,6 +235,40 @@ fn decode_chunked(body: &str) -> Result<String, CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_endpoint_resolves_to_the_first_page_target_not_the_browser() {
+        // Shape of Chrome's `/json/list`: service workers and iframes can come
+        // before the page, and the browser target is not listed at all.
+        let body = r#"[
+            {"type": "service_worker", "webSocketDebuggerUrl": "ws://127.0.0.1:9333/devtools/page/SW"},
+            {"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9333/devtools/page/A"},
+            {"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9333/devtools/page/B"}
+        ]"#;
+        assert_eq!(
+            page_websocket_url(body),
+            Ok("ws://127.0.0.1:9333/devtools/page/A".to_owned())
+        );
+    }
+
+    #[test]
+    fn json_list_without_a_page_target_is_a_transport_error() {
+        let body = r#"[{"type": "service_worker", "webSocketDebuggerUrl": "ws://x/sw"}, {"type": "page"}]"#;
+        assert_eq!(
+            page_websocket_url(body),
+            Err(CdpError::Transport {
+                message: "json/list has no page target with a webSocketDebuggerUrl".into(),
+            })
+        );
+        assert!(matches!(
+            page_websocket_url("{}"),
+            Err(CdpError::Transport { .. })
+        ));
+        assert!(matches!(
+            page_websocket_url("not json"),
+            Err(CdpError::BadJson { .. })
+        ));
+    }
 
     #[test]
     fn refused_endpoints_are_transport_errors_without_a_socket() {

@@ -24,6 +24,11 @@ serde_json = "1"
 name = "hyper_use_cli"
 path = "src/lib.rs"
 
+[[example]]
+# Manual, opt-in live drive with JEV. Not built without --features jev.
+name = "live_drive"
+required-features = ["jev"]
+
 [[bin]]
 name = "hyper-use"
 path = "src/main.rs"

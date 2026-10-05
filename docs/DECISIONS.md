@@ -820,8 +820,10 @@ Status: 2026-10-05. Recorded so they are not mistaken for verified behavior.
   four and dropped on failure, so this is bounded per session, not globally.
 - No loopback check on the CDP endpoint. A caller can point the server at a
   remote `ws://` host. `wss://` is rejected.
-- No connect or read timeout on the CDP WebSocket. A hung Chrome hangs the
-  call.
+- No timeout on the CDP WebSocket's TCP connect or handshake. After connect,
+  reads and writes time out after 5 seconds (`ws.rs`), so a hung Chrome
+  fails the call instead of hanging it, but an unreachable host can still
+  stall the connect.
 - `match_regions` builds an O(n*m) score table. The 2000-region smoke test
   passes; it is not a memory bound.
 - Identity step 1 keeps a fused stable id across observations without
@@ -873,15 +875,20 @@ What the mock environment owns:
 - ring diff, eviction, NoEffect, and no-op signals as data;
 - unknown page history.
 
-What it does not own, and a later live JEV + Claude drive would:
+What it does not own, and the manual live drive covers:
 
 - Chrome's real response shapes, ordering, and timing;
 - what a real page does after a click (navigation, re-render, async load);
-- websocket failures, slow or hung sockets (no timeout exists yet);
+- websocket failures and slow or hung sockets (reads and writes time out
+  after 5 seconds; the connect does not);
 - whether an agent driving the tool picks good queries and reads refusals
   correctly.
 
-The live drive needs a JEV API key and an approved run. It has not started.
+The live drive (`examples/live-drive/`) is manual and opt-in: JEV picks the
+calls against a local Gmail-style test page in a throwaway Chrome. It is not a
+benchmark. Its first run found that an `http://` CDP endpoint resolved to the
+browser target, which has no `Page` domain; the resolver now picks the first
+page target from `/json/list`.
 It is not a benchmark of Browser Use or CUA, and no success rate is claimed
 from the mock suite.
 

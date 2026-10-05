@@ -18,6 +18,8 @@ const PARENT_WEIGHT: f64 = 1.0;
 const NEIGHBOR_WEIGHT: f64 = 0.25;
 const STATE_WEIGHT: f64 = 0.5;
 const SOURCE_WEIGHT: f64 = 0.5;
+// Every query probe bundles at the same weight. See `query_vector`.
+const QUERY_PART_WEIGHT: f64 = 1.0;
 
 pub(crate) struct Memory<'a> {
     encoder: &'a Encoder,
@@ -176,6 +178,9 @@ fn push_permuted(
     Ok(())
 }
 
+/// One bound `key * value` probe per query constraint, in the same
+/// namespaces the region signature uses: role, each label token, position,
+/// action. These are the parts [`query_vector`] bundles.
 pub(crate) fn query_probes(
     query: &hyper_use_core::LocateQuery,
     memory: &mut Memory<'_>,
@@ -196,6 +201,31 @@ pub(crate) fn query_probes(
         probes.push(memory.bound("action", "action", action.as_str())?);
     }
     Ok(probes)
+}
+
+/// The query as one hypervector: the probes from [`query_probes`] bundled
+/// with equal weight (`QUERY_PART_WEIGHT` each), the same `bind` then
+/// `bundle` the region signature uses for its own parts. The ranker takes a
+/// single cosine of this vector against each region signature.
+///
+/// Equal weight keeps parity with the probe set the old probe-mean scored:
+/// every constraint (and every label token) counts once. With an even number
+/// of probes a component can sum to zero; [`bundle`] breaks that tie to `+1`,
+/// as documented in the algebra crate. `None` when the query has no
+/// constraint, so the caller keeps the neutral empty-query behaviour.
+pub(crate) fn query_vector(
+    query: &hyper_use_core::LocateQuery,
+    memory: &mut Memory<'_>,
+) -> Result<Option<BipolarVector>, ResonanceError> {
+    let probes = query_probes(query, memory)?;
+    if probes.is_empty() {
+        return Ok(None);
+    }
+    let parts: Vec<(BipolarVector, f64)> = probes
+        .into_iter()
+        .map(|probe| (probe, QUERY_PART_WEIGHT))
+        .collect();
+    Ok(Some(bundle(&parts)?))
 }
 
 fn source_name(bits: u8) -> &'static str {

@@ -78,9 +78,11 @@ Penalty flags are not mixed into the vector. They subtract after the weighted
 sum so a disabled twin drops by exactly the versioned penalty (detached also
 drops contextual consistency).
 
-The hypervector term is the mean cosine of the query probes against that
-signature, not a second learned model. Probe resonance keeps a single field
-visible after bundling. Weights are [`ResonanceModel::V1`] basis points.
+The hypervector term is one cosine of the bundled query against that
+signature, not a second learned model. The query bundles one bound probe per
+constraint (role, each label token, position, action) at equal weight. It was
+the mean of per-probe cosines until "HGRA semantic parity and bundled query".
+Weights are [`ResonanceModel::V1`] basis points.
 
 ## Geometry
 
@@ -1057,3 +1059,40 @@ Verifiers: `same_origin_signature_and_query_count_up`,
 `a_repeated_identical_locate_carries_repeated_query_and_still_ranks`, and the
 replica test `t8_twin_send_refuses_then_repeated_query_names_a_separating_position`.
 
+## HGRA semantic parity and bundled query
+
+Status: 2026-10-05 (Asia/Manila). Numbers in
+`crates/hyper-use-resonance/HGRA_REMEASURE.md`.
+
+HGRA's semantic term was `mean(token_recall, role_hit)`. It never got the
+precision factor the weighted matcher gained in "Exact label over superset",
+so "Send" and "Send feedback" both scored semantic 1.0 for "Send" and HGRA's
+margin on `send-buttons.manifold` was 0.0277, refused by the 0.05 act margin.
+HGRA now calls the weighted matcher's `weighted_semantic`:
+`min(recall * (0.5 + 0.5 * precision), role_hit)`. One function, no drift.
+This supersedes "The HGRA semantic term is not changed" in that section; the
+pin `hgra_send_order_is_unchanged` is replaced by
+`hgra_exact_label_outranks_superset_labels_with_lower_ids`.
+
+The hypervector term was the mean of one cosine per query probe. It is now
+`cosine(bundle(probes, weight 1 each), signature)`: the query is composed with
+the same `bind` and `bundle` as the signature and compared once. Equal weight
+keeps the probe set the mean used. The signature itself is unchanged.
+
+Result on the 5-case locate corpus: HGRA tops unchanged (5/5, 5/5 agreement
+with weighted); the Send margin goes 0.0277 to 0.0859 and the gate now allows
+it, so gate decisions agree with weighted on 5/5 (was 4/5). Ablation:
+parity alone gives Send 0.0777; the bundle alone gives 0.0359; the bundle adds
+0.039 on the 3-constraint sidebar query.
+
+Downside accepted: with min, a wrong-role label hit scores semantic 0 in HGRA
+(it was 0.5), as it already did in weighted. A two-probe query bundles with
+many zero-sum components that tie to `+1`, so the bundle helps little there.
+HGRA totals are still not calibrated to weighted totals, and HGRA is still not
+the product default; the live suite has not been rerun with `matcher: "hgra"`.
+
+Verifiers: `hgra_exact_label_outranks_superset_labels_with_lower_ids`,
+`bundled_query_is_one_cosine_and_widens_the_send_margin_over_probe_mean`,
+`hgra_label_hit_with_the_wrong_role_outranks_a_nameless_region`,
+`hgra_score_parts_are_exact_and_the_total_is_their_weighted_sum`, and the
+printing test `remeasure_hgra_against_weighted_on_the_locate_corpus`.

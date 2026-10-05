@@ -233,7 +233,10 @@ fn weighted_total(
 
 /// Minimum of the constraints that were actually set. Absent text and role
 /// score `1`. A text miss is `0` even when the role matches.
-fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
+///
+/// Shared with HGRA (`semantic_score` in the crate root), so both matchers
+/// score text precision and role the same way.
+pub(crate) fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
     let mut present = Vec::new();
     if let Some(text) = query.text_ref() {
         present.push(weighted_text(text, region.label()));

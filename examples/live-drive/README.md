@@ -37,6 +37,8 @@ Flags: `--site` (default `http://127.0.0.1:8765`; pass `/acme-mail/site` as abov
 <task id>`, `--screenshot-only` (inbox and thread at 1280 and 1440 wide,
 Compose open, settings, help).
 
+Set `HYPER_USE_MATCHER=hgra` (and build `hyper-use` / `live_drive` with `--features hgra`) to force the experimental HGRA ranker through MCP; default remains weighted.
+
 Each task gets a fresh tab and a fresh `hyper-use mcp` child attached to that
 tab's page websocket. The harness writes one JSONL transcript per task to
 `<out>/transcripts/` and a `summary.json`, and records page ground truth

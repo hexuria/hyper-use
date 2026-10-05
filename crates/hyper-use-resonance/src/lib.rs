@@ -298,7 +298,16 @@ fn score_parts(
     // resolved container as parent-channel probes (see `query_vector`).
     let semantic = semantic_score(query, region).min(scope.score(manifold, region));
     let source_agreement = f64::from(region.sources().count()) / f64::from(SourceMask::KNOWN_COUNT);
-    let geometric = geometric_score(manifold.viewport(), region.rect(), query);
+    // Exact semantic match: zone is a ranking preference via the hypervector,
+    // not a veto. A wrong LocateQuery `position` must not alone pull an exact
+    // label below the executor allow gate (0.55). Live-drive t3 (Add Cc +
+    // position=top) scored ~0.516 and refused while still ranked #1. Weighted
+    // is unchanged: it keeps raw `geometric_score` (its 0.50 semantic weight
+    // already clears 0.55 at geo=0).
+    let mut geometric = geometric_score(manifold.viewport(), region.rect(), query);
+    if semantic == 1.0 {
+        geometric = 1.0;
+    }
     let actionability = actionability_score(region, query);
     let temporal_stability = region.temporal_stability().get();
     let contextual_consistency = contextual_score(manifold, region);
@@ -1033,5 +1042,72 @@ mod tests {
                 parts.total()
             );
         }
+    }
+
+    /// Live-drive t3: exact "Add Cc" with a wrong `position: top` while the
+    /// control sits in the bottom sheet. Geometric alone used to pull HGRA
+    /// under the 0.55 allow gate (~0.516) even though the region stayed #1.
+    #[test]
+    fn hgra_exact_label_wrong_position_stays_above_allow_gate() {
+        let viewport = Rect::try_viewport(0.0, 0.0, 1280.0, 800.0).unwrap();
+        let add_cc = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("add-cc").unwrap(),
+            role: Role::Button,
+            label: "Add Cc".into(),
+            // Bottom-right compose chrome — not Top.
+            rect: Rect::try_new(1190.0, 720.0, 60.0, 30.0).unwrap(),
+            actions: vec![Action::Click],
+            parent: None,
+            sources: SourceMask::DOM.union(SourceMask::ACCESSIBILITY),
+            flags: RegionFlags::none(),
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap();
+        let decoy = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("send").unwrap(),
+            role: Role::Button,
+            label: "Send".into(),
+            rect: Rect::try_new(740.0, 752.0, 80.0, 36.0).unwrap(),
+            actions: vec![Action::Click],
+            parent: None,
+            sources: SourceMask::DOM.union(SourceMask::ACCESSIBILITY),
+            flags: RegionFlags::none(),
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap();
+        let manifold = InteractionManifold::try_new(viewport, vec![add_cc, decoy], 0).unwrap();
+        let query = LocateQuery::new()
+            .text("Add Cc")
+            .unwrap()
+            .role(Role::Button)
+            .position(Zone::Top);
+        assert_eq!(
+            geometric_score(viewport, manifold.get_str("add-cc").unwrap().rect(), &query),
+            0.0,
+            "raw geometry must still miss Top"
+        );
+
+        let ranked = locate(&manifold, &query).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "add-cc");
+        assert_eq!(ranked[0].score().semantic(), 1.0);
+        assert_eq!(
+            ranked[0].score().geometric(),
+            1.0,
+            "exact semantic ignores the zone miss in the geometric term"
+        );
+        assert!(
+            ranked[0].score().total() >= 0.55,
+            "HGRA total {} must clear MIN_ALLOW_CONFIDENCE",
+            ranked[0].score().total()
+        );
+
+        // Weighted keeps applying raw geo=0; with V1 weights that is still 0.70.
+        let weighted = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        assert_eq!(weighted[0].id().as_str(), "add-cc");
+        assert!(
+            (weighted[0].confidence() - 0.7).abs() < 1e-12,
+            "{}",
+            weighted[0].confidence()
+        );
     }
 }

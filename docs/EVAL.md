@@ -37,6 +37,12 @@ cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
   --fixture path/to/script.cdp.json            # ScriptBuilder JSON
 cargo run -p hyper-use-cli -- run --goal "Delete" \
   --fixture fixtures/modal-confirm.manifold    # static manifold: predict-only dry run
+cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+  --fixture fixtures/agent-type-search.cdp.json
+cargo run -p hyper-use-cli -- run --goal 'Click Go' \
+  --fixture fixtures/agent-click-go.cdp.json
+cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
+  --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
 The dry run on `modal-confirm.manifold` predicts `CLICK:confirm-delete`: the
@@ -101,23 +107,38 @@ browser; it measures nothing.
 | page never settles | `adversarial` | stale bound → failed, no input |
 | off-menu / selector / kind-mismatch policy output | `adversarial`, `remote` unit, `remote_e2e` | hard error, no input |
 | ticket reuse / operation swap | executor unit, `props` | refused |
+| multi-step `then` / `and then` | `adversarial` | both clauses execute; connective limits documented |
+| readonly observed before TYPE | `gate` unit, `adversarial` | hard refuse / no input |
+| unrelated far banner vs nearby twin | `world` unit, `ticket`, `adversarial` | far OK; nearby/modal stale |
 
 Not covered yet: iframes, shadow DOM, virtualized lists, autocomplete
 suggestion popups, checkbox/radio "already satisfied", navigation between
-prediction and execution on a live page, multi-step goals.
+prediction and execution on a live page.
 
-## Honest gaps
+## Honest gaps / out of scope
 
-- Arms A/B/D have no live runs; no jev-ultrafast Wikipedia / travel parity.
-- PUA policy is single-intent per goal (one action then DONE). Multi-step
-  tasks need a planner or the remote tier.
+- Arms A/B/D have no live runs; no jev-ultrafast Wikipedia / travel parity
+  (upstream unpaid path unavailable). Documented as blocked below.
+- Multi-step is **only** plain `then` / `and then` outside quotes
+  (`split_sequential_clauses`). No branching, conditionals, or LLM planner.
+  Each clause remains one PUA single-intent.
 - `model-text` TextResolver is still a feature name only; deterministic
   resolver handles quoted / `type X into` / `fill X with` forms.
-- Readonly is enforced by the page function at input time, not observed.
-- Hard gate + world fingerprint are still whole-page for the world part
-  (clickable / occluded sets); unrelated churn causes stale discards
-  (bounded). Target-scoped envelopes are future work.
-- RESULTS.md A1–A8 are historical; not agent + PUA evidence.
+- iframes / shadow DOM / virtualized lists / autocomplete are not covered.
+- MCP `guard` still uses the float `0.55` / `0.05` ranking gate for host
+  preflight (A5/A6 / combo benches). Agent path uses hard `gate` only.
+  Allow tickets now share `gate::check` + target-scoped world fingerprints.
+- RESULTS.md A1–A8 remain historical (pre-pivot); see the agent+PUA section.
+
+## Offline arm C repeats (n = 3)
+
+Scripted: `cargo test -p hyper-use-agent` three times on this tip. All three
+runs green (same deterministic offline suite). See RESULTS.md § "Agent + PUA
+pivot (offline arm C)".
+
+Arms A / B / D: **blocked / out of scope** here — need upstream
+`jev-ultrafast` and/or a paid remote model. Offline D (`ScriptedRemote`) still
+passes under `--features remote`.
 
 ## PUA pin
 

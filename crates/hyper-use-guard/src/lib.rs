@@ -50,9 +50,15 @@ pub use ticket::consume_ticket;
 pub use ticket::{
     consume_ticket_once, issue_ticket, revalidate, world_fingerprint, ConsumeError, TicketLedger,
 };
-pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot};
+pub use world::{
+    blocker, neighborhood_of, with_front_layer, FrontLayer, LayerEntry, WorldSnapshot,
+};
 
 /// Raw confidence below this never allows. Not a probability.
+/// Host / MCP preflight allow floor. The owned agent path does **not** use
+/// this: PUA chooses among a finite action space, then [`crate::gate`] applies
+/// hard refuses only. Keep 0.55 so historical A5/A6 / combo benches stay
+/// comparable; do not raise or remove without updating those arms.
 pub const MIN_ALLOW_CONFIDENCE: f64 = 0.55;
 
 /// Minimum raw gap between top and runner-up. Below this → ambiguous.
@@ -337,6 +343,13 @@ fn decide(
         });
     }
 
+    // Shared hard-gate checks (same function the agent path uses). Ranking
+    // already filtered most of these; this keeps MCP Allow tickets aligned
+    // with `gate` (including future hard refuses such as readonly on Type).
+    if let Err(reason) = crate::gate::check(raw, raw_region, request.action()) {
+        return Ok(GuardDecision::Refuse { reason, candidates });
+    }
+
     if top_conf < MIN_ALLOW_CONFIDENCE {
         return Ok(GuardDecision::Refuse {
             reason: GuardReason::LowConfidence,
@@ -359,7 +372,7 @@ fn decide(
             request.action(),
             &target,
             raw_region,
-            &WorldSnapshot::of(raw, request.focused_id().cloned()),
+            &WorldSnapshot::of_target(raw, request.focused_id().cloned(), &target.id),
         );
         return Ok(GuardDecision::Allow {
             target,
@@ -376,7 +389,7 @@ fn decide(
         request.action(),
         &target,
         raw_region,
-        &WorldSnapshot::of(raw, request.focused_id().cloned()),
+        &WorldSnapshot::of_target(raw, request.focused_id().cloned(), &target.id),
     );
     Ok(GuardDecision::Allow {
         target,

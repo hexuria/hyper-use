@@ -132,6 +132,9 @@ fn format_flags(flags: RegionFlags) -> String {
     if flags.modal() {
         names.push("modal");
     }
+    if flags.readonly() {
+        names.push("readonly");
+    }
     names.join(",")
 }
 

@@ -52,6 +52,7 @@ pub(crate) struct RawNode {
     pub actions: Vec<hyper_use_core::Action>,
     pub disabled: bool,
     pub hidden: bool,
+    pub readonly: bool,
     pub modal: bool,
     pub from_dom: bool,
     pub from_ax: bool,
@@ -70,6 +71,7 @@ impl RawNode {
             actions: element.actions.clone(),
             disabled: element.disabled,
             hidden: element.hidden,
+            readonly: element.readonly,
             modal: element.modal,
             from_dom: true,
             from_ax: false,
@@ -87,6 +89,7 @@ impl RawNode {
             actions: crate::extract::actions_for_role(element.role),
             disabled: element.disabled,
             hidden: false,
+            readonly: false,
             modal: element.modal,
             from_dom: false,
             from_ax: true,
@@ -214,6 +217,7 @@ fn merge(dom: &RawNode, ax: &RawNode) -> RawNode {
         actions,
         disabled: dom.disabled || ax.disabled,
         hidden: dom.hidden || ax.hidden,
+        readonly: dom.readonly || ax.readonly,
         modal: dom.modal || ax.modal,
         from_dom: true,
         from_ax: true,
@@ -319,6 +323,7 @@ fn to_region(
     let mut flags = RegionFlags::none();
     flags.set_disabled(node.disabled);
     flags.set_hidden(node.hidden);
+    flags.set_readonly(node.readonly);
     // A modal bit on a non-dialog says nothing about layering; drop it.
     flags.set_modal(node.modal && node.role == Role::Dialog);
     if is_fully_offscreen(node.rect, viewport) {
@@ -357,6 +362,7 @@ mod tests {
             actions: vec![Action::Click],
             disabled: false,
             hidden: false,
+            readonly: false,
             modal: false,
             from_dom: true,
             from_ax: false,
@@ -374,6 +380,7 @@ mod tests {
             actions: vec![Action::Click],
             disabled: false,
             hidden: false,
+            readonly: false,
             modal: false,
             from_dom: false,
             from_ax: true,

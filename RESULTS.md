@@ -6,6 +6,34 @@
 > Browser Use, invisible Hyper-Use interceptor, Weighted only, no JEV/HGRA.
 > HGRA development is frozen until that ablation finishes.
 
+## Agent + PUA pivot (offline arm C)
+
+> Post-ActionTicket product path. Tip of this section: see git history for the
+> merge commit that lands PR gaps (readonly observe, target-scoped world,
+> multi-step `then`, MCP hard-gate alignment, `hyper-use run` fixtures).
+
+Date: 2026-10-06 (Asia/Manila). Harness: `cargo test -p hyper-use-agent` (mock
+loop, adversarial, CDP replay, props) + `cargo test -p hyper-use-guard --lib`
++ `cargo test -p hyper-use-policy --lib` + checked-in
+`fixtures/agent-*.cdp.json` via `hyper-use run --fixture`.
+
+**n = 3** consecutive offline runs (same machine, no Chrome, no network, no
+model). All three green.
+
+| Run | Wall (real s) | Result |
+|---|---|---|
+| 1 | 0.81 | pass |
+| 2 | 0.34 | pass |
+| 3 | 0.36 | pass |
+
+What this measures: the owned loop (observe → PUA → hard gate → ticket →
+executor → verify) including TYPE_TEXT / SELECT / CLICK / SCROLL, adversarial
+refuses, target-scoped stale discard, multi-step `then`, and CDP replay
+fixtures. It does **not** measure live sites, Luna, JEV, or Browser Use.
+
+Arms A / B / D live parity: **blocked** (need unpaid `jev-ultrafast` / paid
+remote). Historical A1–A8 table below is pre-pivot and not agent+PUA evidence.
+
 
 Branch: https://github.com/hexuria/hyper-use/tree/bench/uniform. Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Harness: `bench/` (see `bench/README.md`).
 

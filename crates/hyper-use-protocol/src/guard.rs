@@ -19,6 +19,8 @@ pub enum GuardReason {
     Ambiguous,
     MissingTarget,
     Disabled,
+    /// The target is readonly (`readonly` / `aria-readonly`); TYPE/SELECT refused.
+    Readonly,
     Hidden,
     Occluded,
     Offscreen,
@@ -42,6 +44,7 @@ impl GuardReason {
             Self::Ambiguous => "ambiguous",
             Self::MissingTarget => "missing-target",
             Self::Disabled => "disabled",
+            Self::Readonly => "readonly",
             Self::Hidden => "hidden",
             Self::Occluded => "occluded",
             Self::Offscreen => "offscreen",

@@ -79,7 +79,8 @@ pub fn revalidate(
     manifold: &InteractionManifold,
     focused: Option<RegionId>,
 ) -> Result<(), TicketInvalid> {
-    let now = WorldSnapshot::of(manifold, focused);
+    // Same target-scoped envelope the hard gate used when issuing the ticket.
+    let now = WorldSnapshot::of_target(manifold, focused, &ticket.target_id);
     if world_fingerprint(&now) != ticket.world_fingerprint {
         return Err(TicketInvalid::WorldChanged);
     }
@@ -236,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn revalidate_fails_when_a_new_clickable_appears() {
+    fn revalidate_fails_when_a_nearby_clickable_appears() {
         let before = manifold(vec![button("ok", "Sign in", 100.0)]);
         let decision = guard(
             &before,
@@ -246,6 +247,7 @@ mod tests {
         let GuardDecision::Allow { ticket, .. } = decision else {
             panic!("expected allow");
         };
+        // y=200 is within the 160px neighborhood radius of y=100 (centers ~112 vs ~212).
         let after = manifold(vec![
             button("ok", "Sign in", 100.0),
             button("extra", "Notify", 200.0),
@@ -254,6 +256,25 @@ mod tests {
             revalidate(&ticket, &after, None),
             Err(TicketInvalid::WorldChanged)
         );
+    }
+
+    #[test]
+    fn revalidate_ignores_unrelated_far_banner() {
+        let before = manifold(vec![button("ok", "Sign in", 100.0)]);
+        let decision = guard(
+            &before,
+            &GuardRequest::click(LocateQuery::new().text("Sign in").unwrap()),
+        )
+        .unwrap();
+        let GuardDecision::Allow { ticket, .. } = decision else {
+            panic!("expected allow");
+        };
+        // Far below the target: outside neighborhood radius.
+        let after = manifold(vec![
+            button("ok", "Sign in", 100.0),
+            button("cookie", "Accept", 500.0),
+        ]);
+        revalidate(&ticket, &after, None).unwrap();
     }
 
     #[test]

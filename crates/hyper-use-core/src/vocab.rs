@@ -289,9 +289,8 @@ impl SourceMask {
 
 /// Independent condition flags. These are not a lifecycle; a control may be
 /// disabled and offscreen at the same time. Each one is a locate penalty,
-/// except `modal`: it marks a [`Role::Dialog`] region as a modal layer
-/// (`aria-modal="true"` or the accessibility `modal` property) and is never a
-/// penalty on the dialog itself.
+/// except `modal` (dialog layer marker, never a penalty on the dialog) and
+/// `readonly` (TYPE/SELECT refuse at the hard gate; not a locate penalty).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RegionFlags {
     disabled: bool,
@@ -302,6 +301,9 @@ pub struct RegionFlags {
     ambiguous: bool,
     detached: bool,
     modal: bool,
+    /// HTML `readonly` / `aria-readonly="true"`. Observable; the hard gate
+    /// refuses TYPE_TEXT / SELECT on a readonly control before any CDP input.
+    readonly: bool,
 }
 
 impl RegionFlags {
@@ -315,6 +317,7 @@ impl RegionFlags {
             ambiguous: false,
             detached: false,
             modal: false,
+            readonly: false,
         }
     }
 
@@ -342,6 +345,9 @@ impl RegionFlags {
     pub const fn modal(self) -> bool {
         self.modal
     }
+    pub const fn readonly(self) -> bool {
+        self.readonly
+    }
 
     pub fn set_disabled(&mut self, value: bool) {
         self.disabled = value;
@@ -367,6 +373,9 @@ impl RegionFlags {
     pub fn set_modal(&mut self, value: bool) {
         self.modal = value;
     }
+    pub fn set_readonly(&mut self, value: bool) {
+        self.readonly = value;
+    }
 
     pub fn parse_list(raw: &str) -> Result<Self, String> {
         let mut flags = Self::none();
@@ -383,14 +392,15 @@ impl RegionFlags {
                 "ambiguous" => flags.ambiguous = true,
                 "detached" => flags.detached = true,
                 "modal" => flags.modal = true,
+                "readonly" => flags.readonly = true,
                 other => return Err(format!("unknown flag `{other}`")),
             }
         }
         Ok(flags)
     }
 
-    pub const fn bits(self) -> u8 {
-        let mut bits = 0u8;
+    pub const fn bits(self) -> u16 {
+        let mut bits = 0u16;
         if self.disabled {
             bits |= 1 << 0;
         }
@@ -414,6 +424,9 @@ impl RegionFlags {
         }
         if self.modal {
             bits |= 1 << 7;
+        }
+        if self.readonly {
+            bits |= 1 << 8;
         }
         bits
     }

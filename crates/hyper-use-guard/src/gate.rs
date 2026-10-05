@@ -10,14 +10,15 @@
 //! | region not in the current observation | `missing-target` |
 //! | region does not claim the action | `unsupported-action` |
 //! | disabled | `disabled` |
+//! | readonly (TYPE / SELECT) | `readonly` |
 //! | hidden / zero area | `hidden` |
 //! | hit-test / stacking occluded | `occluded` |
 //! | behind an open dialog | `front-layer` |
 //! | outside the viewport | `offscreen` |
 //!
-//! Readonly is not observable in the manifold today; the browser input
-//! function refuses readonly / non-editable nodes at execution time (fail
-//! closed, nothing typed).
+//! Readonly is observed ([`hyper_use_core::RegionFlags::readonly`]) and refused
+//! here for TYPE / SELECT before any CDP input. The browser input function
+//! remains a second fail-closed line for attributes observe missed.
 //!
 //! On success the gate issues an [`ActionTicket`] bound to the action, the
 //! target fingerprint, and the world fingerprint of this observation. The
@@ -49,7 +50,7 @@ pub fn gate(
         label: region.label().to_owned(),
         confidence: 1.0,
     };
-    let world = WorldSnapshot::of(manifold, focused);
+    let world = WorldSnapshot::of_target(manifold, focused, target);
     Ok(issue_ticket(
         snapshot_id,
         action,
@@ -71,6 +72,11 @@ pub fn check(
     let flags = region.flags();
     if flags.disabled() {
         return Err(GuardReason::Disabled);
+    }
+    // Readonly is only a hard refuse for value-changing inputs. Click/focus
+    // on a readonly field remains allowed (people can still select text).
+    if flags.readonly() && matches!(action, Action::Type | Action::Select) {
+        return Err(GuardReason::Readonly);
     }
     if flags.hidden() || region.rect().is_zero_area() {
         return Err(GuardReason::Hidden);
@@ -114,6 +120,7 @@ mod tests {
         region id=gone role=button label="Gone" x=10 y=90 w=80 h=24 actions=click sources=dom,accessibility flags=hidden
         region id=far role=button label="Far" x=10 y=900 w=80 h=24 actions=click sources=dom,accessibility flags=offscreen
         region id=name role=text_field label="Name" x=10 y=130 w=200 h=24 actions=click,type sources=dom,accessibility
+        region id=ro role=text_field label="Locked" x=10 y=170 w=200 h=24 actions=click,type,select sources=dom,accessibility flags=readonly
     "#;
 
     #[test]
@@ -186,5 +193,22 @@ mod tests {
         let mut ledger = TicketLedger::new();
         ledger.mark_consumed(t.ticket_id).unwrap();
         assert!(ledger.mark_consumed(t.ticket_id).is_err());
+    }
+
+    #[test]
+    fn readonly_field_refuses_type_and_select_before_input() {
+        let m = parse_fixture(PAGE).unwrap();
+        assert_eq!(
+            gate(&m, &id("ro"), Action::Type, None, 0),
+            Err(GuardReason::Readonly)
+        );
+        assert_eq!(
+            gate(&m, &id("ro"), Action::Select, None, 0),
+            Err(GuardReason::Readonly)
+        );
+        // Click on a readonly field is still allowed (select / focus).
+        assert!(gate(&m, &id("ro"), Action::Click, None, 0).is_ok());
+        // Editable field still types.
+        assert!(gate(&m, &id("name"), Action::Type, None, 0).is_ok());
     }
 }

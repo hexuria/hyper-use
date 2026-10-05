@@ -347,7 +347,7 @@ fn never_settling_page_hits_stale_bound_without_input() {
     let flicker = Flicker {
         a: MockBrowser::new(m(SEARCH)),
         b: MockBrowser::new(m(&format!(
-            "{SEARCH}\n    region id=toast role=button label=\"Dismiss\" x=600 y=500 w=80 h=24 actions=click sources=dom,accessibility\n"
+            "{SEARCH}\n    region id=toast role=button label=\"Dismiss\" x=400 y=10 w=80 h=24 actions=click sources=dom,accessibility\n"
         ))),
         n: 0,
         dispatched: 0,
@@ -381,4 +381,77 @@ fn repeated_no_effect_click_is_bounded() {
         "{outcome:?}"
     );
     assert_eq!(agent.browser_mut().press_log().len(), 3);
+}
+
+#[test]
+fn multi_step_type_then_click_runs_both_clauses() {
+    use hyper_use_agent::TickResult;
+    // Keep Go on the page; add a result so the click is state-changed. Removing
+    // Go would make the post-click predict abstain before PUA can choose DONE.
+    let after_go = m(r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+        region id=go role=button label="Go" x=320 y=10 w=60 h=24 actions=click sources=dom,accessibility
+        region id=result role=text label="ok" x=10 y=50 w=100 h=20 actions=focus sources=dom,accessibility
+        "#);
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        .max_steps(10)
+        .build(r#"Type "rust" into Search then click Go"#);
+    assert_eq!(agent.clauses().len(), 2);
+    let mut outcome = None;
+    for _ in 0..20 {
+        match agent.tick() {
+            Ok(TickResult::Stepped(step)) if step.kind == ActionKind::TypeText => {
+                agent.browser_mut().set_on_press(after_go.clone());
+            }
+            Ok(TickResult::Stepped(_)) | Ok(TickResult::StaleDiscarded { .. }) => {}
+            Ok(TickResult::ClauseAdvanced { .. }) => {}
+            Ok(TickResult::Finished(o)) => {
+                outcome = Some(o);
+                break;
+            }
+            Err(e) => panic!("tick failed: {e}"),
+        }
+    }
+    let outcome = outcome.expect("agent did not finish");
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[0].verification, VerificationKind::Success);
+    assert_eq!(steps[1].kind, ActionKind::Click);
+    assert_eq!(steps[1].label, "Go");
+    assert_eq!(
+        agent.browser_mut().input_log(),
+        &[
+            (id("q"), Input::Type("rust".into())),
+            (id("go"), Input::Click),
+        ]
+    );
+}
+
+#[test]
+fn readonly_flipped_after_predict_refuses_at_executor_gate() {
+    let editable = m(r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+        "#);
+    let locked = m(r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility flags=readonly
+        "#);
+    let mut agent = AgentBuilder::new(MockBrowser::new(editable), PuaPolicy::default())
+        .max_steps(3)
+        .build(r#"Type "x" into Search"#);
+    assert!(agent.predict().unwrap().is_some());
+    // Between predict and act the field becomes readonly; executor fresh
+    // observe + hard gate must refuse before any CDP/mock input.
+    agent.browser_mut().replace_manifold(locked);
+    let err = agent.act().unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("readonly") || msg.contains("refuse") || msg.contains("stale"),
+        "{msg}"
+    );
+    assert!(agent.browser_mut().input_log().is_empty());
 }

@@ -184,6 +184,13 @@ impl ActionSpace {
                 let Some(kind) = map_region_claim(*claim) else {
                     continue;
                 };
+                // Readonly controls stay clickable (focus/select text) but are
+                // not offered as TYPE_TEXT / SELECT targets.
+                if region.flags().readonly()
+                    && matches!(kind, ActionKind::TypeText | ActionKind::Select)
+                {
+                    continue;
+                }
                 let observed = target_action(kind, region);
                 actions.insert(observed.id.clone(), observed);
             }

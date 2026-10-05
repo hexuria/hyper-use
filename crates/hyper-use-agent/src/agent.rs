@@ -14,13 +14,18 @@
 //! A stale ticket discards the prediction and returns to Ready (observe and
 //! decide again). It is not a failed task, but consecutive stale discards are
 //! bounded.
+//!
+//! Multi-step goals (`"type X then click Go"`) are split on `then` / `and then`
+//! ([`hyper_use_policy::split_sequential_clauses`]). Each clause is one PUA
+//! single-intent; when PUA chooses DONE the agent advances to the next clause
+//! instead of finishing. See that function's docs for the connective limits.
 
 use hyper_use_browser::ScrollDirection;
 use hyper_use_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
 use hyper_use_guard::{gate, with_front_layer, world_fingerprint, TicketLedger, WorldSnapshot};
 use hyper_use_policy::{
-    AgentGoal, BrowserPolicy, DeterministicTextResolver, HistoryEntry, PolicyDecision,
-    PolicyOutcome, TextContext, TextResolver,
+    split_sequential_clauses, AgentGoal, BrowserPolicy, DeterministicTextResolver, HistoryEntry,
+    PolicyDecision, PolicyOutcome, TextContext, TextResolver,
 };
 
 use crate::error::AgentError;
@@ -56,6 +61,9 @@ pub struct Agent<B, P, T = DeterministicTextResolver> {
     policy: P,
     text: T,
     goal: AgentGoal,
+    /// Full goal split on `then` / `and then`. [`Self::goal`] is the active clause.
+    clauses: Vec<String>,
+    clause_index: usize,
     state: AgentState,
     predicted: Option<Predicted>,
     history: Vec<StepRecord>,
@@ -130,11 +138,16 @@ impl<B, P, T> AgentBuilder<B, P, T> {
     }
 
     pub fn build(self, goal: impl Into<String>) -> Agent<B, P, T> {
+        let raw = goal.into();
+        let clauses = split_sequential_clauses(&raw);
+        let active = clauses.first().cloned().unwrap_or_default();
         Agent {
             browser: self.browser,
             policy: self.policy,
             text: self.text,
-            goal: AgentGoal::new(goal),
+            goal: AgentGoal::new(active),
+            clauses,
+            clause_index: 0,
             state: AgentState::Ready,
             predicted: None,
             history: Vec::new(),
@@ -179,6 +192,30 @@ where
 
     pub fn goal(&self) -> &AgentGoal {
         &self.goal
+    }
+
+    /// Sequential clauses the agent will run (length 1 when the goal has no `then`).
+    pub fn clauses(&self) -> &[String] {
+        &self.clauses
+    }
+
+    pub fn clause_index(&self) -> usize {
+        self.clause_index
+    }
+
+    /// Advance to the next `then` clause, if any. Returns true when advanced.
+    fn advance_clause(&mut self) -> bool {
+        let next = self.clause_index + 1;
+        if next >= self.clauses.len() {
+            return false;
+        }
+        self.clause_index = next;
+        self.goal = AgentGoal::new(self.clauses[next].clone());
+        self.state = AgentState::Ready;
+        self.predicted = None;
+        self.consecutive_no_effect = 0;
+        self.consecutive_stale = 0;
+        true
     }
 
     pub fn browser_mut(&mut self) -> &mut B {
@@ -468,10 +505,18 @@ where
         if self.state == AgentState::Ready {
             match self.predict() {
                 Ok(None) => {
-                    return Ok(TickResult::Finished(match self.state {
-                        AgentState::Blocked => self.finish_blocked("policy chose BLOCKED".into()),
-                        _ => self.finish_done("policy chose DONE"),
-                    }));
+                    if self.state == AgentState::Blocked {
+                        return Ok(TickResult::Finished(
+                            self.finish_blocked("policy chose BLOCKED".into()),
+                        ));
+                    }
+                    // Single-intent clause satisfied. Multi-step: advance.
+                    if self.advance_clause() {
+                        return Ok(TickResult::ClauseAdvanced {
+                            next_clause: self.goal.as_str().to_owned(),
+                        });
+                    }
+                    return Ok(TickResult::Finished(self.finish_done("policy chose DONE")));
                 }
                 Ok(Some(_)) => {}
                 Err(AgentError::Abstain(reason)) => {
@@ -514,7 +559,9 @@ where
             }
             match self.tick() {
                 Ok(TickResult::Finished(outcome)) => return outcome,
-                Ok(TickResult::Stepped(_)) | Ok(TickResult::StaleDiscarded { .. }) => continue,
+                Ok(TickResult::Stepped(_))
+                | Ok(TickResult::StaleDiscarded { .. })
+                | Ok(TickResult::ClauseAdvanced { .. }) => continue,
                 Err(e) => {
                     return AgentOutcome::Failed {
                         steps: self.history.clone(),
@@ -543,6 +590,12 @@ where
 #[derive(Clone, Debug)]
 pub enum TickResult {
     Stepped(StepRecord),
-    StaleDiscarded { reason: String },
+    StaleDiscarded {
+        reason: String,
+    },
+    /// Multi-step goal moved to the next `then` clause; keep ticking.
+    ClauseAdvanced {
+        next_clause: String,
+    },
     Finished(AgentOutcome),
 }

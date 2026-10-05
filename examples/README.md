@@ -30,3 +30,30 @@ reports ground truth to the bench server through `/_shared/bench.js`.
 
 Look at them by hand with `bench/.venv/bin/python bench/server.py --port 8765` and
 open `http://127.0.0.1:8765/<scenario>/site/index.html`.
+
+## World-context smoke
+
+`world-context/` — live Chrome observe → guard checks (modal, twin Suspend,
+cookie backdrop). No JEV. See [world-context/README.md](world-context/README.md).
+
+```sh
+./examples/world-context/smoke.sh
+# optional forced HGRA:
+HYPER_USE_MATCHER=hgra ./examples/world-context/smoke.sh
+```
+
+## Live drive
+
+`live-drive/` — hand-run JEV + `hyper-use mcp` against the Acme Mail page
+(same site as the `acme-mail/` bench scenario). Not CI and not a benchmark.
+See [live-drive/README.md](live-drive/README.md).
+
+```sh
+python3 bench/server.py --port 8765 &
+# throwaway Chrome on CDP 9333, then:
+cargo build --release -p hyper-use-cli --bin hyper-use
+cargo build --release -p hyper-use-cli --features jev --example live_drive
+TYPESAFE_API_KEY=... HYPER_USE_JEV=1 \
+  ./target/release/examples/live_drive --bin target/release/hyper-use \
+    --site http://127.0.0.1:8765/acme-mail/site
+```

@@ -37,7 +37,105 @@ actions, and verifies the resulting state change.
   escalation.
 
 
+## World context gate: hyper-use owns variable-change gating (2026-10-05)
+
+Status: accepted on `feat/world-context-gate`. Asia/Manila.
+
+**Decision.** Hyper-Use is the de facto cursor for a browser agent: it says
+whether a proposed click still makes sense in the page as it is *now*. The
+guard owns three world variables. It does not own the goal, the next step, or
+retries; those stay with the host (Browser Use, a vision model, JEV).
+
+1. **Ancestry** (`LocateQuery::within(container)`). The target must be a
+   strict descendant of `container` through parent links. A hard constraint,
+   folded into the semantic term by minimum in both matchers
+   (`hyper-use-resonance/src/context.rs`, `ContextScope`).
+2. **Focus / cursor** (`LocateQuery::near(anchor)`, MCP `near: "focus"`).
+   The anchor is `PageState.focused` (accessibility `focused`) or an explicit
+   id. Scope = the innermost ancestor-or-self of the anchor that contains a
+   best text/role match; regions outside it score semantic 0. No focus, an
+   anchor that vanished, or no containing ancestor: the default ranking. This
+   is the cargo-runner rule: the cursor line picks the test; no cursor, the
+   default command.
+3. **Front layer** (`hyper-use-guard/src/world.rs`). A region with
+   `Role::Dialog` (`role="dialog"`/`"alertdialog"`, `<dialog>`, or the AX
+   role) is a dialog; `RegionFlags::modal` (`aria-modal="true"` or the AX
+   `modal` property) makes it modal. A modal blocks every region not inside
+   it. A non-modal dialog blocks regions whose center is under its box.
+   "Inside" is the parent chain when both sides came from the DOM, else box
+   containment (AX-only nodes have no parent link). The guard ranks on a copy
+   where blocked regions carry the versioned occluded penalty, so a dialog's
+   own control outranks its buried twin, and it refuses
+   `GuardReason::FrontLayer` when:
+   - the top region is blocked;
+   - the host's `proposed` region is blocked;
+   - the raw best match is blocked and a weaker match only took the top
+     because of the penalty (no rerouting a click into a dialog the host may
+     not have seen; `does_not_reroute_a_buried_best_match_into_the_dialog`).
+4. **World change** (`GuardRequest::seen_layer`, MCP `seen_snapshot`). When
+   the set of open dialogs differs from the observation the host decided on,
+   the guard escalates `GuardReason::WorldChanged`, even for a target inside
+   the new dialog. This is the "vision model saw the page, then a modal
+   opened" case.
+
+Observe now reports `parent` per region, `focused`, `front_layer`, and a
+blocked region's visibility as `occluded`; inspect reports `blocked_by`;
+locate and guard report `scope`.
+
+**Why.** Browser Use and CUA hosts, and our own fixture press, fire
+`element.click()`, which reaches a control a person could not click behind a
+modal. The old gate only checked score and margin on labels, so it allowed
+those clicks. A matcher can score 5/5 on the HGRA locate corpus and still do
+this: that corpus is label ranking on static pages and is **not** the bar for
+this product. The bar is the adversarial fixtures below, each of which a
+label-only gate gets wrong (the tests assert the old failure first).
+
+**Discarded alternatives.**
+
+- More HGRA math (bundle weights, region junk, temporal weight). The algebra
+  was not the gap; the inputs were. The paused WIP is in `git stash` on the
+  firewall branch, not on this branch.
+- Encoding context only in the HGRA hypervector. HGRA is still experimental
+  and not the default; context lives in the shared semantic minimum so both
+  matchers obey it.
+- Treating `near` as a soft distance score. A soft score lets an out-of-scope
+  twin win on other terms; the scope rule is deterministic and falls back
+  explicitly.
+- Escalate instead of refuse for a buried target. Refuse names the reason
+  (`front-layer`) so the host dismisses the dialog first; world change is the
+  escalate case because the host must re-observe.
+
+**Known gaps (honest).**
+
+- No z-index, stacking context, or hit-test (`DOM.getNodeForLocation`) read.
+  A non-dialog overlay (cookie banner, custom backdrop `div`, toast) is not a
+  front layer. Next step: hit-test the target center via CDP and compare the
+  returned node with the target's backend id.
+- A native `<dialog>` opened with `showModal()` without `aria-modal` is modal
+  only if Chrome's AX tree reports `modal`.
+- Two sibling modals block each other's content: refuse, not guess.
+- An AX-only dialog cannot tell a DOM control under its box from one inside
+  it; box containment treats it as content (`acme_mail` compose sheet).
+- World change compares only the front layer, not every region; a re-render
+  that swaps rows under the same dialogs is not escalated.
+- HGRA is still experimental; no live run with `matcher: "hgra"` and no live
+  run of this gate yet. Everything here is fixture/replay evidence.
+
+**Verifiers.** `crates/hyper-use-guard/tests/world_context.rs` (twin Suspend
+rows: ambiguous without context, allow with `within`/`near`; modal confirm:
+buried click refused, dialog twin allowed, world-changed escalation),
+`crates/hyper-use-mcp/tests/world_context.rs` (CDP replay: `aria-modal` and
+AX `modal` both refuse; `near: "focus"` from the AX tree; `seen_snapshot`),
+`hyper-use-guard/src/world.rs` unit tests, `context.rs` unit tests,
+`guard_with_compose_open_blocks_nothing_outside_the_compose_box`. Fixtures:
+`fixtures/twin-suspend-rows.manifold`, `fixtures/modal-confirm.manifold`,
+`fixtures/modal-confirm-closed.manifold`.
+
 ## Deferred: contextual target resolution (follow-up)
+
+Superseded in part by "World context gate" above: ancestry (`within`), focus
+(`near`), and dialogs now resolve in Rust. `contains`-style sibling context
+from `combo.py` is still not ported.
 
 Port the row/card/dialog ancestor context logic from `bench/arms/combo.py`
 into the Rust resolver (`TargetIntent { label, role, context: Context { contains, container } }`)

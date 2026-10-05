@@ -11,9 +11,11 @@ use std::time::Duration;
 
 use hyper_use_browser::{BrowserSession, CdpTransport, WebSocketTransport};
 use hyper_use_core::{InteractionManifold, LocateQuery, Role};
+#[cfg(feature = "hgra")]
+use hyper_use_guard::guard_with;
 use hyper_use_guard::{
-    blocker, guard, guard_with, with_front_layer, FrontLayer, GuardDecision, GuardError,
-    GuardReason, GuardRequest,
+    blocker, guard, with_front_layer, FrontLayer, GuardDecision, GuardError, GuardReason,
+    GuardRequest,
 };
 #[cfg(feature = "hgra")]
 use hyper_use_resonance::HgraMatcher;

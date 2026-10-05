@@ -1,7 +1,8 @@
 {
  "merged_runs": [
   "20261005-131001",
-  "20261005-141625"
+  "20261005-141625",
+  "20261005-153648"
  ],
  "rows": [
   {
@@ -801,6 +802,250 @@
    ],
    "rep": 0,
    "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A8",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 22354,
+   "tokens_first": 22354,
+   "wall_s": 27.19,
+   "wall_s_first": 27.19,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 8,
+   "steps_first": 8,
+   "model_calls": 17,
+   "model_calls_first": 17,
+   "tokens": 33098,
+   "tokens_first": 33098,
+   "wall_s": 58.44,
+   "wall_s_first": 58.44,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 9807,
+   "tokens_first": 9807,
+   "wall_s": 24.48,
+   "wall_s_first": 24.48,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "booking-calendar",
+   "task": "book-noop",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3923,
+   "tokens_first": 3923,
+   "wall_s": 26.08,
+   "wall_s_first": 26.08,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "booking-calendar",
+   "task": "book-slot",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 23393,
+   "tokens_first": 23393,
+   "wall_s": 39.74,
+   "wall_s_first": 39.74,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "booking-calendar",
+   "task": "book-timezone",
+   "class": "normal",
+   "needs": [
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 7,
+   "steps_first": 2,
+   "model_calls": 19,
+   "model_calls_first": 5,
+   "tokens": 30528,
+   "tokens_first": 8795,
+   "wall_s": 113.91,
+   "wall_s_first": 40.18,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
   }
  ]
 }

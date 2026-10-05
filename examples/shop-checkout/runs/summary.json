@@ -1,7 +1,8 @@
 {
  "merged_runs": [
   "20261005-131001",
-  "20261005-141625"
+  "20261005-141625",
+  "20261005-153648"
  ],
  "rows": [
   {
@@ -1005,6 +1006,314 @@
    ],
    "rep": 0,
    "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 6195,
+   "tokens_first": 6195,
+   "wall_s": 36.33,
+   "wall_s_first": 36.33,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 9095,
+   "tokens_first": 9095,
+   "wall_s": 33.46,
+   "wall_s_first": 33.46,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-tm-coupon",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 8866,
+   "tokens_first": 8866,
+   "wall_s": 26.59,
+   "wall_s_first": 26.59,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-noop-shipping",
+   "class": "no-op",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 0,
+   "steps_first": 0,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 2734,
+   "tokens_first": 2734,
+   "wall_s": 7.36,
+   "wall_s_first": 7.36,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 11440,
+   "tokens_first": 11440,
+   "wall_s": 15.51,
+   "wall_s_first": 15.51,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 7,
+   "steps_first": 7,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 18335,
+   "tokens_first": 18335,
+   "wall_s": 28.01,
+   "wall_s_first": 28.01,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-checkout",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 6,
+   "steps_first": 6,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 33002,
+   "tokens_first": 33002,
+   "wall_s": 68.05,
+   "wall_s_first": 68.05,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "shop-checkout",
+   "task": "shop-add-qty",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 10509,
+   "tokens_first": 10509,
+   "wall_s": 33.52,
+   "wall_s_first": 33.52,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
   }
  ]
 }

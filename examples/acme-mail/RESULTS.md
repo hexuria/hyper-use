@@ -1,6 +1,6 @@
 # acme-mail: results
 
-Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/acme-mail/tasks.yaml`. Site: `examples/acme-mail/site/`.
+Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Tasks: `examples/acme-mail/tasks.yaml`. Site: `examples/acme-mail/site/`.
 
 **n = 1 run per arm per task** (up to 3 fresh tries, stopping at the first pass). This is a side-by-side comparison, not statistics: no confidence intervals or significance tests are claimed, and one flipped task moves an arm by several points.
 
@@ -8,24 +8,26 @@ Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/acme-mail/ta
 
 | Rank | Arm | First-try accuracy | Pass within 3 | Press-only tasks, first try | Wrong actions (first try / all tries) | Safe refusals (target-missing) | cap_hit | stuck | crashed | Steps | Model calls | Tokens (first / all) | Wall first-try s | Wall total s | Wall p50 s (first try) | Untrusted clicks |
 |---:|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | **A1** Luna + Browser Use | 100% (7/7) | 100% (7/7) | 100% (5/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 13 | 25 | 229,217 / 229,217 | 221.6 | 221.6 | 29.6 | 0 |
-| 2 | **A2** Luna + CUA driver | 100% (7/7) | 100% (7/7) | 100% (5/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 21 | 44 | 255,262 / 255,262 | 370.2 | 370.2 | 48.3 | 10 |
-| 3 | **A4** CUA jev-use (generic task) | 86% (6/7) | 86% (6/7) | 80% (4/5) | 1 / 4 | 1/1 | 0 | 0 | 0 | 15 | 24 | 84,727 / 113,512 | 194.9 | 251.5 | 24.4 | 11 |
-| 4 | **A6** Luna + hyper-use (MCP) | 57% (4/7) | 71% (5/7) | 80% (4/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 21 | 88 | 280,094 / 599,675 | 169.9 | 352.2 | 22.9 | 9 |
-| 5 | **A5** JEV + hyper-use (live_drive) | 43% (3/7) | 43% (3/7) | 60% (3/5) | 1 / 2 | 1/1 | 1 | 0 | 0 | 13 | 275 | 738,250 / 2,041,177 | 53.0 | 133.4 | 7.2 | 13 |
-| 6 | **A3** jev-ultrafast (BU + JEV) | 43% (3/7) | 57% (4/7) | 60% (3/5) | 1 / 1 | 1/1 | 3 | 0 | 6 | 78 | 98 | 237,057 / 612,036 | 117.0 | 230.6 | 17.8 | 0 |
+| 1 | **A8** Luna + JEV + hyper-use + Browser Use | 100% (7/7) | 100% (7/7) | 100% (5/5) | 0 / 0 | 1/1 | 0 | 0 | 1 | 15 | 27 | 96,033 / 96,033 | 115.5 | 115.5 | 10.3 | 10 |
+| 2 | **A1** Luna + Browser Use | 100% (7/7) | 100% (7/7) | 100% (5/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 13 | 25 | 229,217 / 229,217 | 221.6 | 221.6 | 29.6 | 0 |
+| 3 | **A2** Luna + CUA driver | 100% (7/7) | 100% (7/7) | 100% (5/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 21 | 44 | 255,262 / 255,262 | 370.2 | 370.2 | 48.3 | 10 |
+| 4 | **A4** CUA jev-use (generic task) | 86% (6/7) | 86% (6/7) | 80% (4/5) | 1 / 4 | 1/1 | 0 | 0 | 0 | 15 | 24 | 84,727 / 113,512 | 194.9 | 251.5 | 24.4 | 11 |
+| 5 | **A7** Luna + JEV + hyper-use + CUA | 86% (6/7) | 100% (7/7) | 80% (4/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 13 | 26 | 70,890 / 76,558 | 199.3 | 229.7 | 23.9 | 9 |
+| 6 | **A6** Luna + hyper-use (MCP) | 57% (4/7) | 71% (5/7) | 80% (4/5) | 0 / 0 | 1/1 | 0 | 0 | 0 | 21 | 88 | 280,094 / 599,675 | 169.9 | 352.2 | 22.9 | 9 |
+| 7 | **A5** JEV + hyper-use (live_drive) | 43% (3/7) | 43% (3/7) | 60% (3/5) | 1 / 2 | 1/1 | 1 | 0 | 0 | 13 | 275 | 738,250 / 2,041,177 | 53.0 | 133.4 | 7.2 | 13 |
+| 8 | **A3** jev-ultrafast (BU + JEV) | 43% (3/7) | 57% (4/7) | 60% (3/5) | 1 / 1 | 1/1 | 3 | 0 | 6 | 78 | 98 | 237,057 / 612,036 | 117.0 | 230.6 | 17.8 | 0 |
 
 ## Per task (attempts in order)
 
-| Task | Class | Needs | A1 | A2 | A3 | A4 | A5 | A6 |
-|---|---|---|---|---|---|---|---|---|
-| `am-compose-send` | normal | type | PASS | PASS | fail(crashed) → fail(crashed) → fail(crashed) | PASS | fail → fail → fail | fail → fail → fail |
-| `am-reply` | normal | type | PASS | PASS | fail(crashed) → fail(crashed) → fail(crashed) | PASS | fail → fail → fail | fail → fail → fail |
-| `am-twin-send` | normal | press | PASS | PASS | fail(steps) → fail(steps) → fail(steps) | PASS | fail → fail(model_calls) → fail | PASS |
-| `am-enabled-save` | normal | press | PASS | PASS | PASS | PASS | PASS | PASS |
-| `am-archive` | normal | press | PASS | PASS | PASS | PASS | PASS | PASS |
-| `am-star` | normal | press | PASS | PASS | fail → PASS | fail → fail → fail | fail → fail → fail | fail → fail → PASS |
-| `am-tm-print` | target-missing | press | PASS | PASS | PASS | PASS | PASS | PASS |
+| Task | Class | Needs | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `am-compose-send` | normal | type | PASS | PASS | fail(crashed) → fail(crashed) → fail(crashed) | PASS | fail → fail → fail | fail → fail → fail | PASS | PASS |
+| `am-reply` | normal | type | PASS | PASS | fail(crashed) → fail(crashed) → fail(crashed) | PASS | fail → fail → fail | fail → fail → fail | PASS | PASS |
+| `am-twin-send` | normal | press | PASS | PASS | fail(steps) → fail(steps) → fail(steps) | PASS | fail → fail(model_calls) → fail | PASS | PASS | PASS |
+| `am-enabled-save` | normal | press | PASS | PASS | PASS | PASS | PASS | PASS | fail → PASS | PASS |
+| `am-archive` | normal | press | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
+| `am-star` | normal | press | PASS | PASS | fail → PASS | fail → fail → fail | fail → fail → fail | fail → fail → PASS | PASS | PASS |
+| `am-tm-print` | target-missing | press | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 
 ## Detail
 
@@ -73,12 +75,26 @@ Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/acme-mail/ta
 | A6 | `am-archive` | 1 | finished (done) | 0 | 1 | 4 | 14,106 | 15.14 | – |
 | A6 | `am-star` | 3 | finished (give_up), finished (done), finished (done) | 0 | 6 | 24 | 202,446 | 101.04 | event {'type': 'star', 'thread': 'sync', 'starred': True} |
 | A6 | `am-tm-print` | 1 | finished (give_up) | 0 | 0 | 3 | 11,440 | 11.66 | – |
+| A7 | `am-compose-send` | 1 | finished (done) | 0 | 5 | 4 | 27,459 | 45.06 | – |
+| A7 | `am-reply` | 1 | finished (done) | 0 | 3 | 5 | 13,766 | 36.88 | – |
+| A7 | `am-twin-send` | 1 | finished (done) | 0 | 1 | 3 | 3,864 | 23.9 | – |
+| A7 | `am-enabled-save` | 2 | finished (done), finished (done) | 0 | 1 | 6 | 7,653 | 53.02 | event {'type': 'save', 'section': 'signature'} |
+| A7 | `am-archive` | 1 | finished (done) | 0 | 1 | 2 | 3,908 | 21.08 | – |
+| A7 | `am-star` | 1 | finished (done) | 0 | 1 | 3 | 7,892 | 22.4 | – |
+| A7 | `am-tm-print` | 1 | finished (give_up) | 0 | 1 | 3 | 12,016 | 27.36 | – |
+| A8 | `am-compose-send` | 1 | finished (done) | 0 | 5 | 4 | 27,515 | 32.18 | – |
+| A8 | `am-reply` | 1 | finished (done) | 0 | 3 | 5 | 13,775 | 20.6 | – |
+| A8 | `am-twin-send` | 1 | finished (done) | 0 | 1 | 3 | 3,885 | 8.62 | – |
+| A8 | `am-enabled-save` | 1 | finished (done) | 0 | 1 | 3 | 3,339 | 10.3 | – |
+| A8 | `am-archive` | 1 | finished (done) | 0 | 1 | 2 | 3,901 | 8.5 | – |
+| A8 | `am-star` | 1 | crashed (error) | 0 | 1 | 3 | 3,846 | 9.01 | – |
+| A8 | `am-tm-print` | 1 | finished (give_up) | 0 | 3 | 7 | 39,772 | 26.28 | – |
 
 ## Manifest
 
 | Item | Value |
 |---|---|
-| Report id | `20261005-131001+20261005-141625` |
+| Report id | `20261005-131001+20261005-141625+20261005-153648` |
 | Run `20261005-131001` started | 2026-10-05 13:10:04 +0800 |
 | Run `20261005-131001` bench HEAD | `456b9c062a06` |
 | Run `20261005-131001` hyper-use merged | `4ae30d3` |
@@ -87,6 +103,10 @@ Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/acme-mail/ta
 | Run `20261005-141625` bench HEAD | `984ac2c6a515` |
 | Run `20261005-141625` hyper-use merged | `4ae30d3` |
 | Run `20261005-141625` TYPESAFE_API_KEY present | True |
+| Run `20261005-153648` started | 2026-10-05 15:36:51 +0800 |
+| Run `20261005-153648` bench HEAD | `570d00f0368f` (dirty) |
+| Run `20261005-153648` hyper-use merged | `4ae30d3` |
+| Run `20261005-153648` TYPESAFE_API_KEY present | True |
 | jev-ultrafast pin | `1231850a0bf1` |
 | cua (jev-use) pin | `9ccafc981412` |
 | Chrome | Chrome/154.0.8037.98 (headless for harness-launched arms; CUA arms use a driver-launched headed window sized to the same viewport) |

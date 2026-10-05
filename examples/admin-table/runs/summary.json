@@ -1,7 +1,8 @@
 {
  "merged_runs": [
   "20261005-131001",
-  "20261005-141625"
+  "20261005-141625",
+  "20261005-153648"
  ],
  "rows": [
   {
@@ -789,6 +790,264 @@
    ],
    "rep": 0,
    "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A7",
+   "scenario": "admin-table",
+   "task": "admin-filter-page",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 14,
+   "steps_first": 4,
+   "model_calls": 25,
+   "model_calls_first": 8,
+   "tokens": 82307,
+   "tokens_first": 23635,
+   "wall_s": 147.59,
+   "wall_s_first": 48.29,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "admin-table",
+   "task": "admin-suspend",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 8,
+   "model_calls_first": 8,
+   "tokens": 22705,
+   "tokens_first": 22705,
+   "wall_s": 48.23,
+   "wall_s_first": 48.23,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "admin-table",
+   "task": "admin-filter-page",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 24990,
+   "tokens_first": 24990,
+   "wall_s": 30.22,
+   "wall_s_first": 30.22,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "admin-table",
+   "task": "admin-tm-delete",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 2,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 1,
+   "model_calls": 5,
+   "model_calls_first": 2,
+   "tokens": 11118,
+   "tokens_first": 3944,
+   "wall_s": 63.43,
+   "wall_s_first": 27.83,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "admin-table",
+   "task": "admin-tm-delete",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 1,
+   "model_calls": 9,
+   "model_calls_first": 3,
+   "tokens": 17623,
+   "tokens_first": 5874,
+   "wall_s": 35.55,
+   "wall_s_first": 11.32,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "admin-table",
+   "task": "admin-suspend",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 4,
+   "steps_first": 4,
+   "model_calls": 8,
+   "model_calls_first": 8,
+   "tokens": 17621,
+   "tokens_first": 17621,
+   "wall_s": 26.58,
+   "wall_s_first": 26.58,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
   }
  ]
 }

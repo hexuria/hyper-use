@@ -1,6 +1,6 @@
 # hard-dom: results
 
-Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/hard-dom/tasks.yaml`. Site: `examples/hard-dom/site/`.
+Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Tasks: `examples/hard-dom/tasks.yaml`. Site: `examples/hard-dom/site/`.
 
 **n = 1 run per arm per task** (up to 3 fresh tries, stopping at the first pass). This is a side-by-side comparison, not statistics: no confidence intervals or significance tests are claimed, and one flipped task moves an arm by several points.
 
@@ -8,21 +8,23 @@ Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/hard-dom/tas
 
 | Rank | Arm | First-try accuracy | Pass within 3 | Press-only tasks, first try | Wrong actions (first try / all tries) | Safe refusals (target-missing) | cap_hit | stuck | crashed | Steps | Model calls | Tokens (first / all) | Wall first-try s | Wall total s | Wall p50 s (first try) | Untrusted clicks |
 |---:|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | **A2** Luna + CUA driver | 100% (4/4) | 100% (4/4) | 100% (4/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 9 | 20 | 49,189 / 49,189 | 177.2 | 177.2 | 44.6 | 5 |
-| 2 | **A4** CUA jev-use (generic task) | 75% (3/4) | 75% (3/4) | 75% (3/4) | 1 / 3 | 0/0 | 0 | 0 | 0 | 6 | 12 | 15,149 / 22,759 | 95.2 | 142.8 | 23.8 | 6 |
-| 3 | **A1** Luna + Browser Use | 75% (3/4) | 100% (4/4) | 75% (3/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 8 | 17 | 122,085 / 145,995 | 116.4 | 141.4 | 30.2 | 5 |
-| 4 | **A6** Luna + hyper-use (MCP) | 50% (2/4) | 75% (3/4) | 50% (2/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 10 | 48 | 108,371 / 323,977 | 77.5 | 189.8 | 15.9 | 3 |
-| 5 | **A5** JEV + hyper-use (live_drive) | 25% (1/4) | 25% (1/4) | 25% (1/4) | 0 / 0 | 0/0 | 3 | 3 | 0 | 12 | 221 | 678,147 / 1,866,426 | 35.4 | 94.7 | 7.2 | 3 |
-| 6 | **A3** jev-ultrafast (BU + JEV) | 0% (0/4) | 0% (0/4) | 0% (0/4) | 0 / 0 | 0/0 | 1 | 0 | 2 | 0 | 85 | 138,791 / 274,297 | 65.4 | 223.4 | 17.1 | 0 |
+| 1 | **A8** Luna + JEV + hyper-use + Browser Use | 100% (4/4) | 100% (4/4) | 100% (4/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 8 | 21 | 39,897 / 39,897 | 62.5 | 62.5 | 14.7 | 5 |
+| 2 | **A7** Luna + JEV + hyper-use + CUA | 100% (4/4) | 100% (4/4) | 100% (4/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 8 | 20 | 39,263 / 39,263 | 133.8 | 133.8 | 34.1 | 5 |
+| 3 | **A2** Luna + CUA driver | 100% (4/4) | 100% (4/4) | 100% (4/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 9 | 20 | 49,189 / 49,189 | 177.2 | 177.2 | 44.6 | 5 |
+| 4 | **A4** CUA jev-use (generic task) | 75% (3/4) | 75% (3/4) | 75% (3/4) | 1 / 3 | 0/0 | 0 | 0 | 0 | 6 | 12 | 15,149 / 22,759 | 95.2 | 142.8 | 23.8 | 6 |
+| 5 | **A1** Luna + Browser Use | 75% (3/4) | 100% (4/4) | 75% (3/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 8 | 17 | 122,085 / 145,995 | 116.4 | 141.4 | 30.2 | 5 |
+| 6 | **A6** Luna + hyper-use (MCP) | 50% (2/4) | 75% (3/4) | 50% (2/4) | 0 / 0 | 0/0 | 0 | 0 | 0 | 10 | 48 | 108,371 / 323,977 | 77.5 | 189.8 | 15.9 | 3 |
+| 7 | **A5** JEV + hyper-use (live_drive) | 25% (1/4) | 25% (1/4) | 25% (1/4) | 0 / 0 | 0/0 | 3 | 3 | 0 | 12 | 221 | 678,147 / 1,866,426 | 35.4 | 94.7 | 7.2 | 3 |
+| 8 | **A3** jev-ultrafast (BU + JEV) | 0% (0/4) | 0% (0/4) | 0% (0/4) | 0 / 0 | 0/0 | 1 | 0 | 2 | 0 | 85 | 138,791 / 274,297 | 65.4 | 223.4 | 17.1 | 0 |
 
 ## Per task (attempts in order)
 
-| Task | Class | Needs | A1 | A2 | A3 | A4 | A5 | A6 |
-|---|---|---|---|---|---|---|---|---|
-| `hd-star` | normal | press | PASS | PASS | fail(model_calls) → fail(crashed) → fail(crashed) | fail → fail → fail | fail(model_calls) → fail(model_calls) → fail(model_calls) | fail → fail → PASS |
-| `hd-shadow` | normal | press | PASS | PASS | fail → fail → fail | PASS | fail(stuck) → fail(stuck) → fail(stuck) | PASS |
-| `hd-iframe` | normal | press | fail → PASS | PASS | fail → fail → fail | PASS | fail → fail → fail | fail → fail → fail |
-| `hd-overlay` | normal | press | PASS | PASS | fail → fail → fail | PASS | PASS | PASS |
+| Task | Class | Needs | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `hd-star` | normal | press | PASS | PASS | fail(model_calls) → fail(crashed) → fail(crashed) | fail → fail → fail | fail(model_calls) → fail(model_calls) → fail(model_calls) | fail → fail → PASS | PASS | PASS |
+| `hd-shadow` | normal | press | PASS | PASS | fail → fail → fail | PASS | fail(stuck) → fail(stuck) → fail(stuck) | PASS | PASS | PASS |
+| `hd-iframe` | normal | press | fail → PASS | PASS | fail → fail → fail | PASS | fail → fail → fail | fail → fail → fail | PASS | PASS |
+| `hd-overlay` | normal | press | PASS | PASS | fail → fail → fail | PASS | PASS | PASS | PASS | PASS |
 
 ## Detail
 
@@ -52,12 +54,20 @@ Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/hard-dom/tas
 | A6 | `hd-shadow` | 1 | finished (done) | 0 | 1 | 5 | 28,233 | 16.48 | – |
 | A6 | `hd-iframe` | 3 | finished (give_up), finished (give_up), finished (give_up) | 0 | 0 | 14 | 72,365 | 58.43 | event {'type': 'cookies', 'choice': 'reject'} |
 | A6 | `hd-overlay` | 1 | finished (done) | 0 | 1 | 4 | 18,471 | 15.42 | – |
+| A7 | `hd-star` | 1 | finished (give_up) | 0 | 3 | 7 | 10,461 | 38.65 | – |
+| A7 | `hd-shadow` | 1 | finished (done) | 0 | 1 | 3 | 3,925 | 29.57 | – |
+| A7 | `hd-iframe` | 1 | finished (done) | 0 | 3 | 6 | 18,568 | 39.75 | – |
+| A7 | `hd-overlay` | 1 | finished (done) | 0 | 1 | 4 | 6,309 | 25.79 | – |
+| A8 | `hd-star` | 1 | finished (done) | 0 | 3 | 9 | 17,015 | 25.27 | – |
+| A8 | `hd-shadow` | 1 | finished (done) | 0 | 1 | 3 | 3,922 | 7.88 | – |
+| A8 | `hd-iframe` | 1 | finished (done) | 0 | 3 | 6 | 15,030 | 21.12 | – |
+| A8 | `hd-overlay` | 1 | finished (done) | 0 | 1 | 3 | 3,930 | 8.28 | – |
 
 ## Manifest
 
 | Item | Value |
 |---|---|
-| Report id | `20261005-131001+20261005-141625` |
+| Report id | `20261005-131001+20261005-141625+20261005-153648` |
 | Run `20261005-131001` started | 2026-10-05 13:10:04 +0800 |
 | Run `20261005-131001` bench HEAD | `456b9c062a06` |
 | Run `20261005-131001` hyper-use merged | `4ae30d3` |
@@ -66,6 +76,10 @@ Merged runs: `20261005-131001`, `20261005-141625`. Tasks: `examples/hard-dom/tas
 | Run `20261005-141625` bench HEAD | `984ac2c6a515` |
 | Run `20261005-141625` hyper-use merged | `4ae30d3` |
 | Run `20261005-141625` TYPESAFE_API_KEY present | True |
+| Run `20261005-153648` started | 2026-10-05 15:36:51 +0800 |
+| Run `20261005-153648` bench HEAD | `570d00f0368f` (dirty) |
+| Run `20261005-153648` hyper-use merged | `4ae30d3` |
+| Run `20261005-153648` TYPESAFE_API_KEY present | True |
 | jev-ultrafast pin | `1231850a0bf1` |
 | cua (jev-use) pin | `9ccafc981412` |
 | Chrome | Chrome/154.0.8037.98 (headless for harness-launched arms; CUA arms use a driver-launched headed window sized to the same viewport) |

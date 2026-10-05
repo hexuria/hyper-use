@@ -354,6 +354,9 @@ def main() -> None:
         "- JEV pass `20261005-141625` ran A3/A4/A5 with the key present. This report merges both.",
         "- hyper-use arms (A5, A6) can only press/click today. Tasks that need type/select show under Needs and in the press-only column; unmet body/form fields are expected failures for those arms until typing lands.",
         "- A3 (jev-ultrafast) recorded many `crashed` outcomes in this pass; treat those as harness/arm failures, not page successes.",
+        "- Combined arms A7 (Luna + JEV + hyper-use + CUA) and A8 (Luna + JEV + hyper-use + Browser Use) ran in their own pass with the key present; protocol and limits in `bench/arms/COMBO.md`. A1 to A6 were not re-run.",
+        "- A7 cannot set a `<select>`: cua-driver 0.23.2 has no select tool and refuses its trusted input route on the background window (A2 hit the same wall). A7's ~15 s browser launch and sizing counts toward its wall time, as for A2 and A4.",
+        "- Untrusted clicks in A7/A8 come from hyper-use's `dom-semantic` press (same as A5/A6) and A7's CUA `dom_event` fallback; Browser Use clicks in A8 go through CDP mouse input.",
         "",
     ]
     (ROOT / "RESULTS.md").write_text("\n".join(top))

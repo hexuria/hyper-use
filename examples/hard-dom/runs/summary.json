@@ -1,7 +1,8 @@
 {
  "merged_runs": [
   "20261005-131001",
-  "20261005-141625"
+  "20261005-141625",
+  "20261005-153648"
  ],
  "rows": [
   {
@@ -1041,6 +1042,310 @@
    ],
    "rep": 0,
    "_source_run_id": "20261005-141625"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3925,
+   "tokens_first": 3925,
+   "wall_s": 29.57,
+   "wall_s_first": 29.57,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-shadow",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3922,
+   "tokens_first": 3922,
+   "wall_s": 7.88,
+   "wall_s_first": 7.88,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 6309,
+   "tokens_first": 6309,
+   "wall_s": 25.79,
+   "wall_s_first": 25.79,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 15030,
+   "tokens_first": 15030,
+   "wall_s": 21.12,
+   "wall_s_first": 21.12,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-iframe",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 6,
+   "model_calls_first": 6,
+   "tokens": 18568,
+   "tokens_first": 18568,
+   "wall_s": 39.75,
+   "wall_s_first": 39.75,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-overlay",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3930,
+   "tokens_first": 3930,
+   "wall_s": 8.28,
+   "wall_s_first": 8.28,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 10461,
+   "tokens_first": 10461,
+   "wall_s": 38.65,
+   "wall_s_first": 38.65,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "hard-dom",
+   "task": "hd-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 9,
+   "model_calls_first": 9,
+   "tokens": 17015,
+   "tokens_first": 17015,
+   "wall_s": 25.27,
+   "wall_s_first": 25.27,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
   }
  ]
 }

@@ -1,7 +1,8 @@
 {
  "merged_runs": [
   "20261005-131001",
-  "20261005-141625"
+  "20261005-141625",
+  "20261005-153648"
  ],
  "rows": [
   {
@@ -1761,6 +1762,552 @@
    ],
    "rep": 0,
    "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "crashed",
+     "cap": null,
+     "pass": true,
+     "final": "error"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 1,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3846,
+   "tokens_first": 3846,
+   "wall_s": 9.01,
+   "wall_s_first": 9.01,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-compose-send",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 5,
+   "steps_first": 5,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 27515,
+   "tokens_first": 27515,
+   "wall_s": 32.18,
+   "wall_s_first": 32.18,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-tm-print",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 7,
+   "model_calls_first": 7,
+   "tokens": 39772,
+   "tokens_first": 39772,
+   "wall_s": 26.28,
+   "wall_s_first": 26.28,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-enabled-save",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 2,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 0,
+   "model_calls": 6,
+   "model_calls_first": 2,
+   "tokens": 7653,
+   "tokens_first": 1985,
+   "wall_s": 53.02,
+   "wall_s_first": 22.67,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-archive",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 3908,
+   "tokens_first": 3908,
+   "wall_s": 21.08,
+   "wall_s_first": 21.08,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-twin-send",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3885,
+   "tokens_first": 3885,
+   "wall_s": 8.62,
+   "wall_s_first": 8.62,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-enabled-save",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3339,
+   "tokens_first": 3339,
+   "wall_s": 10.3,
+   "wall_s_first": 10.3,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-reply",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 13775,
+   "tokens_first": 13775,
+   "wall_s": 20.6,
+   "wall_s_first": 20.6,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-compose-send",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 5,
+   "steps_first": 5,
+   "model_calls": 4,
+   "model_calls_first": 4,
+   "tokens": 27459,
+   "tokens_first": 27459,
+   "wall_s": 45.06,
+   "wall_s_first": 45.06,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-twin-send",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 3864,
+   "tokens_first": 3864,
+   "wall_s": 23.9,
+   "wall_s_first": 23.9,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "acme-mail",
+   "task": "am-archive",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 2,
+   "model_calls_first": 2,
+   "tokens": 3901,
+   "tokens_first": 3901,
+   "wall_s": 8.5,
+   "wall_s_first": 8.5,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-star",
+   "class": "normal",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 7892,
+   "tokens_first": 7892,
+   "wall_s": 22.4,
+   "wall_s_first": 22.4,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-tm-print",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 1,
+   "steps_first": 1,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 12016,
+   "tokens_first": 12016,
+   "wall_s": 27.36,
+   "wall_s_first": 27.36,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "acme-mail",
+   "task": "am-reply",
+   "class": "normal",
+   "needs": [
+    "type"
+   ],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 3,
+   "steps_first": 3,
+   "model_calls": 5,
+   "model_calls_first": 5,
+   "tokens": 13766,
+   "tokens_first": 13766,
+   "wall_s": 36.88,
+   "wall_s_first": 36.88,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
   }
  ]
 }

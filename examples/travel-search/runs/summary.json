@@ -1,7 +1,8 @@
 {
  "merged_runs": [
   "20261005-131001",
-  "20261005-141625"
+  "20261005-141625",
+  "20261005-153648"
  ],
  "rows": [
   {
@@ -573,6 +574,182 @@
    ],
    "rep": 0,
    "_source_run_id": "20261005-131001"
+  },
+  {
+   "arm": "A7",
+   "scenario": "travel-search",
+   "task": "travel-lisbon",
+   "class": "normal",
+   "needs": [
+    "type",
+    "select"
+   ],
+   "tries_used": 3,
+   "pass_first": false,
+   "pass_within": false,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "give_up"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 18,
+   "steps_first": 5,
+   "model_calls": 30,
+   "model_calls_first": 8,
+   "tokens": 133021,
+   "tokens_first": 35817,
+   "wall_s": 217.84,
+   "wall_s_first": 66.54,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "travel-search",
+   "task": "travel-tm",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 4781,
+   "tokens_first": 4781,
+   "wall_s": 11.93,
+   "wall_s_first": 11.93,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A7",
+   "scenario": "travel-search",
+   "task": "travel-tm",
+   "class": "target-missing",
+   "needs": [],
+   "tries_used": 1,
+   "pass_first": true,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "give_up"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": true,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 2,
+   "steps_first": 2,
+   "model_calls": 3,
+   "model_calls_first": 3,
+   "tokens": 5351,
+   "tokens_first": 5351,
+   "wall_s": 26.5,
+   "wall_s_first": 26.5,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
+  },
+  {
+   "arm": "A8",
+   "scenario": "travel-search",
+   "task": "travel-lisbon",
+   "class": "normal",
+   "needs": [
+    "type",
+    "select"
+   ],
+   "tries_used": 2,
+   "pass_first": false,
+   "pass_within": true,
+   "attempt_outcomes": [
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": false,
+     "final": "done"
+    },
+    {
+     "outcome": "finished",
+     "cap": null,
+     "pass": true,
+     "final": "done"
+    }
+   ],
+   "wrong_actions": 0,
+   "wrong_actions_first": 0,
+   "safe_refusal_first": false,
+   "cap_hits": 0,
+   "stuck": 0,
+   "crashed": 0,
+   "steps": 11,
+   "steps_first": 5,
+   "model_calls": 17,
+   "model_calls_first": 8,
+   "tokens": 66246,
+   "tokens_first": 30161,
+   "wall_s": 69.83,
+   "wall_s_first": 32.2,
+   "viewport": [
+    1280,
+    800
+   ],
+   "rep": 0,
+   "_source_run_id": "20261005-153648"
   }
  ]
 }

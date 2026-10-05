@@ -5,7 +5,9 @@
 //! score: the weighted matcher never calls the encoder. There is no benchmark
 //! that picks a winner.
 
-use hyper_use_core::{token_recall, InteractionManifold, InteractionRegion, LocateQuery, RegionId};
+use hyper_use_core::{
+    token_precision, token_recall, InteractionManifold, InteractionRegion, LocateQuery, RegionId,
+};
 use hyper_use_hyper::{Dims, Encoder};
 
 use crate::{
@@ -112,7 +114,10 @@ impl WeightedModel {
 const _: () = assert!(WeightedModel::V1.basis_point_sum() == 100);
 
 /// Deterministic baseline. Semantic text and role combine by minimum, so a
-/// role hit cannot hide a text miss. An absent constraint scores `1` (it was
+/// role hit cannot hide a text miss. The text term is
+/// `recall * (0.5 + 0.5 * precision)`: every query token must be in the label
+/// for full credit, and label tokens the query did not ask for cost up to half
+/// of it, so "Send" outranks "Send feedback". An absent constraint scores `1` (it was
 /// not asked). Penalties match [`ResonanceModel::V1`] and are subtracted after.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WeightedMatcher {
@@ -222,12 +227,16 @@ fn weighted_total(
 fn weighted_semantic(query: &LocateQuery, region: &InteractionRegion) -> f64 {
     let mut present = Vec::new();
     if let Some(text) = query.text_ref() {
-        present.push(token_recall(text, region.label()));
+        present.push(weighted_text(text, region.label()));
     }
     if let Some(role) = query.role_ref() {
         present.push(if region.role() == role { 1.0 } else { 0.0 });
     }
     present.into_iter().fold(1.0, f64::min)
+}
+
+fn weighted_text(text: &str, label: &str) -> f64 {
+    token_recall(text, label) * (0.5 + 0.5 * token_precision(text, label))
 }
 
 fn sort_matches(ranked: &mut [Match]) {
@@ -305,6 +314,20 @@ mod tests {
             (clean_score - disabled_score - ResonanceModel::V1.penalty_disabled()).abs() < 1e-12,
             "{clean_score} {disabled_score}"
         );
+    }
+
+    #[test]
+    fn exact_label_outranks_superset_labels_with_lower_ids() {
+        let manifold =
+            hyper_use_core::parse_fixture(include_str!("../../../fixtures/send-buttons.manifold"))
+                .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Button);
+        let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        let ids: Vec<_> = ranked.iter().map(|m| m.id().as_str()).collect();
+        assert_eq!(ids, ["z-send", "a-feedback", "b-device"]);
+        assert!((ranked[0].confidence() - 1.0).abs() < 1e-12);
+        assert!((ranked[1].confidence() - 0.875).abs() < 1e-12);
+        assert!((ranked[2].confidence() - 0.833_333_333_333_333_4).abs() < 1e-12);
     }
 
     #[test]

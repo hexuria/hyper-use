@@ -35,6 +35,24 @@ pub fn token_recall(query: &str, candidate: &str) -> f64 {
     hits as f64 / wanted.len() as f64
 }
 
+/// Fraction of `candidate` tokens that appear at least once in `query`.
+///
+/// This is [`token_recall`] with the roles swapped: a label with words the
+/// query did not ask for scores below `1.0`. Two empty tokenizations score
+/// `1.0`. A non-empty query against an empty candidate scores `0.0`.
+pub fn token_precision(query: &str, candidate: &str) -> f64 {
+    let have = tokenize(candidate);
+    if have.is_empty() {
+        return if tokenize(query).is_empty() { 1.0 } else { 0.0 };
+    }
+    let wanted = tokenize(query);
+    let hits = have
+        .iter()
+        .filter(|token| wanted.iter().any(|asked| asked == *token))
+        .count();
+    hits as f64 / have.len() as f64
+}
+
 /// Jaccard index over token sets. Empty/empty is `1.0`.
 pub fn token_jaccard(left: &str, right: &str) -> f64 {
     let a = tokenize(left);

@@ -469,3 +469,30 @@ Verifiers: `node_id_failure_retries_by_backend_id_before_coordinates`,
 `both_semantic_tiers_fail_then_coordinates`, and
 `click_exception_is_a_tier_failure`. Each asserts that `DOM.focus` is never
 sent.
+
+## Label precision in the weighted text term
+
+The weighted text term was `token_recall(query, label)`: the share of query
+tokens found in the label. Extra label tokens cost nothing, so "Send",
+"Send feedback", and "Send to device" all scored 1.0 for "Send" and the id
+tie-break picked "Send feedback". The term is now
+`recall * (0.5 + 0.5 * precision)`, where precision is the share of label
+tokens found in the query (`token_precision`). On
+`fixtures/send-buttons.manifold` the totals are 1.0, 0.875, and 0.8333, in
+that order.
+
+The formula was picked over F1 so that a full-recall superset label keeps at
+least half the text credit: "Account Settings" for "Settings" scores 0.75,
+not 0.667. `token_recall` is unchanged because `verify` and the HGRA semantic
+term use it. The HGRA semantic term is not changed; it already orders this
+fixture correctly and there is no benchmark to justify moving its totals.
+
+Downside accepted: a long query against a slightly longer label differs by
+little (a 5-token query against a 6-token superset is about 42 millis apart),
+so the act margin gate refuses that case rather than guessing.
+
+Verifiers: `exact_label_outranks_superset_labels_with_lower_ids` asserts the
+three totals, the 16-case proptest
+`extra_label_tokens_strictly_lower_the_weighted_total`, the CLI test
+`locate_send_prefers_the_exact_label`, and the regression pin
+`hgra_send_order_is_unchanged`. No second model of `WeightedMatcher::rank`.

@@ -1,0 +1,7 @@
+# hyper-use manifold fixture v1
+# Three buttons whose labels all contain "Send". Ids sort the supersets first,
+# so an id tie-break would pick the wrong one.
+viewport w=1440 h=900
+region id=a-feedback role=button label="Send feedback" x=1200 y=840 w=80 h=30 actions=click sources=dom,accessibility
+region id=b-device role=button label="Send to device" x=1200 y=840 w=80 h=30 actions=click sources=dom,accessibility
+region id=z-send role=button label="Send" x=1200 y=840 w=80 h=30 actions=click sources=dom,accessibility

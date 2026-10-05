@@ -623,6 +623,18 @@ mod tests {
     }
 
     #[test]
+    fn hgra_send_order_is_unchanged() {
+        // Regression pin for the HGRA semantic term, which the weighted text
+        // precision change does not touch. Not a claim that HGRA wins.
+        let manifold =
+            parse_fixture(include_str!("../../../fixtures/send-buttons.manifold")).unwrap();
+        let query = LocateQuery::new().text("Send").unwrap().role(Role::Button);
+        let ranked = HgraMatcher::default().rank(&query, &manifold).unwrap();
+        let ids: Vec<_> = ranked.iter().map(|m| m.id().as_str()).collect();
+        assert_eq!(ids, ["z-send", "a-feedback", "b-device"]);
+    }
+
+    #[test]
     fn weighted_and_hgra_both_rank_sidebar_settings_first() {
         let manifold = parse_fixture(include_str!("../../../fixtures/sidebar.manifold")).unwrap();
         let query = settings_query();

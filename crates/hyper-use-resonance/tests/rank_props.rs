@@ -1,12 +1,12 @@
-//! Property tests for deterministic ranking. They call `locate_with`.
-//! They are not a second ranker.
+//! Property tests for deterministic ranking. They call `locate_with` and
+//! `WeightedMatcher::rank`. They are not a second ranker.
 
 use hyper_use_core::{
     Action, InteractionManifold, InteractionRegion, LocateQuery, Rect, RegionFlags, RegionId,
     RegionParts, Role, SourceMask, UnitInterval, Zone,
 };
 use hyper_use_hyper::{Dims, Encoder};
-use hyper_use_resonance::{locate_with, ResonanceModel};
+use hyper_use_resonance::{locate_with, RegionMatcher, ResonanceModel, WeightedMatcher};
 use proptest::prelude::*;
 
 fn region(id: &str, label: &str, flags: RegionFlags) -> InteractionRegion {
@@ -97,5 +97,25 @@ proptest! {
         let penalized_row = &locate_with(&penalized, &query, &encoder, ResonanceModel::V1).unwrap()[0];
         prop_assert!(penalized_row.score().penalty() > 0.0);
         prop_assert!(penalized_row.score().total() < clean_score);
+    }
+
+    #[test]
+    fn extra_label_tokens_strictly_lower_the_weighted_total(extra in 1usize..5) {
+        let words = ["alpha", "bravo", "charlie", "delta"];
+        let superset = format!("Send {}", words[..extra].join(" "));
+        let viewport = Rect::try_viewport(0.0, 0.0, 1440.0, 900.0).unwrap();
+        let manifold = InteractionManifold::try_new(
+            viewport,
+            vec![
+                region("a-superset", &superset, RegionFlags::none()),
+                region("z-exact", "Send", RegionFlags::none()),
+            ],
+            0,
+        )
+        .unwrap();
+        let query = LocateQuery::new().text("Send").unwrap();
+        let ranked = WeightedMatcher::default().rank(&query, &manifold).unwrap();
+        prop_assert_eq!(ranked[0].id().as_str(), "z-exact");
+        prop_assert!(ranked[0].confidence() > ranked[1].confidence());
     }
 }

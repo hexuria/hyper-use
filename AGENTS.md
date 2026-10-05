@@ -125,7 +125,7 @@ Tests or proofs updated: cua replay tests, a 16-case proptest of wire keys, exec
 
 ## Locate precision, act margin, and press tiers
 
-Observe omits a node whose `DOM.getBoxModel` is a CDP error. Press is a DOM click by node id, then by backend node id, then a coordinate click. A focus is not a click, so there is no `DOM.focus` tier.
+The weighted text term is `recall * (0.5 + 0.5 * precision)`, so an exact label outranks a superset label. HGRA's semantic term is unchanged. Observe omits a node whose `DOM.getBoxModel` is a CDP error. Press is a DOM click by node id, then by backend node id, then a coordinate click. A focus is not a click, so there is no `DOM.focus` tier.
 
 ```
 Verification impact
@@ -139,10 +139,10 @@ Verification impact
 [ ] Proof kernel
 [ ] Workflow / DSL
 [ ] Unsafe / memory
-[ ] Property-test / fuzz surface
+[x] Property-test / fuzz surface
 [ ] No verification architecture impact
 
-Reason: observe and press are one blocking CDP call stream. Skipping a node with no box and dropping a press tier do not add interleaving, so no system model was added.
-Affected invariants: a getBoxModel protocol error omits that node and a missing script step is still fatal; press never reports DOM.focus as a click; a thrown click function is a tier failure.
-Tests or proofs updated: browser observe tests on hidden-node.cdp.json, press tier tests. No second formal model.
+Reason: the weighted text term is a pure function of the query and label. Observe and press are one blocking CDP call stream. Skipping a node with no box and dropping a press tier do not add interleaving, so no system model was added.
+Affected invariants: an exact label outranks a superset label under weighted; HGRA semantic is unchanged; a getBoxModel protocol error omits that node and a missing script step is still fatal; press never reports DOM.focus as a click; a thrown click function is a tier failure.
+Tests or proofs updated: matcher unit test, a 16-case weighted proptest, a CLI locate test, browser observe tests on hidden-node.cdp.json, press tier tests. No second model of WeightedMatcher::rank.
 ```

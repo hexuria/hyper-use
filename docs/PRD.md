@@ -70,7 +70,9 @@ Both implement `RegionMatcher::rank`.
 
 - `WeightedMatcher` is the default. Semantic match (text and role combined by
   minimum), geometry, actionability, then the versioned penalties. No
-  hypervectors.
+  hypervectors. The text term is `recall * (0.5 + 0.5 * precision)`, so a
+  label with extra words ("Send feedback") scores below an exact label
+  ("Send") for the query "Send".
 - `HgraMatcher` is the existing hyperdimensional ranker behind the same trait.
   Select it with `--matcher hgra`.
 

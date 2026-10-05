@@ -3,8 +3,22 @@
 //! Hyper-Use does not click. A host proposes a target; this crate ranks,
 //! gates, and returns [`GuardDecision`]. Browser Use (or another executor)
 //! performs the trusted action only after [`GuardDecision::Allow`].
+//!
+//! The guard judges the proposal against the world as it is now, not as the
+//! host last saw it:
+//!
+//! - **front layer** ([`world`]): a target behind an open dialog is refused
+//!   with [`GuardReason::FrontLayer`], and ranking runs on a copy where such
+//!   regions carry the occluded penalty, so the dialog's own control wins;
+//! - **context** (`LocateQuery::within` / `LocateQuery::near`): ancestry and
+//!   the focused region scope twin labels;
+//! - **world change** ([`GuardRequest::seen_layer`]): when the open dialogs
+//!   differ from the observation the host decided on, the guard escalates
+//!   with [`GuardReason::WorldChanged`].
 
 #![forbid(unsafe_code)]
+
+pub mod world;
 
 use std::fmt;
 
@@ -13,6 +27,7 @@ use hyper_use_protocol::MatcherConfidence;
 use hyper_use_resonance::{default_matcher, Match, RegionMatcher, RegionState, TEXT_MISS_CAP};
 
 pub use hyper_use_protocol::{GuardCandidate, GuardDecision, GuardEvidence, GuardReason};
+pub use world::{blocker, with_front_layer, FrontLayer, LayerEntry};
 
 /// Raw confidence below this never allows. Not a probability.
 pub const MIN_ALLOW_CONFIDENCE: f64 = 0.55;
@@ -35,6 +50,8 @@ pub struct GuardRequest {
     query: LocateQuery,
     /// Optional host-proposed region id. When set, it must be the top match.
     proposed: Option<RegionId>,
+    /// Front layer of the observation the host decided on, if it said.
+    seen_layer: Option<FrontLayer>,
 }
 
 impl GuardRequest {
@@ -43,12 +60,24 @@ impl GuardRequest {
             action: Action::Click,
             query,
             proposed: None,
+            seen_layer: None,
         }
     }
 
     pub fn proposed(mut self, id: RegionId) -> Self {
         self.proposed = Some(id);
         self
+    }
+
+    /// The front layer the host saw when it chose this action. When it
+    /// differs from the current one, the guard escalates `world-changed`.
+    pub fn seen_layer(mut self, layer: FrontLayer) -> Self {
+        self.seen_layer = Some(layer);
+        self
+    }
+
+    pub fn seen_layer_ref(&self) -> Option<&FrontLayer> {
+        self.seen_layer.as_ref()
     }
 
     pub fn action(&self) -> Action {
@@ -115,20 +144,42 @@ pub fn guard_with<M: RegionMatcher>(
     if request.action != Action::Click {
         return Err(GuardError::UnsupportedAction(request.action));
     }
-    let ranked = matcher.rank(request.query(), manifold)?;
-    decide(manifold, request, &ranked)
+    // Rank on the world as a person sees it: regions behind an open dialog
+    // carry the occluded penalty.
+    let effective = with_front_layer(manifold);
+    let ranked = matcher.rank(request.query(), &effective)?;
+    // Ranking on the raw observation tells whether the best label match is
+    // one the front layer buried.
+    let raw_ranked = matcher.rank(request.query(), manifold)?;
+    if let Some(seen) = request.seen_layer_ref() {
+        if *seen != FrontLayer::of(manifold) {
+            return Ok(GuardDecision::Escalate {
+                reason: GuardReason::WorldChanged,
+                candidates: candidates_of(&effective, &ranked),
+            });
+        }
+    }
+    decide(manifold, &effective, request, &ranked, &raw_ranked)
 }
 
-fn decide(
-    manifold: &InteractionManifold,
-    request: &GuardRequest,
-    ranked: &[Match],
-) -> Result<GuardDecision, GuardError> {
-    let candidates: Vec<GuardCandidate> = ranked
+fn candidates_of(manifold: &InteractionManifold, ranked: &[Match]) -> Vec<GuardCandidate> {
+    ranked
         .iter()
         .take(5)
         .filter_map(|m| candidate_from(manifold, m))
-        .collect();
+        .collect()
+}
+
+/// `raw` is the observation; `effective` is the same regions with the front
+/// layer applied (see [`with_front_layer`]). Ranking ran on `effective`.
+fn decide(
+    raw: &InteractionManifold,
+    effective: &InteractionManifold,
+    request: &GuardRequest,
+    ranked: &[Match],
+    raw_ranked: &[Match],
+) -> Result<GuardDecision, GuardError> {
+    let candidates = candidates_of(effective, ranked);
 
     if ranked.is_empty() || candidates.is_empty() {
         return Ok(GuardDecision::Refuse {
@@ -142,19 +193,43 @@ fn decide(
 
     if let Some(proposed) = request.proposed_id() {
         if top.id() != proposed {
+            // The host picked a region the front layer blocks (the classic
+            // "click behind the modal"). Say so instead of "not top".
+            let buried = raw
+                .get(proposed)
+                .is_some_and(|region| blocker(raw, region).is_some());
             return Ok(GuardDecision::Refuse {
-                reason: GuardReason::ProposedNotTop,
+                reason: if buried {
+                    GuardReason::FrontLayer
+                } else {
+                    GuardReason::ProposedNotTop
+                },
                 candidates,
             });
         }
     }
 
-    let top_region = manifold
-        .regions()
-        .find(|r| r.id() == top.id())
-        .expect("ranked id comes from manifold");
+    // The best match for what the host asked is behind the dialog, and a
+    // weaker match (often the dialog's own confirm button) took the top only
+    // because of the occluded penalty. Do not reroute the host's click into a
+    // dialog it may not have seen: refuse. Only a blocked region can score
+    // higher raw than the effective top, since unblocked scores are equal.
+    if raw_ranked
+        .iter()
+        .any(|m| m.confidence() > top_conf + MARGIN_EPSILON)
+    {
+        return Ok(GuardDecision::Refuse {
+            reason: GuardReason::FrontLayer,
+            candidates,
+        });
+    }
 
-    let evidence = evidence_of(manifold.viewport(), top_region);
+    let top_region = effective
+        .get(top.id())
+        .expect("ranked id comes from manifold");
+    let raw_region = raw.get(top.id()).expect("same ids in raw and effective");
+
+    let evidence = evidence_of(effective.viewport(), top_region);
     if !evidence.enabled {
         return Ok(GuardDecision::Refuse {
             reason: GuardReason::Disabled,
@@ -167,9 +242,15 @@ fn decide(
             candidates,
         });
     }
-    if evidence.occluded {
+    if raw_region.flags().occluded() && !evidence.offscreen {
         return Ok(GuardDecision::Refuse {
             reason: GuardReason::Occluded,
+            candidates,
+        });
+    }
+    if !evidence.offscreen && blocker(raw, raw_region).is_some() {
+        return Ok(GuardDecision::Refuse {
+            reason: GuardReason::FrontLayer,
             candidates,
         });
     }
@@ -346,6 +427,38 @@ mod tests {
                 ..
             } => {}
             other => panic!("expected refuse disabled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn does_not_reroute_a_buried_best_match_into_the_dialog() {
+        // Without the reroute rule the occluded penalty would hand the top to
+        // the dialog's "Delete project permanently" (0.917 vs 0.8, margin
+        // above the gate) and the host's click would confirm a dialog it may
+        // never have seen.
+        let m = hyper_use_core::parse_fixture(
+            "viewport w=1440 h=900\n\
+             region id=page-delete role=button label=\"Delete project\" x=1200 y=780 w=160 h=36 actions=click sources=dom\n\
+             region id=dlg role=dialog label=\"Are you sure?\" x=520 y=300 w=400 h=240 actions=focus sources=dom flags=modal\n\
+             region id=dlg-delete role=button label=\"Delete project permanently\" x=560 y=480 w=200 h=36 actions=click parent=dlg sources=dom\n",
+        )
+        .unwrap();
+        let req = GuardRequest::click(
+            LocateQuery::new()
+                .text("Delete project")
+                .unwrap()
+                .role(Role::Button),
+        );
+        let effective = with_front_layer(&m);
+        let ranked = default_matcher().rank(req.query(), &effective).unwrap();
+        assert_eq!(ranked[0].id().as_str(), "dlg-delete");
+        assert!(ranked[0].confidence() - ranked[1].confidence() >= MIN_ALLOW_MARGIN);
+        match guard(&m, &req).unwrap() {
+            GuardDecision::Refuse {
+                reason: GuardReason::FrontLayer,
+                ..
+            } => {}
+            other => panic!("expected refuse front-layer, got {other:?}"),
         }
     }
 

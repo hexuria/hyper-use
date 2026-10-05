@@ -1,0 +1,8 @@
+# hyper-use manifold fixture v1
+# The same project settings page as modal-confirm.manifold, before the
+# confirm dialog opened. A host that decided on this observation and then
+# acts after the dialog opened acted on a world that no longer exists.
+viewport w=1440 h=900
+region id=page role=generic label="Project settings" x=0 y=0 w=1440 h=900 actions=focus sources=dom
+region id=page-cancel role=button label="Cancel" x=1060 y=780 w=100 h=36 actions=click,focus parent=page sources=dom,accessibility
+region id=page-delete role=button label="Delete project" x=1200 y=780 w=160 h=36 actions=click,focus parent=page sources=dom,accessibility

@@ -167,6 +167,38 @@ mod tests {
     }
 
     #[test]
+    fn bad_json_and_params_mismatch_are_exact() {
+        let mut transport = ReplayTransport::parse(
+            r#"{"calls":[{"method":"Page.getLayoutMetrics","params":{},"result":{}}]}"#,
+        )
+        .unwrap();
+        let err = transport
+            .call("Page.getLayoutMetrics", "not-json")
+            .unwrap_err();
+        let CdpError::BadJson { message } = &err else {
+            panic!("expected BadJson, got {err}");
+        };
+        assert!(!message.is_empty());
+        assert_eq!(err.to_string(), format!("invalid CDP JSON: {message}"));
+        assert!(transport.logged_methods().is_empty());
+
+        let err = transport
+            .call("Page.getLayoutMetrics", r#"{"extra":1}"#)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            CdpError::ParamsMismatch {
+                method: "Page.getLayoutMetrics".into(),
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "scripted CDP params do not match the call to `Page.getLayoutMetrics`"
+        );
+        assert!(transport.logged_methods().is_empty());
+    }
+
+    #[test]
     fn proptest_parser_does_not_panic() {
         // Owned here rather than a second grammar. Garbage is an error or a script.
         let samples = [

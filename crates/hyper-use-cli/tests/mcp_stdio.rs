@@ -55,6 +55,9 @@ fn stdio_server_lists_tools_and_locates() {
     assert!(lines[2].contains("n100"), "{}", lines[2]);
     assert!(lines[2].contains("weighted"), "{}", lines[2]);
     assert!(lines[2].contains("benchmark"), "{}", lines[2]);
-    assert!(lines[2].contains("executed"), "{}", lines[2]);
+    assert!(!lines[2].contains("\"executed\""), "{}", lines[2]);
+    assert!(!lines[2].contains("\"verified\""), "{}", lines[2]);
+    assert!(!lines[2].contains("mechanism"), "{}", lines[2]);
+    assert!(lines[2].contains(r#"\"action\":null"#), "{}", lines[2]);
     assert!(lines[2].contains("Sign in"), "{}", lines[2]);
 }

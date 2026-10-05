@@ -80,6 +80,55 @@ mod phase2 {
     }
 
     #[test]
+    fn press_before_observe_is_not_observed() {
+        let transport = ReplayTransport::parse(r#"{"calls":[]}"#).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let err = session
+            .press(&RegionId::try_new("n100").unwrap(), Action::Click)
+            .unwrap_err();
+        assert_eq!(err, BrowserError::NotObserved);
+        assert_eq!(err.to_string(), "browser session has no observation yet");
+        assert!(session.transport().logged_methods().is_empty());
+    }
+
+    #[test]
+    fn bad_viewport_and_missing_object_id_are_exact() {
+        let transport = ReplayTransport::parse(
+            r#"{"calls":[{"method":"Page.getLayoutMetrics","params":{},"result":{}}]}"#,
+        )
+        .unwrap();
+        let mut session = BrowserSession::new(transport);
+        let err = session.observe().unwrap_err();
+        assert_eq!(
+            err,
+            BrowserError::BadViewport("missing cssLayoutViewport".into())
+        );
+        assert_eq!(err.to_string(), "viewport: missing cssLayoutViewport");
+
+        let mut transport =
+            ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();
+        transport
+            .append(
+                r#"{"calls":[{"method":"DOM.resolveNode","params":{"nodeId":10},"result":{"object":{"type":"object"}}}]}"#,
+            )
+            .unwrap();
+        let mut session = BrowserSession::new(transport);
+        session.observe().unwrap();
+        let err = session
+            .press(&RegionId::try_new("n100").unwrap(), Action::Click)
+            .unwrap_err();
+        assert_eq!(err, BrowserError::MissingObjectId);
+        assert_eq!(err.to_string(), "DOM.resolveNode returned no objectId");
+        assert!(session
+            .transport()
+            .logged_methods()
+            .iter()
+            .all(
+                |method| method != "Runtime.callFunctionOn" && method != "Input.dispatchMouseEvent"
+            ));
+    }
+
+    #[test]
     fn press_uses_dom_semantic_click_when_a_dom_node_id_exists() {
         let mut transport =
             ReplayTransport::parse(include_str!("../../../fixtures/sign-in.cdp.json")).unwrap();

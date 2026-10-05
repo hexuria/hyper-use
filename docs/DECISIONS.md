@@ -96,12 +96,13 @@ There is no second formal model of the ranker.
   build, so it is not the CI check. `iai-callgrind` is deferred: valgrind is
   not assumed, and wall-clock on this box is not a trustworthy regression
   signal.
-- cargo-vet / cargo-deny / RUSTSEC: skipped this pass. `cargo-deny` is not
-  installed (`~/.cargo/bin` has no `cargo-deny`) and was not installed.
-  USEFUL later. Not justified as a gate while nothing is network-facing or
-  `unsafe`. `cargo-semver-checks` is NOT JUSTIFIED until a crate is published.
-- Miri, sanitizers, Loom, Kani, TLA+, and Lean stay NOT JUSTIFIED. See
-  `docs/IMPECCABLE-AUDIT.md`.
+- cargo-vet / cargo-deny / RUSTSEC: skipped this pass. Do not add the deny
+  job yet. USEFUL later because `tungstenite` is in the default graph
+  (`hyper-use-browser`) and the optional `jev` feature locks an HTTP stack
+  that default `cargo test` does not compile. `cargo-semver-checks` is NOT
+  JUSTIFIED until a crate is published.
+- Miri, sanitizers, Loom, Kani, TLA+, and Lean stay NOT JUSTIFIED. There is
+  no `unsafe` and no concurrent core. See `docs/IMPECCABLE-AUDIT.md`.
 
 Anti-drift: any change to ranking, penalties, geometry thresholds, or the
 encoder version updates the Rust tests that pin them. Do not add a second
@@ -228,15 +229,22 @@ surface this host does not call. A blocking read loop is the whole transport.
 Downside: clients that only speak the older header framing cannot connect.
 Accepted, because the MCP stdio spec delimits messages with newlines.
 
-`serde_json` 1 is a dependency of `hyper-use-mcp` only, plus the browser crate
-that already had it. It parses JSON-RPC. `serde_json::Value` is not a type in
-the ranker crates. `hyper-use-core`, `hyper-use-hyper`, `hyper-use-geometry`,
-and `hyper-use-resonance` do not depend on this crate. No other dependency was
-added. The lockfile already contained `serde_json`.
+`serde_json` 1 is a direct dependency of `hyper-use-browser`,
+`hyper-use-browser-use`, `hyper-use-cua`, and `hyper-use-mcp`. `hyper-use-cli`
+depends on it only through the optional `jev` feature. It parses CDP results,
+replay scripts, and JSON-RPC. `serde_json::Value` is not a type in the ranker
+crates. `hyper-use-core`, `hyper-use-hyper`, `hyper-use-geometry`, and
+`hyper-use-resonance` do not depend on this crate.
 
 `locate` defaults to `WeightedMatcher`. `matcher: "hgra"` selects
 `HgraMatcher`. Every locate result sets `benchmark` to false. That flag is not
 a measurement. Do not read it as a win.
+
+`locate` and `inspect` omit `executed` and `verified`. `ComputerResult` always
+sets both, so a locate that carries `executed: false` looks like a refusal.
+Those keys stay on `act`, and on `verify` (`verified` is the check,
+`executed: false` because verify does not press). `observe` and `diff` still
+include both keys. A locate is not encoded as `ComputerResult`.
 
 `act` calls `BrowserExecutor`. DOM semantic click stays ahead of coordinates.
 A scored confidence below 550 millis returns a tool result with
@@ -338,7 +346,7 @@ coordinate click) is unchanged.
 either returns a `TransportReceipt` or `BrowserUseError::Rejected`. It does
 not start a process. A receipt whose id or action differs from the request is
 `ParamsMismatch` after the call. Stubs still return `NotImplemented` and do
-not panic. macOS and CUA stay unimplemented.
+not panic. macOS stays unimplemented (`ExecutorError::NotImplemented`; no AX). `CuaStub` pixel actuation stays unimplemented. The opt-in `cua-replay` semantic handoff has landed: region id, role, label, and action through a replay fixture. It is not a live process and it is not a benchmark.
 
 The confidence gate runs after the region id and the action match, and before
 `submit`. A scored total below 550 millis returns

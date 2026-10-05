@@ -70,7 +70,10 @@ fn locate_defaults_to_weighted_and_hgra_is_not_a_benchmark() {
     assert_eq!(body["tool"], "locate");
     assert_eq!(body["matcher"], "weighted");
     assert_eq!(body["benchmark"], false);
-    assert_eq!(body["executed"], false);
+    assert!(body.get("executed").is_none(), "{body}");
+    assert!(body.get("verified").is_none(), "{body}");
+    assert!(body.get("mechanism").is_none(), "{body}");
+    assert!(body["action"].is_null());
     assert_eq!(body["target"]["id"], "n100");
     assert_eq!(body["target"]["label"], "Sign in");
     assert!(body["target"]["role"].is_string());
@@ -94,7 +97,9 @@ fn locate_defaults_to_weighted_and_hgra_is_not_a_benchmark() {
     assert_eq!(hgra["matcher"], "hgra");
     assert_eq!(hgra["benchmark"], false);
     assert_eq!(hgra["target"]["id"], "nav-settings");
-    assert_eq!(hgra["executed"], false);
+    assert!(hgra.get("executed").is_none(), "{hgra}");
+    assert!(hgra.get("verified").is_none(), "{hgra}");
+    assert!(hgra.get("mechanism").is_none(), "{hgra}");
 }
 
 #[test]
@@ -119,7 +124,9 @@ fn observe_inspect_diff_and_verify_round_trip() {
     assert_eq!(inspected["target"]["id"], "n100");
     assert_eq!(inspected["target"]["label"], "Sign in");
     assert!(inspected["target"]["width"].as_f64().unwrap() > 0.0);
-    assert_eq!(inspected["executed"], false);
+    assert!(inspected.get("executed").is_none(), "{inspected}");
+    assert!(inspected.get("verified").is_none(), "{inspected}");
+    assert!(inspected.get("mechanism").is_none(), "{inspected}");
 
     let delta = call(
         "diff",

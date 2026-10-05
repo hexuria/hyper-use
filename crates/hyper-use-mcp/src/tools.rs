@@ -112,7 +112,9 @@ fn locate(arguments: &Value) -> Result<Value, ToolError> {
         None => Value::Null,
     };
     let confidence = top.map(Match::confidence);
-    let mut body = outcome(
+    // Omit executed and verified. ComputerResult always sets both, so a locate
+    // that carries executed: false looks like a refusal. This call does not press.
+    let mut body = without_act_flags(outcome(
         "locate",
         target,
         None,
@@ -122,7 +124,7 @@ fn locate(arguments: &Value) -> Result<Value, ToolError> {
         confidence,
         None,
         None,
-    );
+    ));
     insert(&mut body, "matcher", json!(matcher_name));
     insert(&mut body, "benchmark", json!(false));
     insert(&mut body, "candidates", candidates_of(&manifold, &ranked));
@@ -172,7 +174,8 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
         "width": found.rect().width(),
         "height": found.rect().height(),
     });
-    Ok(outcome(
+    // Same omission as locate. Inspect reads one region and does not press.
+    Ok(without_act_flags(outcome(
         "inspect",
         target,
         None,
@@ -182,7 +185,7 @@ fn inspect(arguments: &Value) -> Result<Value, ToolError> {
         None,
         None,
         None,
-    ))
+    )))
 }
 
 fn act(arguments: &Value) -> Result<Value, ToolError> {
@@ -719,6 +722,14 @@ fn outcome(
         "fallback": fallback,
         "executor": executor,
     })
+}
+
+fn without_act_flags(mut body: Value) -> Value {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("executed");
+        object.remove("verified");
+    }
+    body
 }
 
 fn insert(body: &mut Value, key: &str, value: Value) {

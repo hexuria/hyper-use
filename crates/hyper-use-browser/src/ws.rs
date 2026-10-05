@@ -222,3 +222,37 @@ fn decode_chunked(body: &str) -> Result<String, CdpError> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refused_endpoints_are_transport_errors_without_a_socket() {
+        let err = match WebSocketTransport::connect("wss://127.0.0.1/devtools/browser") {
+            Err(err) => err,
+            Ok(_) => panic!("wss must not open a socket"),
+        };
+        assert_eq!(
+            err,
+            CdpError::Transport {
+                message: "wss is not supported; use a local ws:// debugging port".into(),
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "CDP transport: wss is not supported; use a local ws:// debugging port"
+        );
+
+        let err = match WebSocketTransport::connect("ftp://127.0.0.1/json") {
+            Err(err) => err,
+            Ok(_) => panic!("ftp must not open a socket"),
+        };
+        assert_eq!(
+            err,
+            CdpError::Transport {
+                message: "CDP endpoint `ftp://127.0.0.1/json` must be http:// or ws://".into(),
+            }
+        );
+    }
+}

@@ -14,7 +14,6 @@ use hyper_use_resonance::{HgraMatcher, RegionMatcher, ResonanceModel, WeightedMa
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CliError {
-    MissingCommand,
     UnknownCommand(String),
     MissingFixture,
     MissingValue(&'static str),
@@ -77,7 +76,6 @@ pub enum CliError {
 impl std::fmt::Display for CliError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingCommand => f.write_str("missing command (expected `locate`)"),
             Self::UnknownCommand(name) => write!(f, "unknown command `{name}`"),
             Self::MissingFixture => f.write_str("locate requires --fixture <path>"),
             Self::MissingValue(flag) => write!(f, "missing value for {flag}"),
@@ -757,5 +755,114 @@ mod tests {
             err.to_string(),
             "locate text must contain at least one alphanumeric token"
         );
+    }
+
+    #[test]
+    fn flag_parser_returns_exact_variants() {
+        let err = execute(&args(&["locate", "--nope"])).unwrap_err();
+        assert_eq!(err, CliError::UnknownFlag("--nope".into()));
+        assert_eq!(err.to_string(), "unknown flag `--nope`");
+
+        let err = execute(&args(&["locate", "--json", "--json"])).unwrap_err();
+        assert_eq!(err, CliError::DuplicateFlag("--json"));
+        assert_eq!(err.to_string(), "duplicate flag --json");
+
+        let path = fixture();
+        let err = execute(&args(&["locate", "--fixture", &path, "--matcher", "nope"])).unwrap_err();
+        assert_eq!(err, CliError::UnknownMatcher("nope".into()));
+        assert_eq!(err.to_string(), "unknown matcher `nope`");
+
+        let err = execute(&args(&[
+            "locate",
+            "--fixture",
+            &path,
+            "--matcher",
+            "hgra",
+            "--dims",
+            "7",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CliError::BadDims("7".into()));
+        assert_eq!(err.to_string(), "unsupported dims `7`");
+
+        let err = execute(&args(&["act"])).unwrap_err();
+        assert_eq!(err, CliError::MissingRegion);
+        assert_eq!(err.to_string(), "act requires a region id");
+
+        let err = execute(&args(&["act", "n100"])).unwrap_err();
+        assert_eq!(err, CliError::MissingVerb);
+        assert_eq!(err.to_string(), "act requires a verb (`press`)");
+    }
+
+    #[test]
+    fn replay_scripts_and_verify_return_exact_variants() {
+        let cdp = cdp_fixture("sign-in.cdp.json");
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp,
+            "--executor",
+            "browser-use",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::BrowserUseScript {
+                message: "unexpected field `calls`".into(),
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "invalid browser-use script: unexpected field `calls`"
+        );
+
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp,
+            "--executor",
+            "cua",
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CliError::CuaScript {
+                message: "unexpected field `calls`".into(),
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "invalid cua script: unexpected field `calls`"
+        );
+
+        let err = execute(&args(&[
+            "act",
+            "n100",
+            "press",
+            "--fixture",
+            &cdp_fixture("sign-in.browser-use.json"),
+            "--executor",
+            "browser-use",
+            "--confidence",
+            "NaN",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CliError::NonFiniteConfidence);
+        assert_eq!(err.to_string(), "confidence must be finite");
+
+        let err = execute(&args(&[
+            "verify",
+            "--fixture",
+            &cdp,
+            "--expect-absent",
+            "n100",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CliError::RegionStillPresent { id: "n100".into() });
+        assert_eq!(err.to_string(), "region `n100` is still present");
     }
 }

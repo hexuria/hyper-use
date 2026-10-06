@@ -105,7 +105,7 @@ root.innerHTML = '<button aria-label="Shadow Ping">Shadow Ping</button>';
 <div role=listbox aria-label=Suggestions>
   <div role=option aria-label=Manila>Manila</div>
 </div>
-<iframe id=frame srcdoc="<button aria-label=Frame Hi>Frame Hi</button>"></iframe>
+<iframe id=frame srcdoc="<button aria-label='Frame Hi'>Frame Hi</button>"></iframe>
 "#;
 
 fn harder_data_url() -> String {

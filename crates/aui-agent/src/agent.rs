@@ -353,9 +353,6 @@ where
                     }
                     Some(resolution.text)
                 }
-                Err(TextError::Abstain(reason)) => {
-                    return Err(AgentError::Abstain(format!("text: {reason}")));
-                }
                 Err(_) => None,
             };
             payload = Some(

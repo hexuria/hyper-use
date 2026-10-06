@@ -9,7 +9,7 @@
 //! ancestry / stale ticket should become *impossible* before ranking (blocked
 //! candidates stay as evidence). Ranking then chooses among viable candidates
 //! only. Until that split lands, some safety still mixes into scores (see
-//! `buried_better_label` in [`decide`]); do not rip that path in the same change
+//! `buried_better_label` in `decide`); do not rip that path in the same change
 //! as the ticket lease.
 //!
 //! The guard judges the proposal against the world as it is now, not as the
@@ -56,7 +56,7 @@ pub use world::{
 
 /// Raw confidence below this never allows. Not a probability.
 /// Host / MCP preflight allow floor. The owned agent path does **not** use
-/// this: PUA chooses among a finite action space, then [`crate::gate`] applies
+/// this: PUA chooses among a finite action space, then [`gate()`](fn@crate::gate) applies
 /// hard refuses only. Keep 0.55 so historical A5/A6 / combo benches stay
 /// comparable; do not raise or remove without updating those arms.
 pub const MIN_ALLOW_CONFIDENCE: f64 = 0.55;

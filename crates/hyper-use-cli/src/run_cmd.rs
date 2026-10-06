@@ -5,12 +5,22 @@
 //! hyper-use run --goal <text> --fixture <replay.cdp.json>   # full loop over a CDP replay
 //! hyper-use run --goal <text> --fixture <page.manifold>     # predict only (dry run)
 //! hyper-use run ... --text-model-cmd <program>   # feature `model-text`: model TYPE/SELECT payloads
+//! hyper-use run ... --policy jev                 # feature `jev`: JEV decides every step
 //! ```
 //!
-//! Live mode drives the attached Chrome page: observe → PUA → gate → ticket →
+//! Live mode drives the attached Chrome page: observe → policy → gate → ticket →
 //! executor (revalidate + consume) → input → observe → verify, until DONE,
-//! BLOCKED, abstain, or a bound. No LLM and no MCP are involved; PUA abstains
-//! rather than guessing.
+//! BLOCKED, abstain, or a bound. Default policy is PUA: no LLM and no MCP are
+//! involved; PUA abstains rather than guessing.
+//!
+//! `--policy jev` (built with `--features jev`) decides through JEV (System
+//! One) instead: the offered ActionSpace becomes one `operation` + one
+//! `<kind>_target` question per element kind in a single call — the
+//! speculative fan-out jev-ultrafast uses. JEV can only pick an offered id,
+//! never a selector or script, and the ticket / gate / revalidate chain is
+//! unchanged. Reads `TYPESAFE_API_KEY` (required), `TYPESAFE_MODEL`,
+//! `TYPESAFE_BASE_URL`. It does not read `TEXT_MODEL_*` yet; combine with
+//! `--text-model-cmd` for model-written payloads.
 //!
 //! `--text-model-cmd` (built with `--features model-text`) only changes where
 //! TYPE_TEXT / SELECT *payloads* come from: a user program speaking the
@@ -32,6 +42,13 @@ struct RunArgs {
     fixture: Option<String>,
     max_steps: u32,
     text_model_cmd: Option<String>,
+    policy: PolicyKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PolicyKind {
+    Pua,
+    Jev,
 }
 
 fn parse(args: &[String]) -> Result<RunArgs, CliError> {
@@ -41,6 +58,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
     let mut fixture = None;
     let mut max_steps = None;
     let mut text_model_cmd = None;
+    let mut policy = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -67,6 +85,19 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
                 "--text-model-cmd",
                 value("--text-model-cmd")?,
             )?,
+            "--policy" => {
+                let raw = value("--policy")?;
+                let kind = match raw.as_str() {
+                    "pua" => PolicyKind::Pua,
+                    "jev" => PolicyKind::Jev,
+                    _ => {
+                        return Err(CliError::UnknownFlag(format!(
+                            "unknown policy `{raw}` (pua|jev)"
+                        )))
+                    }
+                };
+                set(&mut policy, "--policy", kind)?;
+            }
             "--max-steps" => {
                 let raw = value("--max-steps")?;
                 let n: u32 = raw.parse().map_err(|_| CliError::BadNumber {
@@ -112,6 +143,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         fixture,
         max_steps: max_steps.unwrap_or(20),
         text_model_cmd,
+        policy: policy.unwrap_or(PolicyKind::Pua),
     })
 }
 
@@ -150,7 +182,18 @@ pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
     // Static manifold: predict once. Executing against a page that cannot
     // change would only measure the mock.
     let manifold = parse_fixture(&body).map_err(|err| CliError::Fixture(err.to_string()))?;
-    let mut agent = AgentBuilder::new(MockBrowser::new(manifold), PuaPolicy::default())
+    match args.policy {
+        PolicyKind::Pua => predict_once(MockBrowser::new(manifold), PuaPolicy::default(), &args),
+        PolicyKind::Jev => predict_jev(manifold, &args),
+    }
+}
+
+fn predict_once<P: BrowserPolicy>(
+    browser: MockBrowser,
+    policy: P,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let mut agent = AgentBuilder::new(browser, policy)
         .max_steps(1)
         .build(args.goal.clone());
     let mut out = String::from("mode dry-run (static manifold; nothing executed)\n");
@@ -172,8 +215,43 @@ pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
     Ok(out)
 }
 
+#[cfg(feature = "jev")]
+fn predict_jev(
+    manifold: hyper_use_core::InteractionManifold,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let transport = crate::typesafe::TypesafeTransport::from_env()
+        .map_err(|err| CliError::Config(format!("typesafe: {err}")))?;
+    predict_once(
+        MockBrowser::new(manifold),
+        hyper_use_policy::RemotePolicy::new(transport),
+        args,
+    )
+}
+
+#[cfg(not(feature = "jev"))]
+fn predict_jev(
+    _manifold: hyper_use_core::InteractionManifold,
+    _args: &RunArgs,
+) -> Result<String, CliError> {
+    Err(CliError::UnknownFlag(
+        "--policy jev requires building with --features jev".into(),
+    ))
+}
+
 fn drive<T: CdpTransport>(session: BrowserSession<T>, args: &RunArgs) -> Result<String, CliError> {
-    let builder = AgentBuilder::new(session, PuaPolicy::default()).max_steps(args.max_steps);
+    match args.policy {
+        PolicyKind::Pua => drive_with(session, PuaPolicy::default(), args),
+        PolicyKind::Jev => drive_jev(session, args),
+    }
+}
+
+fn drive_with<T: CdpTransport, P: BrowserPolicy>(
+    session: BrowserSession<T>,
+    policy: P,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let builder = AgentBuilder::new(session, policy).max_steps(args.max_steps);
     if let Some(program) = args.text_model_cmd.as_deref() {
         return drive_model_text(builder, program, args);
     }
@@ -182,9 +260,33 @@ fn drive<T: CdpTransport>(session: BrowserSession<T>, args: &RunArgs) -> Result<
     render(&agent, &outcome)
 }
 
+#[cfg(feature = "jev")]
+fn drive_jev<T: CdpTransport>(
+    session: BrowserSession<T>,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let transport = crate::typesafe::TypesafeTransport::from_env()
+        .map_err(|err| CliError::Config(format!("typesafe: {err}")))?;
+    drive_with(
+        session,
+        hyper_use_policy::RemotePolicy::new(transport),
+        args,
+    )
+}
+
+#[cfg(not(feature = "jev"))]
+fn drive_jev<T: CdpTransport>(
+    _session: BrowserSession<T>,
+    _args: &RunArgs,
+) -> Result<String, CliError> {
+    Err(CliError::UnknownFlag(
+        "--policy jev requires building with --features jev".into(),
+    ))
+}
+
 #[cfg(feature = "model-text")]
-fn drive_model_text<B: BrowserRuntime>(
-    builder: AgentBuilder<B, PuaPolicy>,
+fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
+    builder: AgentBuilder<B, P>,
     program: &str,
     args: &RunArgs,
 ) -> Result<String, CliError> {
@@ -210,8 +312,8 @@ fn drive_model_text<B: BrowserRuntime>(
 }
 
 #[cfg(not(feature = "model-text"))]
-fn drive_model_text<B: BrowserRuntime>(
-    _builder: AgentBuilder<B, PuaPolicy>,
+fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
+    _builder: AgentBuilder<B, P>,
     _program: &str,
     _args: &RunArgs,
 ) -> Result<String, CliError> {
@@ -329,6 +431,36 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(err, CliError::UnknownFlag(ref m) if m.contains("model-text")),
+            "{err:?}"
+        );
+    }
+
+    #[cfg(not(feature = "jev"))]
+    #[test]
+    fn policy_jev_requires_feature() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/agent-type-search.cdp.json");
+        let err = run_command(&a(&[
+            "--goal",
+            "type rust in the Search box",
+            "--fixture",
+            path.to_str().unwrap(),
+            "--policy",
+            "jev",
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(err, CliError::UnknownFlag(ref m) if m.contains("--features jev")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_policy_is_rejected() {
+        let err =
+            run_command(&a(&["--goal", "x", "--fixture", "y", "--policy", "grok"])).unwrap_err();
+        assert!(
+            matches!(err, CliError::UnknownFlag(ref m) if m.contains("pua|jev")),
             "{err:?}"
         );
     }

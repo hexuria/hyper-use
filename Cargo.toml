@@ -1,23 +1,23 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/hyper-use-core",
-    "crates/hyper-use-geometry",
-    "crates/hyper-use-observe",
-    "crates/hyper-use-resonance",
-    "crates/hyper-use-browser",
-    "crates/hyper-use-protocol",
-    "crates/hyper-use-guard",
-    "crates/hyper-use-policy",
-    "crates/hyper-use-agent",
-    "crates/hyper-use-mcp",
-    "crates/hyper-use-cli",
-    # Experimental. Not on the product path. Build with -p hyper-use-hyper --features unused
-    # or via hyper-use-resonance's `hgra` feature.
-    "experiments/hgra/hyper-use-hyper",
+    "crates/ultra-instinct-core",
+    "crates/ultra-instinct-geometry",
+    "crates/ultra-instinct-observe",
+    "crates/ultra-instinct-resonance",
+    "crates/ultra-instinct-browser",
+    "crates/ultra-instinct-protocol",
+    "crates/ultra-instinct-guard",
+    "crates/ultra-instinct-policy",
+    "crates/ultra-instinct-agent",
+    "crates/ultra-instinct-mcp",
+    "crates/ultra-instinct-cli",
+    # Experimental. Not on the product path. Build with -p ultra-instinct-hyper --features unused
+    # or via ultra-instinct-resonance's `hgra` feature.
+    "experiments/hgra/ultra-instinct-hyper",
 ]
 # Deleted from the product graph (see docs/DECISIONS.md product pivot):
-# hyper-use-browser-use, hyper-use-cua, hyper-use-macos, hyper-use-executor
+# ultra-instinct-browser-use, ultra-instinct-cua, ultra-instinct-macos, ultra-instinct-executor
 
 [workspace.package]
 version = "0.1.0"

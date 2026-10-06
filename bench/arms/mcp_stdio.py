@@ -13,7 +13,7 @@ class McpStdio:
                                      text=True, bufsize=1, env=env)
         self.ids = count(1)
         self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                    "clientInfo": {"name": "hyper-use-bench", "version": "1"}})
+                                    "clientInfo": {"name": "ultra-instinct-bench", "version": "1"}})
         self.notify("notifications/initialized")
 
     def notify(self, method: str, params: dict | None = None) -> None:

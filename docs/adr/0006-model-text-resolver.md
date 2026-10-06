@@ -28,9 +28,9 @@ name for a model-backed resolver; it was a stub.
    (`select` for SELECT), the `TextContext::fingerprint()`, and `max_chars`.
    Shipped clients: `ScriptedTextModel` (tests, offline demos) and
    `CommandTextModel` (runs a user program, one JSON line in, one JSON reply
-   out). hyper-use has **no** HTTP client, provider SDK, or credential handling
+   out). ultra-instinct has **no** HTTP client, provider SDK, or credential handling
    for this path; a live LLM is the user's program and owns its own keys.
-   Stderr of that program is discarded so it cannot leak into hyper-use output.
+   Stderr of that program is discarded so it cannot leak into ultra-instinct output.
 3. **Every reply is vetted** (`vet`):
    - **Context binding** — the reply must echo the request's context
      fingerprint. A reply bound to another context (stale / reordered) is
@@ -58,10 +58,10 @@ name for a model-backed resolver; it was a stub.
    any target drift. A stale ticket discards the prediction; the next predict
    builds a new `TextContext` and asks the model again with the new
    fingerprint (tested).
-6. **Feature-gated, default unchanged.** `hyper-use-policy/model-text`
+6. **Feature-gated, default unchanged.** `ultra-instinct-policy/model-text`
    (optional `serde_json` for the command protocol),
-   `hyper-use-agent/model-text` (`AgentBuilder::model_text(model)`), and
-   `hyper-use-cli/model-text` (`run --text-model-cmd <program>`). Without the
+   `ultra-instinct-agent/model-text` (`AgentBuilder::model_text(model)`), and
+   `ultra-instinct-cli/model-text` (`run --text-model-cmd <program>`). Without the
    feature nothing is compiled in; with it, `AgentBuilder::new` still uses
    `DeterministicTextResolver` until `model_text` / `text_resolver` is called.
 

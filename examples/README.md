@@ -3,13 +3,13 @@
 Phase 1 example: rank the sidebar fixture.
 
 ```bash
-cargo run -p hyper-use-cli --example sidebar_locate
-cargo run -p hyper-use-cli -- locate \
+cargo run -p ultra-instinct-cli --example sidebar_locate
+cargo run -p ultra-instinct-cli -- locate \
   --fixture fixtures/sidebar.manifold \
   --text Settings --role button --position left --json
 ```
 
-The compiled example lives at `crates/hyper-use-cli/examples/sidebar_locate.rs`.
+The compiled example lives at `crates/ultra-instinct-cli/examples/sidebar_locate.rs`.
 It prints the top region id and checks that it is `nav-settings`.
 
 ## Benchmark scenarios
@@ -39,12 +39,12 @@ cookie backdrop). No JEV. See [world-context/README.md](world-context/README.md)
 ```sh
 ./examples/world-context/smoke.sh
 # optional forced HGRA:
-HYPER_USE_MATCHER=hgra ./examples/world-context/smoke.sh
+ULTRA_INSTINCT_MATCHER=hgra ./examples/world-context/smoke.sh
 ```
 
 ## Live drive
 
-`live-drive/` — hand-run JEV + `hyper-use mcp` against the Acme Mail page
+`live-drive/` — hand-run JEV + `ultra-instinct mcp` against the Acme Mail page
 (same site as the `acme-mail/` bench scenario). Not CI and not a benchmark.
 Thread tasks start on `#thread/q3` (`t8` adds `?preset=twin`). See
 [live-drive/README.md](live-drive/README.md).
@@ -52,9 +52,9 @@ Thread tasks start on `#thread/q3` (`t8` adds `?preset=twin`). See
 ```sh
 python3 bench/server.py --port 8765 &
 # throwaway Chrome on CDP 9333, then:
-cargo build --release -p hyper-use-cli --bin hyper-use
-cargo build --release -p hyper-use-cli --features jev --example live_drive
-TYPESAFE_API_KEY=... HYPER_USE_JEV=1 \
-  ./target/release/examples/live_drive --bin target/release/hyper-use \
+cargo build --release -p ultra-instinct-cli --bin ultra-instinct
+cargo build --release -p ultra-instinct-cli --features jev --example live_drive
+TYPESAFE_API_KEY=... ULTRA_INSTINCT_JEV=1 \
+  ./target/release/examples/live_drive --bin target/release/ultra-instinct \
     --site http://127.0.0.1:8765/acme-mail/site
 ```

@@ -465,131 +465,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-use-agent"
-version = "0.1.0"
-dependencies = [
- "hyper-use-browser",
- "hyper-use-core",
- "hyper-use-guard",
- "hyper-use-observe",
- "hyper-use-policy",
- "hyper-use-protocol",
- "proptest",
- "serde_json",
-]
-
-[[package]]
-name = "hyper-use-browser"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "hyper-use-geometry",
- "hyper-use-observe",
- "hyper-use-resonance",
- "proptest",
- "serde_json",
- "tungstenite",
-]
-
-[[package]]
-name = "hyper-use-cli"
-version = "0.1.0"
-dependencies = [
- "hyper-use-agent",
- "hyper-use-browser",
- "hyper-use-core",
- "hyper-use-guard",
- "hyper-use-mcp",
- "hyper-use-observe",
- "hyper-use-policy",
- "hyper-use-protocol",
- "hyper-use-resonance",
- "serde_json",
- "typesafe-sdk",
-]
-
-[[package]]
-name = "hyper-use-core"
-version = "0.1.0"
-
-[[package]]
-name = "hyper-use-geometry"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
-]
-
-[[package]]
-name = "hyper-use-guard"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "hyper-use-protocol",
- "hyper-use-resonance",
- "proptest",
-]
-
-[[package]]
-name = "hyper-use-hyper"
-version = "0.1.0"
-dependencies = [
- "proptest",
-]
-
-[[package]]
-name = "hyper-use-mcp"
-version = "0.1.0"
-dependencies = [
- "hyper-use-browser",
- "hyper-use-core",
- "hyper-use-guard",
- "hyper-use-observe",
- "hyper-use-protocol",
- "hyper-use-resonance",
- "proptest",
- "serde_json",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "hyper-use-observe"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "proptest",
-]
-
-[[package]]
-name = "hyper-use-policy"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "instinct-core",
- "instinct-lexicon",
- "instinct-text",
- "serde_json",
-]
-
-[[package]]
-name = "hyper-use-protocol"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
-]
-
-[[package]]
-name = "hyper-use-resonance"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "hyper-use-geometry",
- "hyper-use-hyper",
- "proptest",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "hyper-util"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1653,6 +1528,131 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "ultra-instinct-agent"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "ultra-instinct-browser",
+ "ultra-instinct-core",
+ "ultra-instinct-guard",
+ "ultra-instinct-observe",
+ "ultra-instinct-policy",
+ "ultra-instinct-protocol",
+]
+
+[[package]]
+name = "ultra-instinct-browser"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "tungstenite",
+ "ultra-instinct-core",
+ "ultra-instinct-geometry",
+ "ultra-instinct-observe",
+ "ultra-instinct-resonance",
+]
+
+[[package]]
+name = "ultra-instinct-cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "typesafe-sdk",
+ "ultra-instinct-agent",
+ "ultra-instinct-browser",
+ "ultra-instinct-core",
+ "ultra-instinct-guard",
+ "ultra-instinct-mcp",
+ "ultra-instinct-observe",
+ "ultra-instinct-policy",
+ "ultra-instinct-protocol",
+ "ultra-instinct-resonance",
+]
+
+[[package]]
+name = "ultra-instinct-core"
+version = "0.1.0"
+
+[[package]]
+name = "ultra-instinct-geometry"
+version = "0.1.0"
+dependencies = [
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-guard"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "ultra-instinct-core",
+ "ultra-instinct-protocol",
+ "ultra-instinct-resonance",
+]
+
+[[package]]
+name = "ultra-instinct-hyper"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
+name = "ultra-instinct-mcp"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde_json",
+ "tracing-subscriber",
+ "ultra-instinct-browser",
+ "ultra-instinct-core",
+ "ultra-instinct-guard",
+ "ultra-instinct-observe",
+ "ultra-instinct-protocol",
+ "ultra-instinct-resonance",
+]
+
+[[package]]
+name = "ultra-instinct-observe"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-policy"
+version = "0.1.0"
+dependencies = [
+ "instinct-core",
+ "instinct-lexicon",
+ "instinct-text",
+ "serde_json",
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-protocol"
+version = "0.1.0"
+dependencies = [
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-resonance"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tracing",
+ "tracing-subscriber",
+ "ultra-instinct-core",
+ "ultra-instinct-geometry",
+ "ultra-instinct-hyper",
 ]
 
 [[package]]

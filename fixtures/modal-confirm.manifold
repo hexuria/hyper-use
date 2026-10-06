@@ -1,4 +1,4 @@
-# hyper-use manifold fixture v1
+# ultra-instinct manifold fixture v1
 # Adversarial (front layer): a modal confirm dialog is open over a project
 # settings page. The page's "Delete project" and "Cancel" buttons are still
 # in the DOM, enabled, on screen, and match their labels exactly, so a

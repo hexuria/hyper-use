@@ -707,7 +707,7 @@ wheels = [
 ]
 
 [[package]]
-name = "hyper-use-bench"
+name = "ultra-instinct-bench"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

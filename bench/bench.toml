@@ -1,4 +1,4 @@
-# Uniform hyper-use benchmark config. `bench/bench run --config bench/bench.toml --seed 42`
+# Uniform ultra-instinct benchmark config. `bench/bench run --config bench/bench.toml --seed 42`
 [run]
 seed = 42
 reps = 1          # runs per arm per task (n=1 by design for this pass)

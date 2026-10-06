@@ -9,7 +9,7 @@
 PR #16 left honest gaps: readonly only failed inside the CDP input function,
 ticket world fingerprints hashed the whole page (unrelated banners forced
 stale discards), Instinct was single-intent only, MCP `guard` still floated at
-0.55 while the agent used hard `gate`, and `hyper-use run --fixture` lacked
+0.55 while the agent used hard `gate`, and `ultra-instinct run --fixture` lacked
 checked-in type/select/click replays.
 
 ## Decision

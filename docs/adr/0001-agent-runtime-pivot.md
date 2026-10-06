@@ -1,38 +1,38 @@
-# ADR 0001: Hyper-Use is the Rust browser-agent runtime; Instinct owns HOW
+# ADR 0001: Ultra-Instinct is the Rust browser-agent runtime; Instinct owns HOW
 
 - Status: accepted
 - Date: 2026-10-05 (Asia/Manila)
 - Branch: `feat/agent-runtime-pivot`
-- Supersedes: the "Hyper-Use is not an agent / does not click" product framing in
+- Supersedes: the "Ultra-Instinct is not an agent / does not click" product framing in
   `docs/PRD.md` (pre-pivot) and the ActionTicket-only host-executor assumption in
   `docs/DECISIONS.md` § ActionTicket (hosts may still intercept; the primary product
   path is now an owned agent loop).
 
 ## Context
 
-Uniform bench and live remasures showed Hyper-Use as a voluntary MCP preflight is
+Uniform bench and live remasures showed Ultra-Instinct as a voluntary MCP preflight is
 not a firewall: `Allow` was not bound to the click (TOCTOU), and combo arms could
-"pass" via Browser Use fallback without pressing Hyper-Use. ActionTicket (#13)
+"pass" via Browser Use fallback without pressing Ultra-Instinct. ActionTicket (#13)
 started the lease boundary. Separately, `browser-use/jev-ultrafast` (MIT) is a
 clean reference for a finite action-space agent loop. Instinct (`hexuria/instinct`, ADR
 0010) is a domain-agnostic decision engine: consumers own WHAT; Instinct owns HOW.
 
-Uriah approved a deliberate pivot: Hyper-Use becomes the Rust-native browser
+Uriah approved a deliberate pivot: Ultra-Instinct becomes the Rust-native browser
 agent/runtime covering the useful jev-ultrafast architecture, with stronger
 observation, ticketed execution, and verification. Instinct is the default
 deterministic decision kernel. HGRA stays frozen under `experiments/`.
 
 ## Decision
 
-1. **Hyper-Use owns the loop.** observe → ActionSpace → policy → guard →
+1. **Ultra-Instinct owns the loop.** observe → ActionSpace → policy → guard →
    ActionTicket → executor revalidate/consume → execute → observe → diff/verify →
    history. Primary API is a Rust `Agent` (Phase 4). MCP is an optional adapter,
    not the orchestration surface.
-2. **Instinct owns HOW; Hyper-Use owns WHAT.** Pin `hexuria/instinct` by git rev when
+2. **Instinct owns HOW; Ultra-Instinct owns WHAT.** Pin `hexuria/instinct` by git rev when
    `InstinctPolicy` lands (Phase 2). Do not put browser concepts into Instinct. Do not
    recreate a second float confidence gate for policy choice. Hard browser
    invalidity (occluded, disabled, hidden, front-layer, stale ticket) is
-   Hyper-Use guard evidence, not a Instinct score.
+   Ultra-Instinct guard evidence, not a Instinct score.
 3. **ActionTicket stays the enforcement boundary.** Issued on guard success;
    one-shot; revalidated immediately before input; cannot substitute target or
    action. Stale → discard prediction, re-observe, decide again.
@@ -45,13 +45,13 @@ deterministic decision kernel. HGRA stays frozen under `experiments/`.
    relevant as the interceptor ablation until the agent fully owns execution.
 7. **Crate target (incremental, not theater):**
    ```
-   hyper-use-core      (manifold + ActionSpace)     — reuse
-   hyper-use-browser  (observe + ticketed execute) — expand
-   hyper-use-policy   (Instinct + escalation)           — new (Phase 2)
-   hyper-use-guard    (hard integrity + tickets)   — slim toward gates
-   hyper-use-agent    (loop)                       — new (Phase 4)
-   hyper-use-mcp      (adapter)                    — optional
-   hyper-use-cli      (run/observe/step)           — expand
+   ultra-instinct-core      (manifold + ActionSpace)     — reuse
+   ultra-instinct-browser  (observe + ticketed execute) — expand
+   ultra-instinct-policy   (Instinct + escalation)           — new (Phase 2)
+   ultra-instinct-guard    (hard integrity + tickets)   — slim toward gates
+   ultra-instinct-agent    (loop)                       — new (Phase 4)
+   ultra-instinct-mcp      (adapter)                    — optional
+   ultra-instinct-cli      (run/observe/step)           — expand
    experiments/hgra   — frozen
    ```
    Existing geometry / observe / resonance / protocol crates stay until their
@@ -60,14 +60,14 @@ deterministic decision kernel. HGRA stays frozen under `experiments/`.
 
 ## Mapping (reuse / new / delete later)
 
-| jev-ultrafast | Hyper-Use now | Direction |
+| jev-ultrafast | Ultra-Instinct now | Direction |
 |---|---|---|
-| `agent.py` | *(missing)* | **new** `hyper-use-agent` |
-| `browser.py` + `snapshot.js` | `hyper-use-browser` DOM/AX fusion | **reuse/expand**; do not port JS wholesale |
+| `agent.py` | *(missing)* | **new** `ultra-instinct-agent` |
+| `browser.py` + `snapshot.js` | `ultra-instinct-browser` DOM/AX fusion | **reuse/expand**; do not port JS wholesale |
 | `model.py` action_space | `ActionSpace` in core (Phase 1) | **new types from manifold** |
 | `model.py` choose | Instinct policy (Phase 2) + optional escalation | **new**; pin Instinct `a42d16b…` |
 | `model.py` field_text | `TextResolver` (Phase 5) | **new**; not Instinct |
-| `questions.py` | consumer policy data in Hyper-Use | **new** evals/data |
+| `questions.py` | consumer policy data in Ultra-Instinct | **new** evals/data |
 | `fresh()` / act guards | ActionTicket + `revalidate` | **reuse/expand** |
 | Browser.act | ticketed CDP executor | **expand**; no unguarded agent click |
 | history | agent journal | **new** with observe |

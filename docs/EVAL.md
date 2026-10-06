@@ -7,9 +7,9 @@ Date: 2026-10-06 (Asia/Manila). See ADR 0002 and ADR 0003.
 | Arm | Meaning | Status |
 |---|---|---|
 | A | upstream `jev-ultrafast` (Python reference) | **not run** here |
-| B | Hyper-Use + remote/Jev policy only | wire + transport trait (`remote` feature); no live model wired |
-| C | Hyper-Use + Instinct only | **offline e2e (mock + CDP replay) + live Chrome smoke** |
-| D | Hyper-Use + Instinct → escalation | **offline e2e** with `ScriptedRemote`; no live model |
+| B | Ultra-Instinct + remote/Jev policy only | wire + transport trait (`remote` feature); no live model wired |
+| C | Ultra-Instinct + Instinct only | **offline e2e (mock + CDP replay) + live Chrome smoke** |
+| D | Ultra-Instinct + Instinct → escalation | **offline e2e** with `ScriptedRemote`; no live model |
 
 No arm has multi-run, multi-site numbers yet. Do not quote any of this as
 general performance evidence (n is tiny and the tasks are single-intent).
@@ -21,27 +21,27 @@ general performance evidence (n is tiny and the tasks are single-intent).
 cargo test --workspace
 
 # Just the owned loop
-cargo test -p hyper-use-agent                    # all agent tests
-cargo test -p hyper-use-agent --test adversarial # mock adversarial e2e (16)
-cargo test -p hyper-use-agent --test replay_cdp  # real BrowserSession over a CDP replay (6)
-cargo test -p hyper-use-agent --test props       # property tests (ticket substitution, stale, abstain)
-cargo test -p hyper-use-agent --test mock_loop   # original ADR 0002 loop tests
-cargo test -p hyper-use-guard gate               # hard gate unit tests
-cargo test -p hyper-use-policy                   # Instinct policy, evidence, resolver
+cargo test -p ultra-instinct-agent                    # all agent tests
+cargo test -p ultra-instinct-agent --test adversarial # mock adversarial e2e (16)
+cargo test -p ultra-instinct-agent --test replay_cdp  # real BrowserSession over a CDP replay (6)
+cargo test -p ultra-instinct-agent --test props       # property tests (ticket substitution, stale, abstain)
+cargo test -p ultra-instinct-agent --test mock_loop   # original ADR 0002 loop tests
+cargo test -p ultra-instinct-guard gate               # hard gate unit tests
+cargo test -p ultra-instinct-policy                   # Instinct policy, evidence, resolver
 ```
 
 From the CLI, a CDP replay script runs the full loop offline:
 
 ```bash
-cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
   --fixture path/to/script.cdp.json            # ScriptBuilder JSON
-cargo run -p hyper-use-cli -- run --goal "Delete" \
+cargo run -p ultra-instinct-cli -- run --goal "Delete" \
   --fixture fixtures/modal-confirm.manifold    # static manifold: predict-only dry run
-cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
   --fixture fixtures/agent-type-search.cdp.json
-cargo run -p hyper-use-cli -- run --goal 'Click Go' \
+cargo run -p ultra-instinct-cli -- run --goal 'Click Go' \
   --fixture fixtures/agent-click-go.cdp.json
-cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
+cargo run -p ultra-instinct-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
@@ -51,8 +51,8 @@ background `Delete project` is behind the modal and is not offered.
 ## Arm D offline (Instinct → remote)
 
 ```bash
-cargo test -p hyper-use-policy -p hyper-use-agent \
-  --features hyper-use-agent/remote,hyper-use-policy/remote
+cargo test -p ultra-instinct-policy -p ultra-instinct-agent \
+  --features ultra-instinct-agent/remote,ultra-instinct-policy/remote
 ```
 
 `remote_e2e.rs`: twins make Instinct abstain → scripted remote picks `CLICK:b` →
@@ -66,11 +66,11 @@ abstain.
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
   --remote-debugging-port=9333 '--remote-allow-origins=*' \
   --user-data-dir=/tmp/hu-smoke about:blank &
-HYPER_USE_CDP=http://127.0.0.1:9333 \
-  cargo test -p hyper-use-agent --test live_smoke -- --ignored --nocapture
+ULTRA_INSTINCT_CDP=http://127.0.0.1:9333 \
+  cargo test -p ultra-instinct-agent --test live_smoke -- --ignored --nocapture
 ```
 
-Or by hand: `hyper-use run --cdp http://127.0.0.1:9333 --url <page> --goal …`.
+Or by hand: `ultra-instinct run --cdp http://127.0.0.1:9333 --url <page> --goal …`.
 
 Last run 2026-10-06 ~00:10 (Asia/Manila) (Chrome headless, macOS, inline `data:` page):
 
@@ -142,11 +142,11 @@ and execution on a live page.
 
 ```bash
 # Offline tests (what CI runs; scripted models, no network, no keys)
-cargo test -p hyper-use-policy -p hyper-use-agent -p hyper-use-cli \
-  --features hyper-use-policy/model-text,hyper-use-agent/model-text,hyper-use-cli/model-text
+cargo test -p ultra-instinct-policy -p ultra-instinct-agent -p ultra-instinct-cli \
+  --features ultra-instinct-policy/model-text,ultra-instinct-agent/model-text,ultra-instinct-cli/model-text
 
 # Live: plug any model in via a program you own (it holds its own API key)
-cargo run -p hyper-use-cli --features model-text -- run \
+cargo run -p ultra-instinct-cli --features model-text -- run \
   --cdp http://127.0.0.1:9222 --goal "type rust ownership in the Search box" \
   --text-model-cmd ./my-text-model.sh
 ```
@@ -167,7 +167,7 @@ to abstain instead of falling back.
 
 ## Offline arm C repeats (n = 3)
 
-Scripted: `cargo test -p hyper-use-agent` three times on this tip. All three
+Scripted: `cargo test -p ultra-instinct-agent` three times on this tip. All three
 runs green (same deterministic offline suite). See RESULTS.md § "Agent + Instinct
 pivot (offline arm C)".
 

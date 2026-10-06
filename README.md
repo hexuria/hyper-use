@@ -1,6 +1,6 @@
-# hyper-use
+# ultra-instinct
 
-**Hyper-Use is a Rust-native browser-agent runtime with a deterministic
+**Ultra-Instinct is a Rust-native browser-agent runtime with a deterministic
 decision kernel (Instinct) and executor-bound action tickets.** It observes the
 page (DOM + accessibility fusion, stable identity, stacking / hit-test
 occlusion, modal front layer), builds a finite action space, lets Instinct choose
@@ -36,18 +36,18 @@ not on any default path.
 
 ```bash
 # Live: attach to a Chrome started with --remote-debugging-port
-cargo run -p hyper-use-cli -- run --cdp http://127.0.0.1:9222 \
+cargo run -p ultra-instinct-cli -- run --cdp http://127.0.0.1:9222 \
   --url https://example.com --goal 'Type "rust" into Search'
 
 # Offline: predict-only dry run on a manifold (a --fixture *.cdp.json replay
 # runs the full loop, but must script every observe/input/observe CDP call)
-cargo run -p hyper-use-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
+cargo run -p ultra-instinct-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
 # Full offline agent loop (type / click / select CDP replays)
-cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
   --fixture fixtures/agent-type-search.cdp.json
-cargo run -p hyper-use-cli -- run --goal "Click Go" \
+cargo run -p ultra-instinct-cli -- run --goal "Click Go" \
   --fixture fixtures/agent-click-go.cdp.json
-cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
+cargo run -p ultra-instinct-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
@@ -56,7 +56,7 @@ target; a model only extracts a TYPE_TEXT / SELECT value that must occur in the
 goal, else deterministic fallback, else abstain. Tests use scripted models.
 
 ```bash
-cargo run -p hyper-use-cli --features model-text -- run --cdp http://127.0.0.1:9222 \
+cargo run -p ultra-instinct-cli --features model-text -- run --cdp http://127.0.0.1:9222 \
   --goal "type rust ownership in the Search box" --text-model-cmd ./my-text-model.sh
 ```
 
@@ -77,19 +77,19 @@ debug helpers.
 
 ```bash
 cargo test --workspace
-cargo run -p hyper-use-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
+cargo run -p ultra-instinct-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
 # Full offline agent loop (type / click / select CDP replays)
-cargo run -p hyper-use-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
   --fixture fixtures/agent-type-search.cdp.json
-cargo run -p hyper-use-cli -- run --goal "Click Go" \
+cargo run -p ultra-instinct-cli -- run --goal "Click Go" \
   --fixture fixtures/agent-click-go.cdp.json
-cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
+cargo run -p ultra-instinct-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
-cargo run -p hyper-use-cli -- observe --fixture fixtures/sign-in.cdp.json
-cargo run -p hyper-use-cli -- guard \
+cargo run -p ultra-instinct-cli -- observe --fixture fixtures/sign-in.cdp.json
+cargo run -p ultra-instinct-cli -- guard \
   --fixture fixtures/sign-in.cdp.json \
   --action click --target "Sign in" --role button --json
-cargo run -p hyper-use-cli -- verify \
+cargo run -p ultra-instinct-cli -- verify \
   --fixture fixtures/welcome.cdp.json --expect-text Welcome
 ```
 

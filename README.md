@@ -1,9 +1,9 @@
 # hyper-use
 
 **Hyper-Use is a Rust-native browser-agent runtime with a deterministic
-decision kernel (PUA) and executor-bound action tickets.** It observes the
+decision kernel (Instinct) and executor-bound action tickets.** It observes the
 page (DOM + accessibility fusion, stable identity, stacking / hit-test
-occlusion, modal front layer), builds a finite action space, lets PUA choose
+occlusion, modal front layer), builds a finite action space, lets Instinct choose
 or abstain, gates the choice, and executes exactly the ticketed action — or
 nothing — then verifies the effect.
 
@@ -12,9 +12,9 @@ goal
  │
  ▼  observe (CDP) ─► ActionSpace (front layer applied; hidden/disabled/covered excluded)
  │
- ▼  policy: PUA ─► abstain? ─► optional remote tier (feature `remote`, same finite menu)
+ ▼  policy: Instinct ─► abstain? ─► optional remote tier (feature `remote`, same finite menu)
  │
- ▼  TYPE_TEXT / SELECT payload: TextResolver (never PUA)
+ ▼  TYPE_TEXT / SELECT payload: TextResolver (never Instinct)
  │
  ▼  hard gate ─► ActionTicket (action + target + world fingerprint)
  │
@@ -51,7 +51,7 @@ cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
-Optional model payloads (feature `model-text`, ADR 0006): PUA still picks the
+Optional model payloads (feature `model-text`, ADR 0006): Instinct still picks the
 target; a model only extracts a TYPE_TEXT / SELECT value that must occur in the
 goal, else deterministic fallback, else abstain. Tests use scripted models.
 
@@ -61,7 +61,7 @@ cargo run -p hyper-use-cli --features model-text -- run --cdp http://127.0.0.1:9
 ```
 
 ```rust
-let mut agent = AgentBuilder::new(BrowserSession::new(transport), PuaPolicy::default())
+let mut agent = AgentBuilder::new(BrowserSession::new(transport), InstinctPolicy::default())
     .max_steps(20)
     .build(r#"Select "Business" in Cabin class"#);
 let outcome = agent.run(); // Done | Blocked | Abstained | Failed, with verified steps

@@ -4,7 +4,7 @@ use std::fmt;
 pub enum AgentError {
     Browser(String),
     Policy(String),
-    /// The policy abstained (no finite choice cleared PUA's bar). Never
+    /// The policy abstained (no finite choice cleared Instinct's bar). Never
     /// turned into the top-ranked candidate.
     Abstain(String),
     Guard(String),

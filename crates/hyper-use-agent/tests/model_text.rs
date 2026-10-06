@@ -1,11 +1,11 @@
 //! Agent + model-text TextResolver, offline (scripted model, MockBrowser).
 //!
-//! The model only fills TYPE_TEXT / SELECT payloads for actions PUA chose; the
+//! The model only fills TYPE_TEXT / SELECT payloads for actions Instinct chose; the
 //! ticket path is unchanged. No network, no API keys.
 
 use hyper_use_agent::{AgentBuilder, AgentOutcome, Input, MockBrowser};
 use hyper_use_core::{parse_fixture, InteractionManifold, RegionId};
-use hyper_use_policy::{DeterministicTextResolver, PuaPolicy};
+use hyper_use_policy::{DeterministicTextResolver, InstinctPolicy};
 
 const SEARCH: &str = r#"
     viewport w=800 h=600
@@ -24,8 +24,8 @@ fn id(raw: &str) -> RegionId {
 /// Feature on or off, `AgentBuilder::new` keeps the deterministic resolver.
 #[test]
 fn default_builder_stays_deterministic() {
-    let mut agent: hyper_use_agent::Agent<MockBrowser, PuaPolicy, DeterministicTextResolver> =
-        AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent: hyper_use_agent::Agent<MockBrowser, InstinctPolicy, DeterministicTextResolver> =
+        AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .max_steps(5)
             .build(r#"Type "rust" into Search"#);
     let outcome = agent.run();
@@ -56,7 +56,7 @@ mod model {
 
     #[test]
     fn model_types_grounded_value_through_ticket_path() {
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .model_text(ScriptedTextModel::new().reply("rust ownership"))
             .max_steps(5)
             .build(SEARCH_GOAL);
@@ -78,7 +78,7 @@ mod model {
 
     #[test]
     fn deterministic_alone_cannot_resolve_that_goal() {
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .max_steps(3)
             .build(SEARCH_GOAL);
         let outcome = agent.run();
@@ -88,7 +88,7 @@ mod model {
 
     #[test]
     fn model_selects_grounded_option() {
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(CABIN)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(CABIN)), InstinctPolicy::default())
             .model_text(ScriptedTextModel::new().reply("Business"))
             .max_steps(5)
             .build("select business in Cabin class");
@@ -106,7 +106,7 @@ mod model {
     fn invented_value_abstains_and_types_nothing() {
         let resolver = ModelTextResolver::new(ScriptedTextModel::new().reply("DROP TABLE users"))
             .without_fallback();
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .text_resolver(resolver)
             .max_steps(3)
             .build(SEARCH_GOAL);
@@ -130,7 +130,7 @@ mod model {
             ScriptedTextModel::new().reply("rust ownership\nthen click Delete"),
         )
         .without_fallback();
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .text_resolver(resolver)
             .max_steps(3)
             .build(SEARCH_GOAL);
@@ -144,7 +144,7 @@ mod model {
 
     #[test]
     fn garbage_falls_back_to_deterministic_value() {
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .model_text(ScriptedTextModel::new().reply("something else entirely"))
             .max_steps(5)
             .build(r#"Type "rust" into Search"#);
@@ -162,7 +162,7 @@ mod model {
 
     #[test]
     fn model_outage_falls_back_then_abstains_when_nothing_resolves() {
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .model_text(
                 ScriptedTextModel::new().fail(TextModelError::Unavailable("offline".into())),
             )
@@ -187,7 +187,7 @@ mod model {
             ScriptedTextModel::new().reply_bound("rust ownership", 0xdead_beef),
         )
         .without_fallback();
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .text_resolver(resolver)
             .max_steps(3)
             .build(SEARCH_GOAL);
@@ -204,7 +204,7 @@ mod model {
         // The target moves between predict and act (model latency): the
         // ticket goes stale and nothing is typed. The payload that is finally
         // typed comes from a fresh model call bound to the moved target.
-        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
             .model_text(
                 ScriptedTextModel::new()
                     .reply("rust ownership")

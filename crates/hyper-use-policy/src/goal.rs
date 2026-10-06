@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-/// What the agent is trying to accomplish. Opaque to PUA except as evidence text.
+/// What the agent is trying to accomplish. Opaque to Instinct except as evidence text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentGoal {
     text: String,
@@ -40,7 +40,7 @@ impl fmt::Display for AgentGoal {
 /// - Only the literal connectives `then` and `and then` outside of `"..."` /
 ///   `'...'` quotes are split. No `after that`, commas, or numbered lists.
 /// - No branching, conditionals, or loops.
-/// - Each clause is still a single PUA intent (one action → DONE).
+/// - Each clause is still a single Instinct intent (one action → DONE).
 /// - Nested quotes are not supported beyond simple open/close pairs.
 ///
 /// A goal with no connective returns a single-element vec (the trimmed goal).

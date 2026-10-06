@@ -3,7 +3,7 @@
 //! Feature `remote`. No network stack and no TypeSafe/Jev dependency: the
 //! consumer supplies a [`RemoteTransport`] that carries one JSON request to
 //! its model and returns one JSON reply. Hyper-Use owns the wire contract and
-//! enforces the same finite [`ActionSpace`] as PUA:
+//! enforces the same finite [`ActionSpace`] as Instinct:
 //!
 //! Request (one object):
 //!
@@ -26,7 +26,7 @@
 //! or JavaScript into execution because only offered ids are accepted.
 //!
 //! [`UnconfiguredRemote`] is the stub: it always abstains, so wiring an
-//! `EscalatingPolicy<PuaPolicy, UnconfiguredRemote>` changes nothing until a
+//! `EscalatingPolicy<InstinctPolicy, UnconfiguredRemote>` changes nothing until a
 //! real transport is plugged in.
 
 use serde_json::{json, Value};
@@ -135,7 +135,7 @@ pub fn parse_reply(space: &ActionSpace, reply: &str) -> Result<PolicyOutcome, Po
         action_id: offered.id().clone(),
         kind,
         target_label: offered.label().to_owned(),
-        // Remote confidence is not comparable to PUA millis; never reported as such.
+        // Remote confidence is not comparable to Instinct millis; never reported as such.
         confidence_millis: 0,
         operation_ranked: Vec::new(),
         target_ranked: Vec::new(),
@@ -213,7 +213,7 @@ impl RemoteTransport for ScriptedRemote {
 mod tests {
     use super::*;
     use crate::escalate::EscalatingPolicy;
-    use crate::pua_policy::PuaPolicy;
+    use crate::instinct_policy::InstinctPolicy;
     use hyper_use_core::parse_fixture;
 
     fn twins() -> ActionSpace {
@@ -230,18 +230,18 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_remote_keeps_pua_abstain() {
-        let mut p = EscalatingPolicy::new(PuaPolicy::default(), Some(UnconfiguredRemote));
+    fn unconfigured_remote_keeps_instinct_abstain() {
+        let mut p = EscalatingPolicy::new(InstinctPolicy::default(), Some(UnconfiguredRemote));
         let out = p.decide(&twins(), &AgentGoal::new("Delete"), &[]).unwrap();
         assert!(matches!(out, PolicyOutcome::Abstain { .. }), "{out:?}");
     }
 
     #[test]
-    fn remote_choice_runs_only_after_pua_abstains_and_must_be_offered() {
+    fn remote_choice_runs_only_after_instinct_abstains_and_must_be_offered() {
         let remote = RemotePolicy::new(ScriptedRemote::new([
             r#"{"choice":{"id":"CLICK:b","kind":"CLICK"}}"#,
         ]));
-        let mut p = EscalatingPolicy::new(PuaPolicy::default(), Some(remote));
+        let mut p = EscalatingPolicy::new(InstinctPolicy::default(), Some(remote));
         let out = p.decide(&twins(), &AgentGoal::new("Delete"), &[]).unwrap();
         assert_eq!(out.as_choice().unwrap().action_id.as_str(), "CLICK:b");
         let remote = p.fallback.as_ref().unwrap();

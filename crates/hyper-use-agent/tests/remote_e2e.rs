@@ -1,10 +1,10 @@
-//! Arm D offline: PUA abstains → remote (scripted) chooses → same gate/ticket.
+//! Arm D offline: Instinct abstains → remote (scripted) chooses → same gate/ticket.
 #![cfg(feature = "remote")]
 
 use hyper_use_agent::{AgentBuilder, AgentOutcome, MockBrowser};
 use hyper_use_core::{parse_fixture, Action, RegionId};
 use hyper_use_policy::{
-    EscalatingPolicy, PuaPolicy, RemotePolicy, ScriptedRemote, UnconfiguredRemote,
+    EscalatingPolicy, InstinctPolicy, RemotePolicy, ScriptedRemote, UnconfiguredRemote,
 };
 
 const TWINS: &str = r#"
@@ -19,7 +19,7 @@ fn escalation_executes_remote_choice_through_the_same_ticket_path() {
         r#"{"choice":{"id":"CLICK:b","kind":"CLICK"}}"#,
         r#"{"choice":{"id":"DONE","kind":"DONE"}}"#,
     ]));
-    let policy = EscalatingPolicy::new(PuaPolicy::default(), Some(remote));
+    let policy = EscalatingPolicy::new(InstinctPolicy::default(), Some(remote));
     let mut browser = MockBrowser::new(parse_fixture(TWINS).unwrap());
     browser.set_on_press(
         parse_fixture(
@@ -46,7 +46,7 @@ fn off_menu_remote_reply_fails_without_input() {
     let remote = RemotePolicy::new(ScriptedRemote::new([
         r##"{"choice":{"id":"CLICK:#delete-all","kind":"CLICK"}}"##,
     ]));
-    let policy = EscalatingPolicy::new(PuaPolicy::default(), Some(remote));
+    let policy = EscalatingPolicy::new(InstinctPolicy::default(), Some(remote));
     let mut agent = AgentBuilder::new(MockBrowser::new(parse_fixture(TWINS).unwrap()), policy)
         .max_steps(3)
         .build("Delete");
@@ -59,8 +59,8 @@ fn off_menu_remote_reply_fails_without_input() {
 }
 
 #[test]
-fn unconfigured_remote_is_plain_pua() {
-    let policy = EscalatingPolicy::new(PuaPolicy::default(), Some(UnconfiguredRemote));
+fn unconfigured_remote_is_plain_instinct() {
+    let policy = EscalatingPolicy::new(InstinctPolicy::default(), Some(UnconfiguredRemote));
     let mut agent = AgentBuilder::new(MockBrowser::new(parse_fixture(TWINS).unwrap()), policy)
         .max_steps(3)
         .build("Delete");

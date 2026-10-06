@@ -1,20 +1,20 @@
 //! Browser policy for Hyper-Use.
 //!
-//! PUA owns **HOW** a finite choice is made (`CandidateSet` + `Scores` + `decide`).
+//! Instinct owns **HOW** a finite choice is made (`CandidateSet` + `Scores` + `arbitrate`).
 //! This crate owns **WHAT** browser evidence means. Hard invalidity (disabled,
-//! hidden, occluded, …) is filtered **before** PUA sees candidates — never as
+//! hidden, occluded, …) is filtered **before** Instinct sees candidates — never as
 //! score penalties.
 //!
-//! Pin: `hexuria/pua` @ `fe3f1fd3818feb452fae1771ff2171b8598f86e6`.
+//! Pin: `hexuria/instinct` @ `a42d16b6f5ccc3273939c8e3d3f462d78765bfea`.
 
 #![forbid(unsafe_code)]
 
 mod escalate;
 mod evidence;
 mod goal;
+mod instinct_policy;
 #[cfg(feature = "model-text")]
 mod model_text;
-mod pua_policy;
 #[cfg(feature = "remote")]
 mod remote;
 mod text;
@@ -22,13 +22,15 @@ mod types;
 
 pub use escalate::EscalatingPolicy;
 pub use goal::{split_sequential_clauses, AgentGoal};
+pub use instinct_policy::{InstinctPolicy, HABITUATION_STEP};
 #[cfg(feature = "model-text")]
 pub use model_text::{
     parse_command_reply, vet, CommandTextModel, Grounding, ModelRefusal, ModelTextResolver,
     ScriptedTextModel, TextModel, TextModelError, TextModelReply, TextModelRequest, TextSource,
     DEFAULT_MAX_CHARS,
 };
-pub use pua_policy::PuaPolicy;
+#[deprecated(note = "renamed to InstinctPolicy")]
+pub type PuaPolicy = InstinctPolicy;
 #[cfg(feature = "remote")]
 pub use remote::{
     parse_reply, request_json, RemotePolicy, RemoteTransport, ScriptedRemote, UnconfiguredRemote,
@@ -38,5 +40,5 @@ pub use types::{
     BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, RankedAction,
 };
 
-/// Documented PUA git rev this crate is pinned to.
-pub const PUA_GIT_REV: &str = "fe3f1fd3818feb452fae1771ff2171b8598f86e6";
+/// Documented Instinct git rev this crate is pinned to.
+pub const INSTINCT_GIT_REV: &str = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea";

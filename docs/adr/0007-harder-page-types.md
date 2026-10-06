@@ -6,7 +6,7 @@ Accepted (2026-10-06)
 
 ## Context
 
-Offline Agent + PUA + ticket coverage did not include iframes, shadow DOM,
+Offline Agent + Instinct + ticket coverage did not include iframes, shadow DOM,
 virtualized lists, or autocomplete suggestion popups ([EVAL](../EVAL.md)).
 CDP observe used `DOM.getDocument` with `pierce: false`, so open shadow roots
 and same-origin iframe documents never entered the DOM walk. ARIA `combobox` /

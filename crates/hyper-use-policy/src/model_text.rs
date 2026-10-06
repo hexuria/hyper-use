@@ -1,6 +1,6 @@
 //! Model-backed [`TextResolver`] (feature `model-text`).
 //!
-//! The model only proposes the **payload** for a TYPE_TEXT / SELECT that PUA
+//! The model only proposes the **payload** for a TYPE_TEXT / SELECT that Instinct
 //! already chose from the finite [`hyper_use_core::ActionSpace`]. It never picks
 //! a target, never sees selectors, and never issues input: the agent still
 //! gates, tickets, revalidates, and consumes exactly as with

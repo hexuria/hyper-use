@@ -1,4 +1,4 @@
-//! TextResolver: TYPE_TEXT payload generation is *not* PUA.
+//! TextResolver: TYPE_TEXT payload generation is *not* Instinct.
 
 use std::fmt;
 

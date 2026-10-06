@@ -20,11 +20,11 @@ Upstream: <https://github.com/browser-use/jev-ultrafast>
 | history | agent history / journal |
 
 Where Hyper-Use intentionally goes further: DOM+AX fusion, stable cross-observation
-identity, modal/front-layer and occlusion reasoning, PUA local decision tier,
+identity, modal/front-layer and occlusion reasoning, Instinct local decision tier,
 deterministic abstention, ActionTickets, postcondition verification
 (no-effect / wrong-effect), replay/evals.
 
-## hexuria/pua
+## hexuria/instinct
 
-Domain-agnostic decision engine. ADR 0010: PUA owns HOW; Hyper-Use owns WHAT.
-Pinned by git rev `fe3f1fd` in the workspace; `PuaPolicy` is the default policy. Repo: <https://github.com/hexuria/pua>
+Domain-agnostic decision engine. ADR 0010: Instinct owns HOW; Hyper-Use owns WHAT.
+Pinned by git rev `a42d16b` in the workspace; `InstinctPolicy` is the default policy. Repo: <https://github.com/hexuria/instinct>

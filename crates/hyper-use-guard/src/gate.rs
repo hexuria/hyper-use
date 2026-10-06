@@ -1,7 +1,7 @@
 //! Hard browser-integrity gate for a target a policy **already chose**.
 //!
 //! This is the agent path's guard. It does not rank and has no confidence
-//! threshold: the policy (PUA) decided *which* finite choice wins; the gate
+//! threshold: the policy (Instinct) decided *which* finite choice wins; the gate
 //! answers only "may this exact region receive this exact action right now?"
 //! Every check is a hard invalidity, never a score penalty:
 //!

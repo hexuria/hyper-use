@@ -1,8 +1,8 @@
-//! Offline e2e: goal → observe → PUA → guard → ticket → press → verify.
+//! Offline e2e: goal → observe → Instinct → guard → ticket → press → verify.
 
 use hyper_use_agent::{AgentBuilder, AgentOutcome, MockBrowser, TickResult, VerificationKind};
 use hyper_use_core::{parse_fixture, Action, InteractionManifold};
-use hyper_use_policy::PuaPolicy;
+use hyper_use_policy::InstinctPolicy;
 
 fn manifold(src: &str) -> InteractionManifold {
     parse_fixture(src).unwrap()
@@ -25,7 +25,7 @@ fn clicks_exact_label_and_sees_state_change() {
     );
     let mut browser = MockBrowser::new(before);
     browser.set_on_press(after);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(5)
         .build("Continue");
     let outcome = agent.run();
@@ -74,12 +74,12 @@ fn twin_delete_abstains_without_pressing() {
         "#,
     );
     let browser = MockBrowser::new(m);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(3)
         .build("Delete");
     let outcome = agent.run();
     assert!(
-        matches!(outcome, AgentOutcome::Abstained { .. }),
+        matches!(&outcome, AgentOutcome::Abstained { .. }),
         "{outcome:?}"
     );
     assert!(agent.browser_mut().press_log().is_empty());
@@ -94,7 +94,7 @@ fn stale_world_discards_prediction_without_failing_task_permanently() {
         "#,
     );
     let browser = MockBrowser::new(before);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(4)
         .build("UniqueGo");
     // Predict successfully.
@@ -125,7 +125,7 @@ fn done_goal_terminates_without_press() {
         "#,
     );
     let browser = MockBrowser::new(m);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(2)
         .build("DONE");
     let outcome = agent.run();
@@ -142,7 +142,7 @@ fn tick_stale_is_not_finished_failure() {
         "#,
     );
     let browser = MockBrowser::new(before);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(3)
         .build("UniqueGo");
     agent.predict().unwrap();
@@ -161,4 +161,31 @@ fn tick_stale_is_not_finished_failure() {
         Ok(other) => panic!("expected stale discarded, got {other:?}"),
         Err(e) => panic!("unexpected err {e}"),
     }
+}
+
+#[test]
+fn repeated_no_effect_click_abstains_before_max_steps() {
+    let page = manifold(
+        r#"
+        viewport w=800 h=600
+        region id=go role=button label="Continue" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+        "#,
+    );
+    let mut browser = MockBrowser::new(page.clone());
+    browser.set_on_press(page);
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
+        .max_steps(10)
+        .build("Continue");
+    let outcome = agent.run();
+    assert!(
+        matches!(outcome, AgentOutcome::Abstained { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(outcome.steps().len(), 2);
+    assert!(outcome
+        .steps()
+        .iter()
+        .all(|step| step.verification == VerificationKind::NoEffect));
+    assert_eq!(agent.browser_mut().press_log().len(), 2);
+    assert!(outcome.steps().len() < 10);
 }

@@ -6,13 +6,13 @@
 //! ```
 //!
 //! Navigates the first page target to an inline `data:` page (no server) and
-//! runs TYPE_TEXT → SELECT → CLICK → SCROLL goals through observe → PUA →
+//! runs TYPE_TEXT → SELECT → CLICK → SCROLL goals through observe → Instinct →
 //! gate → ticket → executor → verify, then checks the page DOM result.
 
 use hyper_use_agent::{AgentBuilder, AgentOutcome, BrowserRuntime, VerificationKind};
 use hyper_use_browser::{BrowserSession, WebSocketTransport};
 use hyper_use_core::ActionKind;
-use hyper_use_policy::PuaPolicy;
+use hyper_use_policy::InstinctPolicy;
 
 const PAGE: &str = "<!doctype html><title>HU live smoke</title><h1>Flight search</h1>\
 <input id=q aria-label=Search style=width:300px>\
@@ -38,7 +38,7 @@ fn step(
     kind: ActionKind,
     verification: VerificationKind,
 ) -> BrowserSession<WebSocketTransport> {
-    let mut agent = AgentBuilder::new(session, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session, InstinctPolicy::default())
         .max_steps(4)
         .build(goal);
     let outcome = agent.run();

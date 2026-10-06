@@ -564,9 +564,9 @@ name = "hyper-use-policy"
 version = "0.1.0"
 dependencies = [
  "hyper-use-core",
- "pua-core",
- "pua-lexicon",
- "pua-text",
+ "instinct-core",
+ "instinct-lexicon",
+ "instinct-text",
  "serde_json",
 ]
 
@@ -729,6 +729,34 @@ dependencies = [
  "hashbrown",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "instinct-core"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
+name = "instinct-lexicon"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
+dependencies = [
+ "instinct-core",
+ "instinct-text",
+]
+
+[[package]]
+name = "instinct-text"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
+dependencies = [
+ "instinct-core",
+ "unicode-normalization",
+ "unicode-security",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -899,34 +927,6 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
-]
-
-[[package]]
-name = "pua-core"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
-dependencies = [
- "blake3",
-]
-
-[[package]]
-name = "pua-lexicon"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
-dependencies = [
- "pua-core",
- "pua-text",
-]
-
-[[package]]
-name = "pua-text"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
-dependencies = [
- "pua-core",
- "unicode-normalization",
- "unicode-security",
- "unicode-segmentation",
 ]
 
 [[package]]

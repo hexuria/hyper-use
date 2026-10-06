@@ -1,4 +1,4 @@
-# ADR 0001: Hyper-Use is the Rust browser-agent runtime; PUA owns HOW
+# ADR 0001: Hyper-Use is the Rust browser-agent runtime; Instinct owns HOW
 
 - Status: accepted
 - Date: 2026-10-05 (Asia/Manila)
@@ -14,12 +14,12 @@ Uniform bench and live remasures showed Hyper-Use as a voluntary MCP preflight i
 not a firewall: `Allow` was not bound to the click (TOCTOU), and combo arms could
 "pass" via Browser Use fallback without pressing Hyper-Use. ActionTicket (#13)
 started the lease boundary. Separately, `browser-use/jev-ultrafast` (MIT) is a
-clean reference for a finite action-space agent loop. PUA (`hexuria/pua`, ADR
-0010) is a domain-agnostic decision engine: consumers own WHAT; PUA owns HOW.
+clean reference for a finite action-space agent loop. Instinct (`hexuria/instinct`, ADR
+0010) is a domain-agnostic decision engine: consumers own WHAT; Instinct owns HOW.
 
 Uriah approved a deliberate pivot: Hyper-Use becomes the Rust-native browser
 agent/runtime covering the useful jev-ultrafast architecture, with stronger
-observation, ticketed execution, and verification. PUA is the default
+observation, ticketed execution, and verification. Instinct is the default
 deterministic decision kernel. HGRA stays frozen under `experiments/`.
 
 ## Decision
@@ -28,17 +28,17 @@ deterministic decision kernel. HGRA stays frozen under `experiments/`.
    ActionTicket → executor revalidate/consume → execute → observe → diff/verify →
    history. Primary API is a Rust `Agent` (Phase 4). MCP is an optional adapter,
    not the orchestration surface.
-2. **PUA owns HOW; Hyper-Use owns WHAT.** Pin `hexuria/pua` by git rev when
-   `PuaPolicy` lands (Phase 2). Do not put browser concepts into PUA. Do not
+2. **Instinct owns HOW; Hyper-Use owns WHAT.** Pin `hexuria/instinct` by git rev when
+   `InstinctPolicy` lands (Phase 2). Do not put browser concepts into Instinct. Do not
    recreate a second float confidence gate for policy choice. Hard browser
    invalidity (occluded, disabled, hidden, front-layer, stale ticket) is
-   Hyper-Use guard evidence, not a PUA score.
+   Hyper-Use guard evidence, not a Instinct score.
 3. **ActionTicket stays the enforcement boundary.** Issued on guard success;
    one-shot; revalidated immediately before input; cannot substitute target or
    action. Stale → discard prediction, re-observe, decide again.
 4. **TextResolver is separate.** `TYPE_TEXT` target selection ≠ string
-   generation. PUA must not invent arbitrary field text.
-5. **HGRA remains frozen** in `experiments/hgra/`. Weighted (and later PUA)
+   generation. Instinct must not invent arbitrary field text.
+5. **HGRA remains frozen** in `experiments/hgra/`. Weighted (and later Instinct)
    are the product decision path. No matcher tuning during this pivot.
 6. **RESULTS.md stays historical** until A/B/C/D (or B0/B1/B2 interceptor
    ablation) runs on pinned main with the agent-owned loop. B0/B1 remain
@@ -47,7 +47,7 @@ deterministic decision kernel. HGRA stays frozen under `experiments/`.
    ```
    hyper-use-core      (manifold + ActionSpace)     — reuse
    hyper-use-browser  (observe + ticketed execute) — expand
-   hyper-use-policy   (PUA + escalation)           — new (Phase 2)
+   hyper-use-policy   (Instinct + escalation)           — new (Phase 2)
    hyper-use-guard    (hard integrity + tickets)   — slim toward gates
    hyper-use-agent    (loop)                       — new (Phase 4)
    hyper-use-mcp      (adapter)                    — optional
@@ -65,8 +65,8 @@ deterministic decision kernel. HGRA stays frozen under `experiments/`.
 | `agent.py` | *(missing)* | **new** `hyper-use-agent` |
 | `browser.py` + `snapshot.js` | `hyper-use-browser` DOM/AX fusion | **reuse/expand**; do not port JS wholesale |
 | `model.py` action_space | `ActionSpace` in core (Phase 1) | **new types from manifold** |
-| `model.py` choose | PUA policy (Phase 2) + optional escalation | **new**; pin PUA `fe3f1fd…` |
-| `model.py` field_text | `TextResolver` (Phase 5) | **new**; not PUA |
+| `model.py` choose | Instinct policy (Phase 2) + optional escalation | **new**; pin Instinct `a42d16b…` |
+| `model.py` field_text | `TextResolver` (Phase 5) | **new**; not Instinct |
 | `questions.py` | consumer policy data in Hyper-Use | **new** evals/data |
 | `fresh()` / act guards | ActionTicket + `revalidate` | **reuse/expand** |
 | Browser.act | ticketed CDP executor | **expand**; no unguarded agent click |
@@ -74,16 +74,16 @@ deterministic decision kernel. HGRA stays frozen under `experiments/`.
 
 **Already on main (keep):** InteractionManifold, DOM/AX fusion, identity,
 stacking, world context, ActionTicket issue/revalidate, verify_delta,
-WeightedMatcher (interim until PUA), MCP guard tools (adapter).
+WeightedMatcher (interim until Instinct), MCP guard tools (adapter).
 
 **Delete only after proven redundant (Phase 8):** legacy `contract.rs`,
-deprecated `act` alias, duplicated float confidence gates once PUA decides,
+deprecated `act` alias, duplicated float confidence gates once Instinct decides,
 generic matcher path if unreachable.
 
 ## Consequences
 
 - PRD supersedes "does not click / is not an agent".
-- Phase 1 lands ActionSpace only — no PUA pin in Cargo.toml yet.
-- Future PUA pin: `https://github.com/hexuria/pua` @ `fe3f1fd3818feb452fae1771ff2171b8598f86e6`
+- Phase 1 lands ActionSpace only — no Instinct pin in Cargo.toml yet.
+- Future Instinct pin: `https://github.com/hexuria/instinct` @ `a42d16b6f5ccc3273939c8e3d3f462d78765bfea`
   (record at pin time; bump when integrating).
 - B0/B1 harness remains valid ablation evidence for the interceptor path.

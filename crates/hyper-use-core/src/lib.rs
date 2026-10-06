@@ -2,7 +2,7 @@
 //!
 //! A caller builds an [`InteractionManifold`] of [`InteractionRegion`] values
 //! and may derive a finite [`ActionSpace`] of [`ObservedAction`]s for a policy
-//! to choose from. Ranking / PUA / execution live in other crates. There is no
+//! to choose from. Ranking / Instinct / execution live in other crates. There is no
 //! `unsafe` and no shared mutable state.
 
 #![forbid(unsafe_code)]

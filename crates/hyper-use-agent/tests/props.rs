@@ -5,7 +5,7 @@ use hyper_use_agent::{
 };
 use hyper_use_core::{parse_fixture, Action, InteractionManifold, RegionId};
 use hyper_use_guard::{gate, TicketLedger};
-use hyper_use_policy::PuaPolicy;
+use hyper_use_policy::InstinctPolicy;
 use hyper_use_protocol::{GuardReason, TicketInvalid};
 use proptest::prelude::*;
 
@@ -118,7 +118,7 @@ proptest! {
         }
     }
 
-    /// PUA abstention never becomes an input, whatever the twin count/order.
+    /// Instinct abstention never becomes an input, whatever the twin count/order.
     #[test]
     fn abstain_never_executes(twins in 2usize..6, shift in 0usize..6) {
         let mut src = String::from("viewport w=800 h=600\n");
@@ -129,7 +129,7 @@ proptest! {
                 10 + k * 30
             ));
         }
-        let mut agent = AgentBuilder::new(MockBrowser::new(parse_fixture(&src).unwrap()), PuaPolicy::default())
+        let mut agent = AgentBuilder::new(MockBrowser::new(parse_fixture(&src).unwrap()), InstinctPolicy::default())
             .max_steps(3)
             .build("Archive");
         let outcome = agent.run();

@@ -3,9 +3,9 @@
 //! One tick:
 //!
 //! ```text
-//! observe → ActionSpace (front layer applied) → policy (PUA first)
+//! observe → ActionSpace (front layer applied) → policy (Instinct first)
 //!   → DONE / BLOCKED?            terminal, no input
-//!   → TYPE_TEXT / SELECT payload  TextResolver (never PUA)
+//!   → TYPE_TEXT / SELECT payload  TextResolver (never Instinct)
 //!   → hard gate on the decided observation → ActionTicket
 //!   → executor: ledger → fresh observe → revalidate → gate → consume → input
 //!   → settle → observe → diff / value check → history
@@ -16,8 +16,8 @@
 //! bounded.
 //!
 //! Multi-step goals (`"type X then click Go"`) are split on `then` / `and then`
-//! ([`hyper_use_policy::split_sequential_clauses`]). Each clause is one PUA
-//! single-intent; when PUA chooses DONE the agent advances to the next clause
+//! ([`hyper_use_policy::split_sequential_clauses`]). Each clause is one Instinct
+//! single-intent; when Instinct chooses DONE the agent advances to the next clause
 //! instead of finishing. See that function's docs for the connective limits.
 
 use hyper_use_browser::ScrollDirection;
@@ -129,7 +129,7 @@ impl<B, P, T> AgentBuilder<B, P, T> {
 
     /// Use a model for TYPE_TEXT / SELECT payloads (feature `model-text`).
     ///
-    /// The model only fills the payload of an action PUA already chose; the
+    /// The model only fills the payload of an action Instinct already chose; the
     /// reply is context-bound, shape-checked, and grounded in the goal clause
     /// before it is used, then gated / ticketed like any payload. On model
     /// failure or a refused reply it falls back to
@@ -341,7 +341,7 @@ where
             };
             let resolution = self.text.resolve(&ctx).map_err(|e| match e {
                 // A resolver that declines (model refused, no fallback value)
-                // abstains like PUA: nothing typed, never a guessed value.
+                // abstains like Instinct: nothing typed, never a guessed value.
                 TextError::Abstain(reason) => AgentError::Abstain(format!("text: {reason}")),
                 other => AgentError::Text(other.to_string()),
             })?;

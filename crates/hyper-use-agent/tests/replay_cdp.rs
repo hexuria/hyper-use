@@ -9,7 +9,7 @@ use hyper_use_browser::{
     SCROLL_VIEWPORT_FRACTION,
 };
 use hyper_use_core::ActionKind;
-use hyper_use_policy::PuaPolicy;
+use hyper_use_policy::InstinctPolicy;
 use serde_json::Value;
 
 fn session(script: ScriptBuilder) -> BrowserSession<ReplayTransport> {
@@ -44,7 +44,7 @@ fn type_text_over_cdp_sends_argument_not_source_and_verifies_value() {
         .observe(&page) // after
         .dom_read_value(10, "rust ownership", "") // value read-back
         .observe(&page); // next predict → policy: satisfied → DONE
-    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
         .max_steps(4)
         .build(r#"Type "rust ownership" into Search"#);
     let outcome = agent.run();
@@ -73,7 +73,7 @@ fn readonly_field_rejection_over_cdp_types_nothing() {
         .observe(&page)
         .observe(&page)
         .dom_input_rejected(10, "readonly");
-    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
         .max_steps(2)
         .build(r#"Type "x" into Search"#);
     agent.predict().unwrap();
@@ -98,7 +98,7 @@ fn stale_rerender_over_cdp_never_reaches_input() {
         "Search",
     );
     let script = ScriptBuilder::new().observe(&page).observe(&changed);
-    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
         .max_steps(2)
         .build("Go");
     agent.predict().unwrap().expect("click Go");
@@ -123,9 +123,10 @@ fn covered_button_over_cdp_is_not_offered_or_pressed() {
         .find(|r| r.label() == "Go")
         .expect("Go observed");
     assert!(go.flags().occluded(), "hit-test must mark Go occluded");
-    let space = hyper_use_agent::Agent::<BrowserSession<ReplayTransport>, PuaPolicy>::action_space(
-        &manifold,
-    );
+    let space =
+        hyper_use_agent::Agent::<BrowserSession<ReplayTransport>, InstinctPolicy>::action_space(
+            &manifold,
+        );
     assert!(space
         .targets_of(ActionKind::Click)
         .all(|a| a.label() != "Go"));
@@ -157,7 +158,7 @@ fn select_over_cdp_uses_select_function_and_verifies_option_text() {
         .dom_input(20)
         .observe(&page)
         .dom_read_value(20, "business", "Business");
-    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
         .max_steps(2)
         .build(r#"Select "Business" in Cabin class"#);
     let p = agent.predict().unwrap().expect("select").clone();
@@ -174,7 +175,7 @@ fn select_over_cdp_uses_select_function_and_verifies_option_text() {
 fn scroll_over_cdp_is_one_wheel_event_at_viewport_center() {
     let page = search_page();
     let script = ScriptBuilder::new().observe(&page).scroll().observe(&page);
-    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
         .max_steps(2)
         .build("scroll down");
     agent.predict().unwrap();
@@ -235,7 +236,7 @@ fn autocomplete_type_then_option_click_over_cdp() {
         .dom_click(11)
         .observe(&picked) // after CLICK (state-changed)
         .observe(&picked); // CLICK clause → DONE
-    let mut agent = AgentBuilder::new(session(script), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
         .max_steps(6)
         .build(r#"Type "man" into City then click Manila"#);
     let outcome = agent.run();

@@ -1,7 +1,7 @@
 # hyper-use
 
 Hyper-Use is a **Rust-native browser-agent runtime**: it observes the page,
-builds a finite action space, decides (PUA first, optional escalation),
+builds a finite action space, decides (Instinct first, optional escalation),
 guards with hard integrity checks, executes only through a one-shot
 **ActionTicket**, then re-observes, diffs, and verifies.
 
@@ -23,15 +23,15 @@ graph is a bug.
 
 ```rust
 use hyper_use_agent::AgentBuilder;
-use hyper_use_policy::PuaPolicy;
+use hyper_use_policy::InstinctPolicy;
 
-let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
     .max_steps(60)
     .build("Click Sign in");
 let outcome = agent.run();
 ```
 
-PUA decides among finite ActionSpace candidates. Guard + ActionTicket bind
+Instinct decides among finite ActionSpace candidates. Guard + ActionTicket bind
 execution. MCP is an optional adapter, not required to run the loop.
 
 ## Product loop
@@ -43,7 +43,7 @@ Hyper-Use Agent
   ↓
 observe → ActionSpace
   ↓
-policy (PUA → optional escalation)
+policy (Instinct → optional escalation)
   ↓
 guard (hard gates) → ActionTicket
   ↓
@@ -58,11 +58,11 @@ next turn (or DONE / BLOCKED)
 
 | Layer | Owns |
 |---|---|
-| **PUA** | HOW a finite choice is made (scores, threshold/margin, abstain) |
+| **Instinct** | HOW a finite choice is made (scores, threshold/margin, abstain) |
 | **Hyper-Use policy** | WHAT browser evidence each candidate gets; ActionSpace construction |
 | **Hyper-Use guard** | Physical/logical executability; ticket issue |
 | **Hyper-Use executor** | Exact ticketed action or nothing |
-| **TextResolver** | Arbitrary `TYPE_TEXT` strings (not PUA); optional goal-grounded model resolver behind `model-text` (ADR 0006) |
+| **TextResolver** | Arbitrary `TYPE_TEXT` strings (not Instinct); optional goal-grounded model resolver behind `model-text` (ADR 0006) |
 | **Host / MCP** | Optional adapter; must not bypass tickets |
 
 ## What Hyper-Use deliberately does not do
@@ -70,7 +70,7 @@ next turn (or DONE / BLOCKED)
 - Depend on JEV / TypeSafe in the core path (optional escalation feature only).
 - Ship HGRA as the default matcher / policy.
 - Accept model-generated CSS selectors or JavaScript for execution.
-- Silently turn PUA abstention into "top candidate wins".
+- Silently turn Instinct abstention into "top candidate wins".
 - Treat page content as trusted instructions.
 
 ## ActionTicket (enforcement boundary)
@@ -84,17 +84,17 @@ snapshots (`verify_delta`). See `bench/arms/B01.md` for the interceptor ablation
 ## Matchers / policy (HGRA frozen)
 
 - Interim locate/guard ranking: `WeightedMatcher`.
-- Target policy: **PUA** (`hexuria/pua`, pin by rev) once Phase 2 lands.
+- Default policy: **Instinct** (`hexuria/instinct`, pin by rev).
 - **HGRA is frozen** under `experiments/hgra/`. No matcher PRs during the pivot.
 
 ## Acceptance bar
 
 - All executed targets originate from the current observed ActionSpace.
 - Hidden / disabled / covered / background-modal / stale-ticket targets never execute.
-- PUA abstention is preserved; escalation is explicit.
+- Instinct abstention is preserved; escalation is explicit.
 - Normal tasks: low false-refusal. Adversarial: refuse, never wrong-action.
 - No-effect and wrong postcondition: detect on verify.
-- System runs without MCP and without Jev when the task fits PUA + TextResolver.
+- System runs without MCP and without Jev when the task fits Instinct + TextResolver.
 
 ## Historical notes
 

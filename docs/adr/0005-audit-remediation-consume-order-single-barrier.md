@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-06 (Asia/Manila)
-- Baseline: `87ffc2d` (impeccable-rust audit of the Agent + PUA + ticket path)
+- Baseline: `87ffc2d` (impeccable-rust audit of the Agent + Instinct + ticket path)
 - Relates: ADR 0001, ADR 0003 §1 / §7, ADR 0004 §2
 
 ## Context

@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::element_state::ElementState;
 use crate::error::CoreError;
 use crate::id::RegionId;
 use crate::manifold::InteractionManifold;
@@ -135,6 +136,7 @@ pub struct ObservedAction {
     role: Option<Role>,
     /// Region fingerprint bits at observation time (0 for controls).
     target_fingerprint: u64,
+    state: ElementState,
 }
 
 impl ObservedAction {
@@ -155,6 +157,9 @@ impl ObservedAction {
     }
     pub fn target_fingerprint(&self) -> u64 {
         self.target_fingerprint
+    }
+    pub fn state(&self) -> &ElementState {
+        &self.state
     }
 }
 
@@ -284,6 +289,7 @@ fn target_action(kind: ActionKind, region: &InteractionRegion) -> ObservedAction
         label: region.label().to_owned(),
         role: Some(region.role()),
         target_fingerprint: region.fingerprint().bits(),
+        state: region.state().clone(),
     }
 }
 
@@ -303,6 +309,7 @@ fn control_action(kind: ActionKind) -> ObservedAction {
         label,
         role: None,
         target_fingerprint: 0,
+        state: ElementState::default(),
     }
 }
 
@@ -310,6 +317,9 @@ fn control_action(kind: ActionKind) -> ObservedAction {
 mod tests {
     use super::*;
     use crate::parse_fixture;
+    use crate::{
+        InteractionManifold, Rect, RegionFlags, RegionParts, Role, SourceMask, UnitInterval,
+    };
 
     #[test]
     fn action_kind_round_trips() {
@@ -427,5 +437,42 @@ mod tests {
         assert_eq!(space.len(), 5);
         assert!(space.contains_kind(ActionKind::Done));
         assert!(!space.contains_kind(ActionKind::Click));
+    }
+
+    #[test]
+    fn target_actions_copy_state_and_controls_have_none() {
+        let state = ElementState {
+            value: Some("Ana".to_owned()),
+            selected: Some("UTC".to_owned()),
+            options: vec!["UTC".to_owned()],
+            ..ElementState::default()
+        };
+        let region = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("field").unwrap(),
+            role: Role::ComboBox,
+            label: "Name".to_owned(),
+            rect: Rect::try_new(10.0, 10.0, 80.0, 24.0).unwrap(),
+            actions: vec![Action::Type, Action::Select],
+            parent: None,
+            sources: SourceMask::DOM,
+            flags: RegionFlags::none(),
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap()
+        .with_state(state.clone());
+        let manifold = InteractionManifold::try_new(
+            Rect::try_viewport(0.0, 0.0, 100.0, 100.0).unwrap(),
+            vec![region],
+            0,
+        )
+        .unwrap();
+        let space = ActionSpace::from_manifold(&manifold);
+
+        assert_eq!(space.get_str("TYPE_TEXT:field").unwrap().state(), &state);
+        assert_eq!(space.get_str("SELECT:field").unwrap().state(), &state);
+        assert!(space
+            .actions()
+            .filter(|action| action.kind().is_control())
+            .all(|action| action.state().is_empty()));
     }
 }

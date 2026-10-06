@@ -11,7 +11,7 @@
 
 use aui_agent::{AgentBuilder, AgentOutcome, BrowserRuntime, VerificationKind};
 use aui_browser::{BrowserSession, WebSocketTransport};
-use aui_core::ActionKind;
+use aui_core::{ActionKind, ActionSpace};
 use aui_policy::InstinctPolicy;
 
 const PAGE: &str = "<!doctype html><title>HU live smoke</title><h1>Flight search</h1>\
@@ -238,5 +238,71 @@ fn autocomplete_ignores_unrelated_visible_options_on_live_chrome() {
         assert_eq!(steps[0].kind, ActionKind::TypeText);
         assert_eq!(steps[1].kind, ActionKind::Click);
         assert_eq!(steps[1].label, "Manila");
+    }
+}
+
+const ELEMENT_STATE_PAGE: &str = r#"<!doctype html><title>HU element state</title>
+<label>Name <input aria-label=Name value=Ana></label>
+<label>Subscribe <input type=checkbox aria-label=Subscribe checked></label>
+<label>Time zone <select aria-label="Time zone">
+  <option>UTC</option><option>Asia/Manila</option><option disabled>Mars</option>
+</select></label>
+<label>Password <input type=password aria-label=Password value=hunter2></label>"#;
+
+fn element_state_data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in ELEMENT_STATE_PAGE.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn live_observe_captures_control_state_without_password_values() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&element_state_data_url()).unwrap();
+    session.settle();
+
+    let manifold = session.observe().unwrap().clone();
+    let space = ActionSpace::from_manifold(&manifold);
+    let name = space
+        .targets_of(ActionKind::TypeText)
+        .find(|action| action.label() == "Name")
+        .unwrap();
+    assert_eq!(name.state().value.as_deref(), Some("Ana"));
+    let subscribe = space
+        .targets_of(ActionKind::Click)
+        .find(|action| action.label() == "Subscribe")
+        .unwrap();
+    assert_eq!(subscribe.state().checked, Some(true));
+    let time_zone = space
+        .targets_of(ActionKind::Select)
+        .find(|action| action.label() == "Time zone")
+        .unwrap();
+    assert_eq!(
+        time_zone.state().options,
+        vec!["UTC".to_owned(), "Asia/Manila".to_owned()]
+    );
+    assert_eq!(time_zone.state().selected.as_deref(), Some("UTC"));
+    let password = space
+        .targets_of(ActionKind::TypeText)
+        .find(|action| action.label() == "Password")
+        .unwrap();
+    assert!(password.state().value.is_none());
+    for action in space.actions() {
+        let state = action.state();
+        assert!(state
+            .value
+            .iter()
+            .chain(state.selected.iter())
+            .chain(state.options.iter())
+            .all(|value| !value.contains("hunter2")));
     }
 }

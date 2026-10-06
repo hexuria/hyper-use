@@ -242,6 +242,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         // Hit-tests run after history so scripted CDP fixtures can append
         // `DOM.getNodeForLocation` after `Page.getNavigationHistory`.
         self.apply_hit_test_occlusion(&mut manifold, &bindings, &dom, compact.as_ref())?;
+        attach_element_state(&mut manifold, &bindings, &dom, compact.as_ref());
         self.bindings = bindings;
         self.page = Some(page);
         self.manifold = Some(manifold);
@@ -724,6 +725,29 @@ fn owns_hit(hit: i64, target: i64, parent_of: &BTreeMap<i64, i64>) -> bool {
             Some(&parent) => current = parent,
             None => return false,
         }
+    }
+}
+
+fn attach_element_state(
+    manifold: &mut InteractionManifold,
+    bindings: &BTreeMap<RegionId, NodeBinding>,
+    dom: &extract::DomDocument,
+    compact: Option<&compact::CompactSnapshot>,
+) {
+    let Some(compact) = compact else {
+        return;
+    };
+    let updated: Vec<_> = manifold
+        .regions()
+        .filter_map(|region| {
+            let backend = bindings.get(region.id())?.backend_node_id?;
+            let key = dom.hu_k_of_backend.get(&backend)?;
+            let state = compact.node(*key)?.state.clone();
+            (!state.is_empty()).then(|| region.clone().with_state(state))
+        })
+        .collect();
+    for region in updated {
+        manifold.replace(region);
     }
 }
 

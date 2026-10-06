@@ -75,7 +75,10 @@ crate.
 >    10 polls at 25 ms intervals and reads its `aria-controls` / `aria-owns`
 >    popup when present. The document fallback ends early only after visible
 >    options change from the first poll and stabilize; input is never
->    re-dispatched. Do not claim cross-origin iframe or closed-shadow coverage.
+>    re-dispatched. Observe also records control state (value, checked,
+>    expanded, select options) as evidence only: it is not in the region
+>    fingerprint, and password values are never read. Do not claim cross-origin
+>    iframe or closed-shadow coverage.
 > 8. **Remote escalation is explicit and closed.** Feature `remote`;
 >    reply is exactly a choice id + kind from the offered menu or abstain.
 >    Selectors, coordinates, scripts, extra fields → hard error.

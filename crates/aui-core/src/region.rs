@@ -1,3 +1,4 @@
+use crate::element_state::ElementState;
 use crate::error::CoreError;
 use crate::id::{RegionId, StateFingerprint, UnitInterval};
 use crate::rect::Rect;
@@ -19,6 +20,7 @@ pub struct InteractionRegion {
     flags: RegionFlags,
     temporal_stability: UnitInterval,
     fingerprint: StateFingerprint,
+    state: ElementState,
 }
 
 /// Owned inputs for [`InteractionRegion::try_new`].
@@ -51,6 +53,7 @@ impl InteractionRegion {
             flags: parts.flags,
             temporal_stability: parts.temporal_stability,
             fingerprint,
+            state: ElementState::default(),
         })
     }
 
@@ -83,6 +86,13 @@ impl InteractionRegion {
     }
     pub fn fingerprint(&self) -> StateFingerprint {
         self.fingerprint
+    }
+    pub fn state(&self) -> &ElementState {
+        &self.state
+    }
+    pub fn with_state(mut self, state: ElementState) -> Self {
+        self.state = state;
+        self
     }
 
     /// The owned inputs that rebuild this region. The fingerprint is derived

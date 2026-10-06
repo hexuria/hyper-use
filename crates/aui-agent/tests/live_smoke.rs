@@ -137,7 +137,7 @@ city.addEventListener('input', () => setTimeout(() => {
     document.getElementById('out').textContent = 'picked';
   });
   document.getElementById('suggestions').replaceChildren(option);
-}, 80));
+}, 250));
 </script>
 "#;
 

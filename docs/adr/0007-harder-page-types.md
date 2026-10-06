@@ -29,9 +29,9 @@ ActionSpace could not offer TYPE on a combobox or CLICK on a suggestion.
    inventory.
 4. **Autocomplete.** TYPE into combobox → re-observe → ticketed CLICK /
    SELECT on an option. Multi-step `then` remains the planner; tickets still
-   revalidate on a fresh observe. After ticketed TYPE, a read-only option
-   signature poll runs at most 10 times at 25 ms intervals, ends early when
-   nonempty results stabilize, and never re-dispatches input.
+   revalidate on a fresh observe. After ticketed TYPE into a combobox, a
+   read-only option signature poll runs at most 10 times at 25 ms intervals,
+   ends early when nonempty results stabilize, and never re-dispatches input.
 5. **Fixtures.** `ScriptBuilder` / `DomSpec` emit `shadowRoots` and
    `contentDocument`; box-model scripting matches kept-only extract order.
 

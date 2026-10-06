@@ -1,15 +1,15 @@
-"""Shared orchestrator for the combined arms A7 (Luna + JEV + hyper-use + CUA) and
-A8 (Luna + JEV + hyper-use + Browser Use). Protocol: ``bench/arms/COMBO.md``.
+"""Shared orchestrator for the combined arms A7 (Luna + JEV + ultra-instinct + CUA) and
+A8 (Luna + JEV + ultra-instinct + Browser Use). Protocol: ``bench/arms/COMBO.md``.
 
 Roles, one owner each:
 - Luna (GPT 6 Luna, OpenCodex) is the planner: a tool-calling loop that states intents.
-- hyper-use (``hyper-use mcp`` over CDP) observes and locates; this harness CDP-clicks after a confidence-gated pick (product ``act``/``guard`` never clicks).
+- ultra-instinct (``ultra-instinct mcp`` over CDP) observes and locates; this harness CDP-clicks after a confidence-gated pick (product ``act``/``guard`` never clicks).
 - JEV (TypeSafe systemone) picks one candidate id whenever the deterministic ranker
-  cannot separate the top two (hyper-use's own act gate: top >= 0.55 and margin >= 0.05),
+  cannot separate the top two (ultra-instinct's own act gate: top >= 0.55 and margin >= 0.05),
   and for executor fallbacks when the label match is not clear. JEV always has a NONE option.
-- The executor (CUA driver for A7, Browser Use for A8) does what hyper-use cannot:
+- The executor (CUA driver for A7, Browser Use for A8) does what ultra-instinct cannot:
   type, select, scroll, a read of the page in its own format, and a gated fallback
-  click that is only allowed right after a hyper-use press failed.
+  click that is only allowed right after a ultra-instinct press failed.
 
 Only the standard library, httpx, and websocket-client (both in the main bench env).
 """
@@ -29,16 +29,16 @@ import httpx
 from arms.common import Trace, goal_text, tool_loop
 from arms.mcp_stdio import McpStdio
 
-GATE_TOP = 0.55       # hyper-use act gate (crates/hyper-use-executor): top confidence floor
+GATE_TOP = 0.55       # ultra-instinct act gate (crates/ultra-instinct-executor): top confidence floor
 GATE_MARGIN = 0.05    # and margin over the runner-up
 PLAUSIBLE = 0.5       # a locate text miss is capped at 0.45, so >= 0.5 means some text matched
 MAX_JEV_CANDS = 24
 NOISE_ROLES = {"generic", "image", "statictext", "none", "presentation", "img", "text", "paragraph", "group"}
 
 SYSTEM = (
-    "You control a web browser through a combined toolset. hyper-use is the primary engine: observe lists page "
+    "You control a web browser through a combined toolset. ultra-instinct is the primary engine: observe lists page "
     "regions, press clicks one control by describing it (the engine ranks matches, a picker model breaks ties using "
-    "the goal, and a safety gate refuses unclear clicks). hyper-use cannot type or choose dropdown values, so "
+    "the goal, and a safety gate refuses unclear clicks). ultra-instinct cannot type or choose dropdown values, so "
     "type_text and select_option run on a second browser executor ({executor}). read_page shows the page through "
     "that executor (values, checked states, iframes) when observe is not detailed enough. fallback_click uses the "
     "executor to click, and is only allowed right after a press failed (no match, refused, or no visible effect). "
@@ -48,14 +48,14 @@ SYSTEM = (
     "done. If it cannot be done on this site, call give_up and change nothing."
 )
 
-# hyper-use's role vocabulary (crates/hyper-use-core/src/vocab.rs); any other role is an UnknownRole error.
+# ultra-instinct's role vocabulary (crates/ultra-instinct-core/src/vocab.rs); any other role is an UnknownRole error.
 ROLE_ENUM = ["button", "link", "checkbox", "menuitem", "tab", "text_field", "slider", "generic", "image", "heading", "navigation", "text"]
 TOOLS = [
     {"type": "function", "function": {
-        "name": "observe", "description": "hyper-use: list the page's regions (id, role, label, state).",
+        "name": "observe", "description": "ultra-instinct: list the page's regions (id, role, label, state).",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
-        "name": "press", "description": "hyper-use: click one control. target is its visible label. context names the row/card/panel it is in when labels repeat.",
+        "name": "press", "description": "ultra-instinct: click one control. target is its visible label. context names the row/card/panel it is in when labels repeat.",
         "parameters": {"type": "object", "properties": {
             "target": {"type": "string"}, "context": {"type": "string"}, "role": {"type": "string", "enum": ROLE_ENUM},
             "position": {"type": "string", "enum": ["left", "right", "top", "bottom", "center"]}}, "required": ["target"]}}},
@@ -74,7 +74,7 @@ TOOLS = [
         "name": "read_page", "description": "Executor: read the page in the executor's own format (values, checked states, iframes).",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
-        "name": "fallback_click", "description": "Executor: click a control hyper-use could not press. Only allowed right after a failed press.",
+        "name": "fallback_click", "description": "Executor: click a control ultra-instinct could not press. Only allowed right after a failed press.",
         "parameters": {"type": "object", "properties": {"target": {"type": "string"}, "context": {"type": "string"}}, "required": ["target"]}}},
 ]
 READ_TOOLS = frozenset({"observe", "read_page"})
@@ -240,7 +240,7 @@ class Jev:
         return choice, probs, conf
 
 
-# ---------------------------------------------------------------- hyper-use
+# ---------------------------------------------------------------- ultra-instinct
 
 def compact_observe(raw: str, limit: int = 220) -> str:
     try:
@@ -273,14 +273,14 @@ class Combo:
         self.cdp = cdp_http
         self.goal = goal_text(spec)
         self.jev = Jev(spec, trace)
-        # hyper-use gets no TypeSafe key: JEV is called by this orchestrator only, so every JEV call is counted here.
-        self.hu = McpStdio([str(Path(spec["root"]) / "target/release/hyper-use"), "mcp"],
+        # ultra-instinct gets no TypeSafe key: JEV is called by this orchestrator only, so every JEV call is counted here.
+        self.hu = McpStdio([str(Path(spec["root"]) / "target/release/ultra-instinct"), "mcp"],
                            env={k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"})
         self.last_press_failed: str | None = None
-        self.stats = {"press_hyper_use": 0, "press_jev": 0, "press_refused": 0, "press_no_match": 0,
+        self.stats = {"press_ultra_instinct": 0, "press_jev": 0, "press_refused": 0, "press_no_match": 0,
                       "fallback": 0, "type": 0, "select": 0}
 
-    # -- hyper-use calls
+    # -- ultra-instinct calls
     def hcall(self, name: str, args: dict) -> dict | str:
         raw = self.hu.call(name, {**args, "cdp": self.cdp})
         try:
@@ -322,19 +322,19 @@ class Combo:
             loc = self.hcall("locate", q)
         if not isinstance(loc, dict):
             self.last_press_failed = target
-            return f"press failed: hyper-use locate error {str(loc)[:300]}"
+            return f"press failed: ultra-instinct locate error {str(loc)[:300]}"
         cands = loc.get("candidates") or []
         plaus = [c for c in cands if c.get("confidence", 0) >= PLAUSIBLE][:8]
         if not plaus:
             self.stats["press_no_match"] += 1
             self.last_press_failed = target
             top = ", ".join(f"{c.get('id')} {c.get('role')} {json.dumps(c.get('label'))} {c.get('confidence')}" for c in cands[:5])
-            return (f"NO MATCH: hyper-use found no region labelled like {json.dumps(target)} (text misses score 0.45). "
-                    f"Closest: {top}. Nothing was clicked. If the control exists but hyper-use cannot see it (iframe, canvas), "
+            return (f"NO MATCH: ultra-instinct found no region labelled like {json.dumps(target)} (text misses score 0.45). "
+                    f"Closest: {top}. Nothing was clicked. If the control exists but ultra-instinct cannot see it (iframe, canvas), "
                     f"fallback_click is now allowed; if it does not exist, give_up.")
         top, second = plaus[0], (plaus[1] if len(plaus) > 1 else None)
         clear = top["confidence"] >= GATE_TOP and (second is None or top["confidence"] - second["confidence"] >= GATE_MARGIN)
-        picker = "hyper-use"
+        picker = "ultra-instinct"
         if clear and not context:
             region, conf = top["id"], top["confidence"]
             runner = {"id": second["id"], "confidence": second["confidence"]} if second else (
@@ -382,7 +382,7 @@ class Combo:
             if reason == "front-layer":
                 self.stats["press_refused"] += 1
                 self.last_press_failed = target
-                return (f"REFUSED by hyper-use gate ({picker} pick {region}, confidence {act_args['confidence']}): "
+                return (f"REFUSED by ultra-instinct gate ({picker} pick {region}, confidence {act_args['confidence']}): "
                         f"{{\"reason\": \"front-layer\"}}. Nothing was clicked.\n" + self.observe_text())
             # proposed-not-top / low-confidence / etc.: host already disambiguated via
             # JEV or a clear locate; click the pick (pre-firewall act semantics).
@@ -422,7 +422,7 @@ class Combo:
             ast = (at.get("state") if isinstance(at.get("state"), dict) else {}) or {}
             if bst != ast:
                 changed.setdefault("changed", [region])
-        self.stats["press_" + ("jev" if picker == "jev" else "hyper_use")] += 1
+        self.stats["press_" + ("jev" if picker == "jev" else "ultra_instinct")] += 1
         no_effect = not added_ids and not removed_ids and not changed
         self.last_press_failed = target if no_effect else None
         return (f"PRESSED {region} ({picker} pick, confidence {act_args['confidence']}). delta: +{len(added_ids)} -{len(removed_ids)} regions"
@@ -470,7 +470,7 @@ class Combo:
 
     def fallback_click(self, args: dict) -> str:
         if not self.last_press_failed:
-            return "NOT ALLOWED: fallback_click is only for a control hyper-use could not press. Call press first."
+            return "NOT ALLOWED: fallback_click is only for a control ultra-instinct could not press. Call press first."
         el, how = self.pick_executor("click", str(args.get("target", "")), str(args.get("context", "") or ""), self.ex.elements("click"))
         if el is None:
             return f"NOT CLICKED: {how}. Nothing changed."
@@ -497,7 +497,7 @@ class Combo:
 
     def run(self) -> None:
         system = SYSTEM.format(executor=self.ex.name)
-        first = f"Task: {self.goal}\n\nCurrent page (hyper-use observe):\n{self.observe_text()}"
+        first = f"Task: {self.goal}\n\nCurrent page (ultra-instinct observe):\n{self.observe_text()}"
         try:
             tool_loop(self.spec, self.trace, system, first, TOOLS, self.execute, observe_tools=READ_TOOLS)
         finally:

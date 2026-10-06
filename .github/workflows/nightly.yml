@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: No unsafe in hyper-use sources
+      - name: No unsafe in ultra-instinct sources
         run: |
           # The workspace lint forbids unsafe_code; this keeps the Miri skip honest if a crate ever
           # opts out. Any hit means Miri must be added (AGENTS.md anti-drift #10).

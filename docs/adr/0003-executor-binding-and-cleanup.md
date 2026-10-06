@@ -17,14 +17,14 @@ still exported.
 
 ## Decision
 
-1. **One executor boundary.** `hyper_use_agent::execute_ticketed(browser,
+1. **One executor boundary.** `ultra_instinct_agent::execute_ticketed(browser,
    ledger, ticket, input)` is the only path from a ticket to page input. In
    order: ledger (one-shot) → input kind must equal `ticket.action` →
    **fresh observe** → `revalidate` (world fingerprint + target role / label /
    fingerprint) → hard gate on the fresh region → mark consumed **before**
    dispatch → dispatch to `ticket.target_id`. `BrowserRuntime::dispatch` is raw
    and documented as executor-only.
-2. **Hard gate, not ranking, on the agent path.** `hyper_use_guard::gate`
+2. **Hard gate, not ranking, on the agent path.** `ultra_instinct_guard::gate`
    checks action claim, disabled, hidden / zero-area, occluded, front layer
    (behind an open dialog), offscreen, and issues an `ActionTicket` whose
    `action` is the real one (Click / Type / Select). No matcher, no float
@@ -71,13 +71,13 @@ still exported.
      single intent is satisfied → `DONE`. Applies to scroll / wait controls too.
    - Fixed a panic in `DeterministicTextResolver` on `type into X`.
 9. **Remote escalation (feature `remote`).** `RemotePolicy<T: RemoteTransport>`
-   with a Hyper-Use-owned JSON wire: request = goal + offered actions +
+   with a Ultra-Instinct-owned JSON wire: request = goal + offered actions +
    history; reply = exactly `{"choice":{"id","kind"}}` or `{"abstain"}`. Off-menu
    ids, kind mismatches, any extra field (selector, coordinates, script), and
    malformed JSON are hard errors. No HTTP stack, no Jev / TypeSafe dependency:
    the consumer supplies the transport. `UnconfiguredRemote` always abstains;
    `ScriptedRemote` replays replies for tests.
-10. **CLI.** `hyper-use run --goal … (--cdp [url] [--url page] | --fixture
+10. **CLI.** `ultra-instinct run --goal … (--cdp [url] [--url page] | --fixture
     replay.cdp.json | --fixture page.manifold)`. A CDP replay runs the full
     loop offline; a static manifold is a predict-only dry run.
 
@@ -86,7 +86,7 @@ still exported.
 Deleted (no constructor or reader anywhere in the workspace, MCP, CLI, bench,
 or examples):
 
-- `hyper-use-protocol`: `ComputerTask`, `ComputerResult`, `Intent`,
+- `ultra-instinct-protocol`: `ComputerTask`, `ComputerResult`, `Intent`,
   `Constraints`, `ExpectedOutcome`, `FallbackReason`, `ReportedExecutor`,
   `ProtocolError::EmptyExpectedText`, and the unused `Request` enum.
   `contract.rs` → `values.rs` keeping `MatcherConfidence`, `ProtocolError`,
@@ -94,12 +94,12 @@ or examples):
 
 Deprecated (still reachable, kept to avoid breaking callers):
 
-- `hyper_use_guard::consume_ticket` — not one-shot; use
+- `ultra_instinct_guard::consume_ticket` — not one-shot; use
   `consume_ticket_once` or `execute_ticketed`.
-- `hyper_use_mcp::TOOL_ACT` / MCP + CLI `act` — alias of guard that never
+- `ultra_instinct_mcp::TOOL_ACT` / MCP + CLI `act` — alias of guard that never
   clicks; the historical bench arms A5/A6 still call it over MCP.
 
-Not deleted (still reachable): `hyper-use-resonance` Weighted matcher and the
+Not deleted (still reachable): `ultra-instinct-resonance` Weighted matcher and the
 float guard thresholds — they back the MCP / CLI `guard`, `locate`, combo
 bench, and world-context tests. The agent path no longer touches them.
 `LoopPhase` / `LOOP_ORDER` — MCP `tool_for_phase` maps them.

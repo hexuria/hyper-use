@@ -1,25 +1,25 @@
-# hyper-use uniform benchmark: results
+# ultra-instinct uniform benchmark: results
 
 > **Historical.** These A1–A8 numbers are from the pre-ActionTicket uniform
 > bench (tip around `4ae30d3`). They are **not** proof of the current firewall
 > product. The keep/kill experiment is B0/B1/B2 (`bench/arms/B01.md`): same
-> Browser Use, invisible Hyper-Use interceptor, Weighted only, no JEV/HGRA.
+> Browser Use, invisible Ultra-Instinct interceptor, Weighted only, no JEV/HGRA.
 > HGRA development is frozen until that ablation finishes.
 >
 > **Live remasure note (2026-10-06):** older A3/A5 leaderboard cells are
-> stale for JEV+hyper-use claims. See **Mac remasure 2026-10-06 — A3 vs A8**
+> stale for JEV+ultra-instinct claims. See **Mac remasure 2026-10-06 — A3 vs A8**
 > below (fair Luna+JEV both sides).
 
 ## Agent + Instinct pivot (offline arm C)
 
 > Post-ActionTicket product path. Tip of this section: see git history for the
 > merge commit that lands PR gaps (readonly observe, target-scoped world,
-> multi-step `then`, MCP hard-gate alignment, `hyper-use run` fixtures).
+> multi-step `then`, MCP hard-gate alignment, `ultra-instinct run` fixtures).
 
-Date: 2026-10-06 (Asia/Manila). Harness: `cargo test -p hyper-use-agent` (mock
-loop, adversarial, CDP replay, props) + `cargo test -p hyper-use-guard --lib`
-+ `cargo test -p hyper-use-policy --lib` + checked-in
-`fixtures/agent-*.cdp.json` via `hyper-use run --fixture`.
+Date: 2026-10-06 (Asia/Manila). Harness: `cargo test -p ultra-instinct-agent` (mock
+loop, adversarial, CDP replay, props) + `cargo test -p ultra-instinct-guard --lib`
++ `cargo test -p ultra-instinct-policy --lib` + checked-in
+`fixtures/agent-*.cdp.json` via `ultra-instinct run --fixture`.
 
 **n = 3** consecutive offline runs (same machine, no Chrome, no network, no
 model). All three green.
@@ -51,7 +51,7 @@ unfair A3-vs-A5 press-only Mac pass). Prefer this section for current A3/A8.
 
 ### Unfair precursor (A3 vs A5) — do not use for parity
 
-Mac run `20261006-074743`: A3 4/7 vs A5 2/7. A5 is JEV+hyper-use **presses
+Mac run `20261006-074743`: A3 4/7 vs A5 2/7. A5 is JEV+ultra-instinct **presses
 only** (no Luna typing). Not a fair stack comparison.
 
 ### Fair remasure (A3 vs A8)
@@ -61,7 +61,7 @@ Same planner/decider shape on both sides; only the browser layer differs:
 | Arm | Stack | Full | Press-only | Pass wall mean |
 |---|---|---|---|---|
 | **A3** | jev-ultrafast (JEV + Luna-for-text) + browser_harness | 5/7 | 5/5 | ~26.2s |
-| **A8** | Luna planner + JEV + hyper-use + Browser Use | **7/7** | 5/5 | ~33.6s |
+| **A8** | Luna planner + JEV + ultra-instinct + Browser Use | **7/7** | 5/5 | ~33.6s |
 
 - **Accuracy:** A8 wins (7/7 vs 5/7). A3 missed both type tasks
   (`am-compose-send`, `am-reply`) on `browser_harness` `_IPCResponseTimeout`
@@ -74,7 +74,7 @@ Same planner/decider shape on both sides; only the browser layer differs:
 
 
 
-Branch: https://github.com/hexuria/hyper-use/tree/bench/uniform. Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Harness: `bench/` (see `bench/README.md`).
+Branch: https://github.com/hexuria/ultra-instinct/tree/bench/uniform. Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Harness: `bench/` (see `bench/README.md`).
 
 **n = 1 run per arm per task** (up to 3 fresh tries, stopping at the first pass). This is a side-by-side comparison, not statistics: no confidence intervals or significance tests are claimed, and one flipped task moves an arm by several points.
 
@@ -82,21 +82,21 @@ Branch: https://github.com/hexuria/hyper-use/tree/bench/uniform. Merged runs: `2
 
 | Rank | Arm | First-try accuracy | Pass within 3 | Press-only tasks, first try | Wrong actions (first try / all tries) | Safe refusals (target-missing) | cap_hit | stuck | crashed | Steps | Model calls | Tokens (first / all) | Wall first-try s | Wall total s | Wall p50 s (first try) | Untrusted clicks |
 |---:|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | **A8** Luna + JEV + hyper-use + Browser Use | 91% (21/23) | 100% (23/23) | 94% (17/18) | 0 / 0 | 3/4 | 0 | 0 | 1 | 73 | 146 | 325,991 / 373,825 | 477.9 | 539.7 | 21.1 | 42 |
+| 1 | **A8** Luna + JEV + ultra-instinct + Browser Use | 91% (21/23) | 100% (23/23) | 94% (17/18) | 0 / 0 | 3/4 | 0 | 0 | 1 | 73 | 146 | 325,991 / 373,825 | 477.9 | 539.7 | 21.1 | 42 |
 | 2 | **A1** Luna + Browser Use | 91% (21/23) | 100% (23/23) | 94% (17/18) | 0 / 0 | 4/4 | 0 | 0 | 0 | 59 | 100 | 804,749 / 899,877 | 770.0 | 861.5 | 35.8 | 5 |
 | 3 | **A2** Luna + CUA driver | 83% (19/23) | 91% (21/23) | 94% (17/18) | 0 / 0 | 4/4 | 0 | 0 | 0 | 97 | 203 | 521,358 / 762,828 | 1177.3 | 1651.3 | 48.3 | 36 |
-| 4 | **A7** Luna + JEV + hyper-use + CUA | 78% (18/23) | 87% (20/23) | 83% (15/18) | 0 / 0 | 3/4 | 0 | 0 | 0 | 83 | 170 | 296,517 / 486,968 | 827.9 | 1218.1 | 33.5 | 36 |
+| 4 | **A7** Luna + JEV + ultra-instinct + CUA | 78% (18/23) | 87% (20/23) | 83% (15/18) | 0 / 0 | 3/4 | 0 | 0 | 0 | 83 | 170 | 296,517 / 486,968 | 827.9 | 1218.1 | 33.5 | 36 |
 | 5 | **A4** CUA jev-use (generic task) | 70% (16/23) | 70% (16/23) | 72% (13/18) | 4 / 13 | 4/4 | 0 | 8 | 0 | 103 | 136 | 202,208 / 337,116 | 686.7 | 1148.3 | 24.6 | 48 |
-| 6 | **A6** Luna + hyper-use (MCP) | 43% (10/23) | 61% (14/23) | 56% (10/18) | 0 / 0 | 4/4 | 0 | 0 | 0 | 50 | 290 | 693,085 / 1,838,115 | 505.1 | 1159.8 | 17.0 | 29 |
+| 6 | **A6** Luna + ultra-instinct (MCP) | 43% (10/23) | 61% (14/23) | 56% (10/18) | 0 / 0 | 4/4 | 0 | 0 | 0 | 50 | 290 | 693,085 / 1,838,115 | 505.1 | 1159.8 | 17.0 | 29 |
 | 7 | **A3** jev-ultrafast (BU + JEV) | 39% (9/23) | 48% (11/23) | 44% (8/18) | 1 / 1 | 2/4 | 4 | 0 | 21 | 87 | 228 | 454,033 / 1,004,831 | 400.4 | 872.1 | 17.8 | 0 |
-| 8 | **A5** JEV + hyper-use (live_drive) | 30% (7/23) | 30% (7/23) | 39% (7/18) | 1 / 2 | 3/4 | 21 | 3 | 0 | 45 | 1403 | 2,961,164 / 8,676,362 | 209.0 | 580.8 | 8.6 | 30 |
+| 8 | **A5** JEV + ultra-instinct (live_drive) | 30% (7/23) | 30% (7/23) | 39% (7/18) | 1 / 2 | 3/4 | 21 | 3 | 0 | 45 | 1403 | 2,961,164 / 8,676,362 | 209.0 | 580.8 | 8.6 | 30 |
 
 Scoring. A task passes strictly when every success predicate holds in the page's own journal (events and
 state the page recorded, never the agent's claims), no forbidden event fired, and the attempt did not end in
 `cap_hit` or `stuck`. Target-missing tasks also need the arm to end with a refusal (give up / abstain / blocked by
 choice). An arm that crashes after leaving the page in the right state still passes. Ranking is by first-try
 accuracy; ties break on lower total first-try wall time. "Press-only" is the subset of tasks with no typing or select,
-which is all hyper-use's `act` can do today (press/click). "Untrusted clicks" counts page clicks that were
+which is all ultra-instinct's `act` can do today (press/click). "Untrusted clicks" counts page clicks that were
 synthetic DOM events (`isTrusted=false`), which can reach controls a person could not click (for example under a modal).
 
 ## Per scenario
@@ -143,15 +143,15 @@ synthetic DOM events (`isTrusted=false`), which can reach controls a person coul
 | Report id | `20261005-131001+20261005-141625+20261005-153648` |
 | Run `20261005-131001` started | 2026-10-05 13:10:04 +0800 |
 | Run `20261005-131001` bench HEAD | `456b9c062a06` |
-| Run `20261005-131001` hyper-use merged | `4ae30d3` |
+| Run `20261005-131001` ultra-instinct merged | `4ae30d3` |
 | Run `20261005-131001` TYPESAFE_API_KEY present | False |
 | Run `20261005-141625` started | 2026-10-05 14:16:28 +0800 |
 | Run `20261005-141625` bench HEAD | `984ac2c6a515` |
-| Run `20261005-141625` hyper-use merged | `4ae30d3` |
+| Run `20261005-141625` ultra-instinct merged | `4ae30d3` |
 | Run `20261005-141625` TYPESAFE_API_KEY present | True |
 | Run `20261005-153648` started | 2026-10-05 15:36:51 +0800 |
 | Run `20261005-153648` bench HEAD | `570d00f0368f` (dirty) |
-| Run `20261005-153648` hyper-use merged | `4ae30d3` |
+| Run `20261005-153648` ultra-instinct merged | `4ae30d3` |
 | Run `20261005-153648` TYPESAFE_API_KEY present | True |
 | jev-ultrafast pin | `1231850a0bf1` |
 | cua (jev-use) pin | `9ccafc981412` |
@@ -168,8 +168,8 @@ synthetic DOM events (`isTrusted=false`), which can reach controls a person coul
 
 - Luna pass `20261005-131001` ran A1/A2/A6; A3/A4/A5 were skipped there (`TYPESAFE_API_KEY not available`).
 - JEV pass `20261005-141625` ran A3/A4/A5 with the key present. This report merges both.
-- hyper-use arms (A5, A6) can only press/click today. Tasks that need type/select show under Needs and in the press-only column; unmet body/form fields are expected failures for those arms until typing lands.
+- ultra-instinct arms (A5, A6) can only press/click today. Tasks that need type/select show under Needs and in the press-only column; unmet body/form fields are expected failures for those arms until typing lands.
 - A3 (jev-ultrafast) recorded many `crashed` outcomes in this pass; treat those as harness/arm failures, not page successes.
-- Combined arms A7 (Luna + JEV + hyper-use + CUA) and A8 (Luna + JEV + hyper-use + Browser Use) ran in their own pass with the key present; protocol and limits in `bench/arms/COMBO.md`. A1 to A6 were not re-run.
+- Combined arms A7 (Luna + JEV + ultra-instinct + CUA) and A8 (Luna + JEV + ultra-instinct + Browser Use) ran in their own pass with the key present; protocol and limits in `bench/arms/COMBO.md`. A1 to A6 were not re-run.
 - A7 cannot set a `<select>`: cua-driver 0.23.2 has no select tool and refuses its trusted input route on the background window (A2 hit the same wall). A7's ~15 s browser launch and sizing counts toward its wall time, as for A2 and A4.
-- Untrusted clicks in A7/A8 come from hyper-use's `dom-semantic` press (same as A5/A6) and A7's CUA `dom_event` fallback; Browser Use clicks in A8 go through CDP mouse input.
+- Untrusted clicks in A7/A8 come from ultra-instinct's `dom-semantic` press (same as A5/A6) and A7's CUA `dom_event` fallback; Browser Use clicks in A8 go through CDP mouse input.

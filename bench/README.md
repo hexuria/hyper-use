@@ -1,4 +1,4 @@
-# Uniform hyper-use benchmark
+# Uniform ultra-instinct benchmark
 
 One harness, eight arms, six local scenario sites, the same Chrome, the same loopback
 server, the same 1280×800 viewport, and the same caps for everyone. Results:
@@ -18,15 +18,15 @@ Product-direction ablation (ActionTicket): see [`arms/B01.md`](arms/B01.md) (B0 
 | A2 | Luna tool loop over `cua-driver mcp` typed browser tools (`get_browser_state` semantic_v2, `browser_click`, `browser_type`, `browser_pointer`) on a driver-launched isolated Chrome | Luna |
 | A3 | jev-ultrafast (browser-harness + JEV), monkeypatched: JEV URL to the proxy, 1120×780 override to 1280×800, text helper = Luna | JEV + Luna for text |
 | A4 | Cua's jev-use recipe with a generic task (one candidate per actionable ref, quoted literals for typing, reobserve/abstain/done), no declared steps | JEV |
-| A5 | hyper-use `live_drive` example in bench mode (`--task-json`, `--trace`, `--max-steps`) | JEV |
-| A6 | Luna tool loop over `hyper-use mcp` (observe, locate, inspect, act, verify, diff; CDP endpoint injected) | Luna |
-| A7 | Combined: Luna plans; hyper-use observes/locates/presses over CDP on CUA's own isolated Chrome; JEV breaks ranking ties (with row context, NONE option, hyper-use's act gate on its probabilities); CUA driver types, scrolls, reads, and does a gated fallback click ([`arms/COMBO.md`](arms/COMBO.md)) | Luna + JEV |
+| A5 | ultra-instinct `live_drive` example in bench mode (`--task-json`, `--trace`, `--max-steps`) | JEV |
+| A6 | Luna tool loop over `ultra-instinct mcp` (observe, locate, inspect, act, verify, diff; CDP endpoint injected) | Luna |
+| A7 | Combined: Luna plans; ultra-instinct observes/locates/presses over CDP on CUA's own isolated Chrome; JEV breaks ranking ties (with row context, NONE option, ultra-instinct's act gate on its probabilities); CUA driver types, scrolls, reads, and does a gated fallback click ([`arms/COMBO.md`](arms/COMBO.md)) | Luna + JEV |
 | A8 | Combined: same loop on the harness Chrome; Browser Use 0.13 `Tools` (no Browser Use agent) types, selects, scrolls, reads, and does the gated fallback click by element index ([`arms/COMBO.md`](arms/COMBO.md)) | Luna + JEV |
 
 A6 shows a trimmed schema (same tools, only the knobs the default path needs, `position`
 enum from the CLI help): with the shipped MCP schemas Luna filled every optional field
 and hit `UnknownPosition`, `DimsRequireHgra`, `ConfidenceWithQuery`, `EmptyText`.
-hyper-use `act` is press/click only, so tasks tagged `needs: [type]` or `[select]` are
+ultra-instinct `act` is press/click only, so tasks tagged `needs: [type]` or `[select]` are
 out of reach for A5/A6; the leaderboard has a press-only column.
 
 ## Fairness rules
@@ -53,7 +53,7 @@ out of reach for A5/A6; the leaderboard has a press-only column.
 cd bench
 UV_PROJECT_ENVIRONMENT=.venv uv sync --python 3.12
 (cd envs/cua && UV_PROJECT_ENVIRONMENT=.venv uv sync --python 3.12)
-cargo build --release -p hyper-use-cli && cargo build --release -p hyper-use-cli --features jev --example live_drive
+cargo build --release -p ultra-instinct-cli && cargo build --release -p ultra-instinct-cli --features jev --example live_drive
 # vendor pins (gitignored): see RESULTS.md manifest
 bench/bench run --mock --arms mock-oracle,mock-saboteur     # no keys: validates pages, checkers, harness
 bench/bench run --config bench/bench.toml --seed 42         # the real run

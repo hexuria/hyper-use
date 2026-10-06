@@ -1,17 +1,17 @@
-# hyper-use
+# ultra-instinct
 
-The product, crates, and binary are `hyper-use`. HGRA is an experimental
+The product, crates, and binary are `ultra-instinct`. HGRA is an experimental
 matcher frozen under `experiments/hgra/`. A crate or binary named `hgra` on
 the product path is a bug.
 
-**Product:** Hyper-Use is a **Rust-native browser-agent runtime**
+**Product:** Ultra-Instinct is a **Rust-native browser-agent runtime**
 ([`docs/PRD.md`](docs/PRD.md), [ADR 0001](docs/adr/0001-agent-runtime-pivot.md)).
 The library `Agent` **owns the loop**: it observes the page, builds a finite
 `ActionSpace`, lets a policy choose (Instinct first, optional explicit escalation),
 hard-gates the choice, executes only through a one-shot `ActionTicket`, then
 re-observes, diffs, and verifies.
 
-MCP (`hyper-use mcp`) is an **optional adapter**, not the orchestration
+MCP (`ultra-instinct mcp`) is an **optional adapter**, not the orchestration
 surface. Nothing on the product path requires MCP, Browser Use, CUA, or Jev.
 
 Public API is 0.1 and unstable until 1.0. Toolchain pin: Rust 1.99.0
@@ -24,10 +24,10 @@ crate.
 >
 > 1. **The agent owns the loop.** `observe → ActionSpace (front layer applied)
 >    → policy → gate → ActionTicket → execute_ticketed → settle → observe →
->    diff / value check → history`. Do not reintroduce "Hyper-Use is not an
+>    diff / value check → history`. Do not reintroduce "Ultra-Instinct is not an
 >    agent / does not click" framing, and do not make MCP or a host the loop.
-> 2. **Instinct owns HOW, Hyper-Use owns WHAT.** Instinct picks among finite offered
->    actions (scores, threshold / margin, abstain). Hyper-Use supplies browser
+> 2. **Instinct owns HOW, Ultra-Instinct owns WHAT.** Instinct picks among finite offered
+>    actions (scores, threshold / margin, abstain). Ultra-Instinct supplies browser
 >    evidence and builds the action space. No browser concepts in Instinct. No
 >    second float confidence gate on the agent path. Abstain is never turned
 >    into "top candidate wins". Habituation (ADR 0008) only lowers the urge of
@@ -35,7 +35,7 @@ crate.
 >    bypasses the gate.
 > 3. **Hard invalidity is guard evidence, not a score.** Disabled, readonly
 >    (TYPE / SELECT), hidden / zero-area, occluded, front-layer, offscreen,
->    missing target, unsupported action → `hyper_use_guard::gate` refuses. The
+>    missing target, unsupported action → `ultra_instinct_guard::gate` refuses. The
 >    ranked `guard()` + `0.55` / `0.05` float gate exists only for the MCP / CLI
 >    preflight surface (historical A5 / A6 arms).
 > 4. **One executor boundary, one staleness barrier.** `execute_ticketed` is
@@ -90,17 +90,17 @@ crate.
 
 | Crate | Owns |
 |---|---|
-| `hyper-use-core` | `InteractionManifold`, regions, `ActionSpace`, fixture grammar |
-| `hyper-use-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
-| `hyper-use-observe` | Observation history and id diff |
-| `hyper-use-geometry` | Geometry helpers |
-| `hyper-use-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
-| `hyper-use-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
-| `hyper-use-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
-| `hyper-use-protocol` | Guard / ticket / verify wire types |
-| `hyper-use-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
-| `hyper-use-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
-| `hyper-use-cli` | `hyper-use run` (agent loop, `--policy instinct|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
+| `ultra-instinct-core` | `InteractionManifold`, regions, `ActionSpace`, fixture grammar |
+| `ultra-instinct-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
+| `ultra-instinct-observe` | Observation history and id diff |
+| `ultra-instinct-geometry` | Geometry helpers |
+| `ultra-instinct-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
+| `ultra-instinct-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
+| `ultra-instinct-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
+| `ultra-instinct-protocol` | Guard / ticket / verify wire types |
+| `ultra-instinct-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
+| `ultra-instinct-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
+| `ultra-instinct-cli` | `ultra-instinct run` (agent loop, `--policy instinct|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
 
 Instinct is pinned by git rev in the workspace `Cargo.toml`; bump only with a
 deliberate eval. HGRA lives in `experiments/hgra/` and the resonance `hgra`
@@ -108,14 +108,14 @@ feature, not the default product path.
 
 ## Verification owners
 
-- Agent loop, stale discards, multi-step clauses: `hyper-use-agent` unit tests,
+- Agent loop, stale discards, multi-step clauses: `ultra-instinct-agent` unit tests,
   `tests/mock_loop.rs`, `tests/adversarial.rs`, `tests/replay_cdp.rs`.
 - Executor boundary: `executor.rs` unit tests, `tests/props.rs`
   (substitution, staleness, consumed-beats-stale, `is_stale` classification).
-- Gate / ticket / world: `hyper-use-guard` unit tests,
+- Gate / ticket / world: `ultra-instinct-guard` unit tests,
   `tests/ticket_props.rs` (radius boundary 159 / 160 / 161, focus-only change,
   consumed never stale), `tests/world_context.rs`.
-- Instinct evidence: `hyper-use-policy` unit tests. Do not add a second model of
+- Instinct evidence: `ultra-instinct-policy` unit tests. Do not add a second model of
   Instinct scoring or of `WeightedMatcher::rank`.
 - `write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP
   replay is a different grammar. Fusion is the only DOM/accessibility merge.
@@ -124,11 +124,11 @@ feature, not the default product path.
   remote-model replies, model-text replies): `fuzz/` cargo-fuzz targets on a
   dated nightly (`scripts/fuzz-smoke.sh`, `.github/workflows/nightly.yml`),
   backed by the structured/garbage proptests at small case counts.
-- Observe protocol cost: `crates/hyper-use-browser/tests/call_budget.rs`
+- Observe protocol cost: `crates/ultra-instinct-browser/tests/call_budget.rs`
   pins the CDP call count per observe as a regression tripwire.
 - Repo rules (toolchain pin, `forbid(unsafe_code)`, crate ceilings, pinned
   nightlies): `scripts/check_repo_rules.sh`. Dependency direction and the
-  no-async/no-model-SDK ban below `hyper-use-cli`:
+  no-async/no-model-SDK ban below `ultra-instinct-cli`:
   `scripts/architecture.txt` + `scripts/check_architecture.py`. Both run in
   `ci.yml`'s `repo-rules` job.
 - Workflow integrity: `zizmor --persona=auditor` in `ci.yml`. Dependency
@@ -162,7 +162,7 @@ Tests or proofs updated: <owner tests>
 
 ## MCP (optional adapter)
 
-`hyper-use mcp` is a newline-delimited JSON-RPC server: observe, guard,
+`ultra-instinct mcp` is a newline-delimited JSON-RPC server: observe, guard,
 verify (locate / inspect / diff remain as deprecated helpers; `act` is a
 deprecated alias of guard that never clicks). It owns a 16-entry snapshot
 ring and up to four live CDP sessions; a failed live call drops its session,

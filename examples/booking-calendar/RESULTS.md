@@ -9,13 +9,13 @@ Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Tasks: `ex
 | Rank | Arm | First-try accuracy | Pass within 3 | Press-only tasks, first try | Wrong actions (first try / all tries) | Safe refusals (target-missing) | cap_hit | stuck | crashed | Steps | Model calls | Tokens (first / all) | Wall first-try s | Wall total s | Wall p50 s (first try) | Untrusted clicks |
 |---:|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1 | **A3** jev-ultrafast (BU + JEV) | 100% (3/3) | 100% (3/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 6 | 9 | 35,285 / 35,285 | 54.4 | 54.4 | 18.5 | 0 |
-| 2 | **A8** Luna + JEV + hyper-use + Browser Use | 100% (3/3) | 100% (3/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 15 | 33 | 65,259 / 65,259 | 110.1 | 110.1 | 27.2 | 10 |
+| 2 | **A8** Luna + JEV + ultra-instinct + Browser Use | 100% (3/3) | 100% (3/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 15 | 33 | 65,259 / 65,259 | 110.1 | 110.1 | 27.2 | 10 |
 | 3 | **A1** Luna + Browser Use | 100% (3/3) | 100% (3/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 7 | 13 | 118,626 / 118,626 | 111.7 | 111.7 | 36.5 | 0 |
 | 4 | **A4** CUA jev-use (generic task) | 67% (2/3) | 67% (2/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 3 | 0 | 13 | 15 | 18,155 / 26,899 | 83.5 | 137.1 | 26.7 | 4 |
-| 5 | **A7** Luna + JEV + hyper-use + CUA | 67% (2/3) | 67% (2/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 11 | 31 | 36,111 / 57,844 | 106.0 | 179.7 | 39.7 | 4 |
+| 5 | **A7** Luna + JEV + ultra-instinct + CUA | 67% (2/3) | 67% (2/3) | 100% (2/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 11 | 31 | 36,111 / 57,844 | 106.0 | 179.7 | 39.7 | 4 |
 | 6 | **A2** Luna + CUA driver | 33% (1/3) | 67% (2/3) | 50% (1/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 18 | 40 | 23,590 / 129,515 | 105.8 | 314.3 | 37.6 | 6 |
-| 7 | **A5** JEV + hyper-use (live_drive) | 0% (0/3) | 0% (0/3) | 0% (0/2) | 0 / 0 | 0/0 | 4 | 0 | 0 | 10 | 280 | 276,645 / 974,276 | 31.2 | 103.3 | 11.2 | 7 |
-| 8 | **A6** Luna + hyper-use (MCP) | 0% (0/3) | 0% (0/3) | 0% (0/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 9 | 61 | 110,427 / 349,958 | 88.3 | 243.8 | 28.8 | 9 |
+| 7 | **A5** JEV + ultra-instinct (live_drive) | 0% (0/3) | 0% (0/3) | 0% (0/2) | 0 / 0 | 0/0 | 4 | 0 | 0 | 10 | 280 | 276,645 / 974,276 | 31.2 | 103.3 | 11.2 | 7 |
+| 8 | **A6** Luna + ultra-instinct (MCP) | 0% (0/3) | 0% (0/3) | 0% (0/2) | 0 / 0 | 0/0 | 0 | 0 | 0 | 9 | 61 | 110,427 / 349,958 | 88.3 | 243.8 | 28.8 | 9 |
 
 ## Per task (attempts in order)
 
@@ -61,15 +61,15 @@ Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Tasks: `ex
 | Report id | `20261005-131001+20261005-141625+20261005-153648` |
 | Run `20261005-131001` started | 2026-10-05 13:10:04 +0800 |
 | Run `20261005-131001` bench HEAD | `456b9c062a06` |
-| Run `20261005-131001` hyper-use merged | `4ae30d3` |
+| Run `20261005-131001` ultra-instinct merged | `4ae30d3` |
 | Run `20261005-131001` TYPESAFE_API_KEY present | False |
 | Run `20261005-141625` started | 2026-10-05 14:16:28 +0800 |
 | Run `20261005-141625` bench HEAD | `984ac2c6a515` |
-| Run `20261005-141625` hyper-use merged | `4ae30d3` |
+| Run `20261005-141625` ultra-instinct merged | `4ae30d3` |
 | Run `20261005-141625` TYPESAFE_API_KEY present | True |
 | Run `20261005-153648` started | 2026-10-05 15:36:51 +0800 |
 | Run `20261005-153648` bench HEAD | `570d00f0368f` (dirty) |
-| Run `20261005-153648` hyper-use merged | `4ae30d3` |
+| Run `20261005-153648` ultra-instinct merged | `4ae30d3` |
 | Run `20261005-153648` TYPESAFE_API_KEY present | True |
 | jev-ultrafast pin | `1231850a0bf1` |
 | cua (jev-use) pin | `9ccafc981412` |

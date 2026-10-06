@@ -1,4 +1,4 @@
-# hyper-use manifold fixture v1
+# ultra-instinct manifold fixture v1
 # Adversarial (context): two server rows, each with a "Suspend" button and a
 # "Hostname" field. Text, role, actions, and position zones are identical for
 # the twins, so no label-only matcher can pick one. Only the parent chain

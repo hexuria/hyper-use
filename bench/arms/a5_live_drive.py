@@ -1,8 +1,8 @@
-"""A5: JEV + hyper-use through the generalized ``live_drive`` example (bench mode).
+"""A5: JEV + ultra-instinct through the generalized ``live_drive`` example (bench mode).
 
 Runs ``target/release/examples/live_drive --task-json ... --trace ...`` against the
 harness Chrome and translates its JSONL log into the bench trace while it runs:
-each hyper-use ``act`` call is a step; the final outcome maps done -> done,
+each ultra-instinct ``act`` call is a step; the final outcome maps done -> done,
 give_up -> give_up, anything else -> error. JEV calls go through the proxy
 (TYPESAFE_BASE_URL is set by the harness).
 """
@@ -31,10 +31,10 @@ def main() -> None:
     task_file.write_text(json.dumps({"id": spec["task"]["id"], "start_url": spec["start_url"], "text": goal_text(spec)}))
     log_path = out / "live_drive.jsonl"
     log_path.unlink(missing_ok=True)
-    argv = [str(root / "target/release/examples/live_drive"), "--bin", str(root / "target/release/hyper-use"),
+    argv = [str(root / "target/release/examples/live_drive"), "--bin", str(root / "target/release/ultra-instinct"),
             "--cdp", spec["cdp_http"], "--site", spec["server"], "--out", str(out / "live_drive_out"),
             "--task-json", str(task_file), "--trace", str(log_path), "--max-steps", str(spec["caps"]["steps"])]
-    env = {**os.environ, "HYPER_USE_JEV": "1"}
+    env = {**os.environ, "ULTRA_INSTINCT_JEV": "1"}
     proc = subprocess.Popen(argv, cwd=str(root), env=env, stdout=sys.stdout, stderr=subprocess.STDOUT)
     seen = 0
     outcome = None

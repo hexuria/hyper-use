@@ -32,7 +32,7 @@ from tasks import EXAMPLES, load_all  # noqa: E402
 
 MAIN_PY = BENCH / ".venv/bin/python"
 CUA_PY = BENCH / "envs/cua/.venv/bin/python"
-HYPER_USE_PIN = "4ae30d3"
+ULTRA_INSTINCT_PIN = "4ae30d3"
 
 ARMS = {
     "A1": {"name": "Luna + Browser Use", "python": MAIN_PY, "script": "arms/a1_browser_use.py", "browser": "harness", "typesafe": False},
@@ -40,11 +40,11 @@ ARMS = {
     "A3": {"name": "jev-ultrafast (BU + JEV)", "python": MAIN_PY, "script": "arms/a3_jev_ultrafast.py", "browser": "harness", "typesafe": True,
            "blank_start": True, "bu_daemon": True},
     "A4": {"name": "CUA jev-use (generic task)", "python": CUA_PY, "script": "arms/a4_jev_use.py", "browser": "cua", "typesafe": True},
-    "A5": {"name": "JEV + hyper-use (live_drive)", "python": MAIN_PY, "script": "arms/a5_live_drive.py", "browser": "harness", "typesafe": True},
-    "A6": {"name": "Luna + hyper-use (MCP)", "python": MAIN_PY, "script": "arms/a6_luna_hyper_use.py", "browser": "harness", "typesafe": False},
-    # Combined arms (bench/arms/COMBO.md): Luna plans, hyper-use observes/presses, JEV breaks ties, executor types/selects.
-    "A7": {"name": "Luna + JEV + hyper-use + CUA", "python": MAIN_PY, "script": "arms/a7_combo_cua.py", "browser": "cua", "typesafe": True},
-    "A8": {"name": "Luna + JEV + hyper-use + Browser Use", "python": MAIN_PY, "script": "arms/a8_combo_bu.py", "browser": "harness", "typesafe": True},
+    "A5": {"name": "JEV + ultra-instinct (live_drive)", "python": MAIN_PY, "script": "arms/a5_live_drive.py", "browser": "harness", "typesafe": True},
+    "A6": {"name": "Luna + ultra-instinct (MCP)", "python": MAIN_PY, "script": "arms/a6_luna_ultra_instinct.py", "browser": "harness", "typesafe": False},
+    # Combined arms (bench/arms/COMBO.md): Luna plans, ultra-instinct observes/presses, JEV breaks ties, executor types/selects.
+    "A7": {"name": "Luna + JEV + ultra-instinct + CUA", "python": MAIN_PY, "script": "arms/a7_combo_cua.py", "browser": "cua", "typesafe": True},
+    "A8": {"name": "Luna + JEV + ultra-instinct + Browser Use", "python": MAIN_PY, "script": "arms/a8_combo_bu.py", "browser": "harness", "typesafe": True},
 }
 for mode in ["oracle", "saboteur", "spinner", "wanderer", "sleeper"]:
     ARMS[f"mock-{mode}"] = {"name": f"mock {mode}", "python": MAIN_PY, "script": "arms/mock.py", "browser": "harness",
@@ -67,8 +67,8 @@ def manifest(cfg: dict, seed: int, chrome_version: str, run_id: str, order: list
         "git": {
             "bench_uniform_head": sh(["git", "rev-parse", "HEAD"]),
             "dirty": bool(sh(["git", "status", "--porcelain", "--untracked-files=no"])),
-            "hyper_use_merged": HYPER_USE_PIN,
-            "hyper_use_merged_full": sh(["git", "rev-parse", HYPER_USE_PIN]),
+            "ultra_instinct_merged": ULTRA_INSTINCT_PIN,
+            "ultra_instinct_merged_full": sh(["git", "rev-parse", ULTRA_INSTINCT_PIN]),
             "jev_ultrafast": sh(["git", "rev-parse", "HEAD"], vendor / "jev-ultrafast"),
             "cua": sh(["git", "rev-parse", "HEAD"], vendor / "cua"),
         },

@@ -25,7 +25,7 @@ sys.path.insert(0, str(BENCH))
 from run import ARMS  # noqa: E402
 from tasks import EXAMPLES, load_all  # noqa: E402
 
-BRANCH_URL = "https://github.com/hexuria/hyper-use/tree/bench/uniform"
+BRANCH_URL = "https://github.com/hexuria/ultra-instinct/tree/bench/uniform"
 
 
 def pct(n: int, d: int) -> str:
@@ -175,7 +175,7 @@ def manifest_md(mans: list[dict], merged_label: str) -> list[str]:
         lines += [
             f"| Run `{rid}` started | {man['started']} |",
             f"| Run `{rid}` bench HEAD | `{g['bench_uniform_head'][:12]}`{' (dirty)' if g['dirty'] else ''} |",
-            f"| Run `{rid}` hyper-use merged | `{g['hyper_use_merged']}` |",
+            f"| Run `{rid}` ultra-instinct merged | `{g['ultra_instinct_merged']}` |",
             f"| Run `{rid}` TYPESAFE_API_KEY present | {man['typesafe_key_present']} |",
         ]
     # shared settings from the first manifest (same config_hash across both)
@@ -207,7 +207,7 @@ state the page recorded, never the agent's claims), no forbidden event fired, an
 `cap_hit` or `stuck`. Target-missing tasks also need the arm to end with a refusal (give up / abstain / blocked by
 choice). An arm that crashes after leaving the page in the right state still passes. Ranking is by first-try
 accuracy; ties break on lower total first-try wall time. "Press-only" is the subset of tasks with no typing or select,
-which is all hyper-use's `act` can do today (press/click). "Untrusted clicks" counts page clicks that were
+which is all ultra-instinct's `act` can do today (press/click). "Untrusted clicks" counts page clicks that were
 synthetic DOM events (`isTrusted=false`), which can reach controls a person could not click (for example under a modal)."""
 
 
@@ -277,7 +277,7 @@ def main() -> None:
 
     sources = ", ".join(f"`{d.name}`" for d in run_dirs)
     top = [
-        "# hyper-use uniform benchmark: results",
+        "# ultra-instinct uniform benchmark: results",
         "",
         f"Branch: {BRANCH_URL}. Merged runs: {sources}. Harness: `bench/` (see `bench/README.md`).",
         "",
@@ -352,11 +352,11 @@ def main() -> None:
         "",
         "- Luna pass `20261005-131001` ran A1/A2/A6; A3/A4/A5 were skipped there (`TYPESAFE_API_KEY not available`).",
         "- JEV pass `20261005-141625` ran A3/A4/A5 with the key present. This report merges both.",
-        "- hyper-use arms (A5, A6) can only press/click today. Tasks that need type/select show under Needs and in the press-only column; unmet body/form fields are expected failures for those arms until typing lands.",
+        "- ultra-instinct arms (A5, A6) can only press/click today. Tasks that need type/select show under Needs and in the press-only column; unmet body/form fields are expected failures for those arms until typing lands.",
         "- A3 (jev-ultrafast) recorded many `crashed` outcomes in this pass; treat those as harness/arm failures, not page successes.",
-        "- Combined arms A7 (Luna + JEV + hyper-use + CUA) and A8 (Luna + JEV + hyper-use + Browser Use) ran in their own pass with the key present; protocol and limits in `bench/arms/COMBO.md`. A1 to A6 were not re-run.",
+        "- Combined arms A7 (Luna + JEV + ultra-instinct + CUA) and A8 (Luna + JEV + ultra-instinct + Browser Use) ran in their own pass with the key present; protocol and limits in `bench/arms/COMBO.md`. A1 to A6 were not re-run.",
         "- A7 cannot set a `<select>`: cua-driver 0.23.2 has no select tool and refuses its trusted input route on the background window (A2 hit the same wall). A7's ~15 s browser launch and sizing counts toward its wall time, as for A2 and A4.",
-        "- Untrusted clicks in A7/A8 come from hyper-use's `dom-semantic` press (same as A5/A6) and A7's CUA `dom_event` fallback; Browser Use clicks in A8 go through CDP mouse input.",
+        "- Untrusted clicks in A7/A8 come from ultra-instinct's `dom-semantic` press (same as A5/A6) and A7's CUA `dom_event` fallback; Browser Use clicks in A8 go through CDP mouse input.",
         "",
     ]
     (ROOT / "RESULTS.md").write_text("\n".join(top))

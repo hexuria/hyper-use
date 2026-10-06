@@ -1,4 +1,4 @@
-# hyper-use manifold fixture v1
+# ultra-instinct manifold fixture v1
 # Three buttons whose labels all contain "Send". Ids sort the supersets first,
 # so an id tie-break would pick the wrong one.
 viewport w=1440 h=900

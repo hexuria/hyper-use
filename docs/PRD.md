@@ -1,6 +1,6 @@
-# hyper-use
+# ultra-instinct
 
-Hyper-Use is a **Rust-native browser-agent runtime**: it observes the page,
+Ultra-Instinct is a **Rust-native browser-agent runtime**: it observes the page,
 builds a finite action space, decides (Instinct first, optional escalation),
 guards with hard integrity checks, executes only through a one-shot
 **ActionTicket**, then re-observes, diffs, and verifies.
@@ -14,7 +14,7 @@ and not on the product path. A crate or binary named `hgra` in the product
 graph is a bug.
 
 > **Pivot (2026-10-05).** This PRD supersedes the earlier framing that
-> Hyper-Use is "not an agent" and "does not click". See
+> Ultra-Instinct is "not an agent" and "does not click". See
 > [`docs/adr/0001-agent-runtime-pivot.md`](adr/0001-agent-runtime-pivot.md).
 > ActionTicket + host interceptor (B0/B1) remain a valid ablation until the
 > agent fully owns execution.
@@ -22,8 +22,8 @@ graph is a bug.
 ## Primary API (agent runtime)
 
 ```rust
-use hyper_use_agent::AgentBuilder;
-use hyper_use_policy::InstinctPolicy;
+use ultra_instinct_agent::AgentBuilder;
+use ultra_instinct_policy::InstinctPolicy;
 
 let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
     .max_steps(60)
@@ -39,7 +39,7 @@ execution. MCP is an optional adapter, not required to run the loop.
 ```text
 goal
   ↓
-Hyper-Use Agent
+Ultra-Instinct Agent
   ↓
 observe → ActionSpace
   ↓
@@ -59,13 +59,13 @@ next turn (or DONE / BLOCKED)
 | Layer | Owns |
 |---|---|
 | **Instinct** | HOW a finite choice is made (scores, threshold/margin, abstain) |
-| **Hyper-Use policy** | WHAT browser evidence each candidate gets; ActionSpace construction |
-| **Hyper-Use guard** | Physical/logical executability; ticket issue |
-| **Hyper-Use executor** | Exact ticketed action or nothing |
+| **Ultra-Instinct policy** | WHAT browser evidence each candidate gets; ActionSpace construction |
+| **Ultra-Instinct guard** | Physical/logical executability; ticket issue |
+| **Ultra-Instinct executor** | Exact ticketed action or nothing |
 | **TextResolver** | Arbitrary `TYPE_TEXT` strings (not Instinct); optional goal-grounded model resolver behind `model-text` (ADR 0006) |
 | **Host / MCP** | Optional adapter; must not bypass tickets |
 
-## What Hyper-Use deliberately does not do
+## What Ultra-Instinct deliberately does not do
 
 - Depend on JEV / TypeSafe in the core path (optional escalation feature only).
 - Ship HGRA as the default matcher / policy.
@@ -99,5 +99,5 @@ snapshots (`verify_delta`). See `bench/arms/B01.md` for the interceptor ablation
 ## Historical notes
 
 `RESULTS.md` A1–A8 tables are **historical** (pre-ticket, planner variables
-changed with Hyper-Use). Rewrite only from pinned agent A/B/C/D or B0/B1/B2
+changed with Ultra-Instinct). Rewrite only from pinned agent A/B/C/D or B0/B1/B2
 runs. B0/B1 remain the interceptor ablation until the agent owns the loop.

@@ -1,7 +1,7 @@
 # Browser evals
 
 No browser harness runs in Phase 1. These categories are reserved so later
-evals have a stable list. Each one should call `hyper-use locate` (or the
+evals have a stable list. Each one should call `ultra-instinct locate` (or the
 library) and assert rank, not a pixel.
 
 - role-and-label locate

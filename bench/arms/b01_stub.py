@@ -22,14 +22,14 @@ from arms.mcp_stdio import McpStdio  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def hyper_use_bin() -> Path:
-    release = ROOT / "target" / "release" / "hyper-use"
-    debug = ROOT / "target" / "debug" / "hyper-use"
+def ultra_instinct_bin() -> Path:
+    release = ROOT / "target" / "release" / "ultra-instinct"
+    debug = ROOT / "target" / "debug" / "ultra-instinct"
     if release.exists():
         return release
     if debug.exists():
         return debug
-    raise SystemExit("build hyper-use first: cargo build -p hyper-use-cli")
+    raise SystemExit("build ultra-instinct first: cargo build -p ultra-instinct-cli")
 
 
 def tool_json(mcp: McpStdio, name: str, arguments: dict) -> dict:
@@ -55,7 +55,7 @@ def run_b0() -> int:
 
 def run_b1_smoke(cdp: str, server: str, target: str, role: str | None) -> int:
     env = os.environ.copy()
-    mcp = McpStdio([str(hyper_use_bin()), "mcp"], env=env)
+    mcp = McpStdio([str(ultra_instinct_bin()), "mcp"], env=env)
     try:
         obs = tool_json(mcp, "observe", {"cdp": cdp})
         snap = obs.get("snapshot")
@@ -91,7 +91,7 @@ def run_b1_smoke(cdp: str, server: str, target: str, role: str | None) -> int:
                     "before_snapshot": snap,
                     "after_snapshot": after.get("snapshot"),
                     "click_error": err,
-                    "note": "LLM never saw Hyper-Use; harness consumed the Allow ticket",
+                    "note": "LLM never saw Ultra-Instinct; harness consumed the Allow ticket",
                 },
                 indent=2,
             )

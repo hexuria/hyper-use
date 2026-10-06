@@ -1,6 +1,6 @@
-"""A8: GPT 6 Luna + JEV + hyper-use + Browser Use, all on the harness Chrome.
+"""A8: GPT 6 Luna + JEV + ultra-instinct + Browser Use, all on the harness Chrome.
 
-Luna plans, hyper-use observes/locates/presses over CDP, JEV breaks ties, and Browser Use
+Luna plans, ultra-instinct observes/locates/presses over CDP, JEV breaks ties, and Browser Use
 0.13 (a ``BrowserSession`` on the same CDP endpoint plus its ``Tools`` registry, no Browser
 Use LLM agent) executes type/select/scroll/read and the gated fallback click by its own
 element index. Protocol: ``bench/arms/COMBO.md``.

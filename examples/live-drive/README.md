@@ -1,6 +1,6 @@
 # Live drive (manual, opt-in)
 
-A hand-run check that drives a real Chrome tab through `hyper-use mcp`, with
+A hand-run check that drives a real Chrome tab through `ultra-instinct mcp`, with
 JEV (typesafe.ai) choosing each next tool and its arguments. It is not part of
 CI and it is not a benchmark: seven or eight tasks on one static page say
 nothing statistical. Use it to read transcripts and find bugs.
@@ -14,8 +14,8 @@ nothing statistical. Use it to read transcripts and find bugs.
   reply box whose "Send" twins the Compose "Send". The thread toolbar has a
   hidden and an offscreen "Archive" twin. `settings.html` has a disabled and
   an enabled "Save". `help.html` is the link target that changes URL and title.
-- `crates/hyper-use-cli/examples/live_drive.rs`: the harness. It needs the
-  `jev` feature (add `hgra` when remasuring with `HYPER_USE_MATCHER=hgra`).
+- `crates/ultra-instinct-cli/examples/live_drive.rs`: the harness. It needs the
+  `jev` feature (add `hgra` when remasuring with `ULTRA_INSTINCT_MATCHER=hgra`).
   Thread tasks (`t6`–`t8`) start already on `#thread/q3` (blank tab via
   `/json/new`, then `Page.navigate` to the full URL so the hash and query
   survive). `t8` also uses `?preset=twin` so Compose and quick-reply `Send`
@@ -38,23 +38,23 @@ not offered.
 python3 bench/server.py --port 8765 &
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9333 --remote-debugging-address=127.0.0.1 \
-  --user-data-dir=/tmp/hyper-use-live/chrome-profile --window-size=1280,800 &
-cargo build --release -p hyper-use-cli --features "jev,hgra" --bin hyper-use
-cargo build --release -p hyper-use-cli --features "jev,hgra" --example live_drive
+  --user-data-dir=/tmp/ultra-instinct-live/chrome-profile --window-size=1280,800 &
+cargo build --release -p ultra-instinct-cli --features "jev,hgra" --bin ultra-instinct
+cargo build --release -p ultra-instinct-cli --features "jev,hgra" --example live_drive
 set -a && source /path/to/bench/.env && set +a   # TYPESAFE_API_KEY; never echo
-HYPER_USE_JEV=1 \
-  ./target/release/examples/live_drive --bin target/release/hyper-use \
+ULTRA_INSTINCT_JEV=1 \
+  ./target/release/examples/live_drive --bin target/release/ultra-instinct \
     --site http://127.0.0.1:8765/acme-mail/site
 ```
 
 Flags: `--site` (default `http://127.0.0.1:8765`; pass `/acme-mail/site` as above), `--cdp` (default
-`http://127.0.0.1:9333`), `--out` (default `/tmp/hyper-use-live`), `--only
+`http://127.0.0.1:9333`), `--out` (default `/tmp/ultra-instinct-live`), `--only
 <task id>`, `--screenshot-only` (inbox and thread at 1280 and 1440 wide,
 Compose open, settings, help).
 
-Set `HYPER_USE_MATCHER=hgra` (and build `hyper-use` / `live_drive` with `--features hgra`) to force the experimental HGRA ranker through MCP; default remains weighted.
+Set `ULTRA_INSTINCT_MATCHER=hgra` (and build `ultra-instinct` / `live_drive` with `--features hgra`) to force the experimental HGRA ranker through MCP; default remains weighted.
 
-Each task gets a fresh tab and a fresh `hyper-use mcp` child attached to that
+Each task gets a fresh tab and a fresh `ultra-instinct mcp` child attached to that
 tab's page websocket. The harness writes one JSONL transcript per task to
 `<out>/transcripts/` and a `summary.json`, and records page ground truth
 (URL, title, snackbar text, Compose/thread/Cc visibility) read straight from

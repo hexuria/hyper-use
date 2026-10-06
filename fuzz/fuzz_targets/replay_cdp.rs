@@ -7,5 +7,5 @@ use libfuzzer_sys::fuzz_target;
 // input; a panic or hang here is a DoS on the whole test harness.
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);
-    let _ = hyper_use_browser::ReplayTransport::parse(&text);
+    let _ = ultra_instinct_browser::ReplayTransport::parse(&text);
 });

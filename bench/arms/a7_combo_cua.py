@@ -1,9 +1,9 @@
-"""A7: GPT 6 Luna + JEV + hyper-use + CUA driver, all on one driver-launched isolated Chrome.
+"""A7: GPT 6 Luna + JEV + ultra-instinct + CUA driver, all on one driver-launched isolated Chrome.
 
 cua-driver launches its own isolated Chrome (browser_prepare isolated_new), same window
 float/size routine as A2/A4. The arm reads that Chrome's loopback DevTools port (lsof on
-the driver-owned pid) and points hyper-use at it, so hyper-use and CUA act on the same
-tab. Luna plans, hyper-use observes/locates/presses, JEV breaks ties, and CUA's typed
+the driver-owned pid) and points ultra-instinct at it, so ultra-instinct and CUA act on the same
+tab. Luna plans, ultra-instinct observes/locates/presses, JEV breaks ties, and CUA's typed
 browser tools execute type/select/scroll/read and the gated fallback click by semantic_v2
 ref. Protocol: ``bench/arms/COMBO.md``. Runs in the main bench env (the tiny stdio MCP
 client talks to ``cua-driver mcp``; no mcp SDK needed).
@@ -195,7 +195,7 @@ def main() -> None:
         if port is None:
             raise CuaError("could not find the isolated Chrome's DevTools port")
         cdp = f"http://127.0.0.1:{port}"
-        trace.write("note", text=f"hyper-use attached to the CUA browser at {cdp}")
+        trace.write("note", text=f"ultra-instinct attached to the CUA browser at {cdp}")
         Combo(spec, trace, CuaExecutor(driver, target), cdp).run()
     except Exception as error:  # noqa: BLE001
         trace.final("error", f"{type(error).__name__}: {error}"[:400])

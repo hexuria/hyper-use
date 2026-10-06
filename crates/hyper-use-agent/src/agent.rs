@@ -48,7 +48,7 @@ pub enum AgentState {
 ///
 /// There is exactly **one** staleness barrier between this prediction and page
 /// input: the [`hyper_use_protocol::ActionTicket`] issued by
-/// [`hyper_use_guard::gate`] on [`Self::manifold`] and revalidated by
+/// [`gate()`](fn@hyper_use_guard::gate) on [`Self::manifold`] and revalidated by
 /// [`crate::execute_ticketed`] against a fresh observation (target-scoped world
 /// fingerprint + target role / label / fingerprint). A prediction carries no
 /// fingerprint of its own, so nothing here implies a second pre-ticket check

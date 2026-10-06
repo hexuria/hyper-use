@@ -10,7 +10,7 @@
 //!
 //! - a region with [`Role::Dialog`] is a dialog (`role="dialog"`,
 //!   `role="alertdialog"`, `<dialog>`, or the accessibility role);
-//! - [`RegionFlags::modal`] marks it modal (`aria-modal="true"` or the
+//! - [`modal()`](fn@hyper_use_core::RegionFlags::modal) marks it modal (`aria-modal="true"` or the
 //!   accessibility `modal` property);
 //! - the parent chain says what is inside the dialog.
 //!

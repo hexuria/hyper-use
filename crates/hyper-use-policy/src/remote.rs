@@ -66,10 +66,21 @@ impl<T: RemoteTransport> RemotePolicy<T> {
 }
 
 /// Build the request object for `space` / `goal` / `history`.
+///
+/// Each action carries `id`, `kind`, `label`, and — for region-bound
+/// actions — `role`. Extra fields are additive for transports; a consumer
+/// may ignore them.
 pub fn request_json(space: &ActionSpace, goal: &AgentGoal, history: &[HistoryEntry]) -> String {
     let actions: Vec<Value> = space
         .actions()
-        .map(|a| json!({"id": a.id().as_str(), "kind": a.kind().as_str(), "label": a.label()}))
+        .map(|a| {
+            let mut action =
+                json!({"id": a.id().as_str(), "kind": a.kind().as_str(), "label": a.label()});
+            if let Some(role) = a.role() {
+                action["role"] = json!(role.as_str());
+            }
+            action
+        })
         .collect();
     let history: Vec<Value> = history
         .iter()

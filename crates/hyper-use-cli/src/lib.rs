@@ -434,6 +434,9 @@ pub(crate) mod run_cmd;
 pub(crate) mod session_cmd;
 
 #[cfg(feature = "jev")]
+pub mod typesafe;
+
+#[cfg(feature = "jev")]
 pub use compare::fixture_compare_live;
 pub use compare::{eval_corpus, fixture_compare, CompareError, CorpusReport, FixtureReport};
 

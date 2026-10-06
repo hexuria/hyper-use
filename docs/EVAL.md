@@ -22,8 +22,8 @@ cargo test --workspace
 
 # Just the owned loop
 cargo test -p ultra-instinct-agent                    # all agent tests
-cargo test -p ultra-instinct-agent --test adversarial # mock adversarial e2e (16)
-cargo test -p ultra-instinct-agent --test replay_cdp  # real BrowserSession over a CDP replay (6)
+cargo test -p ultra-instinct-agent --test adversarial # mock adversarial e2e (20)
+cargo test -p ultra-instinct-agent --test replay_cdp  # real BrowserSession over a CDP replay (7)
 cargo test -p ultra-instinct-agent --test props       # property tests (ticket substitution, stale, abstain)
 cargo test -p ultra-instinct-agent --test mock_loop   # original ADR 0002 loop tests
 cargo test -p ultra-instinct-guard gate               # hard gate unit tests
@@ -81,7 +81,7 @@ Last run 2026-10-06 ~00:10 (Asia/Manila) (Chrome headless, macOS, inline `data:`
 | `Click Go` | CLICK `Go` | state-changed (result text appeared) | done |
 | `scroll down` | SCROLL_DOWN | state-changed | done |
 | `Select "Premium" in Cabin class` (CLI) | — | page rejected: 0 matching options | failed, nothing changed |
-| `scroll down` at page bottom (CLI) | SCROLL_DOWN ×3 | no-effect | blocked (bound) |
+| `scroll down` at page bottom (CLI) | SCROLL_DOWN ×3 | no-effect | blocked (bound; pre-ADR-0008 — today habituation abstains after 2 repeats) |
 
 n = 1 per goal, one static page. It proves the paths work end to end on a real
 browser; it measures nothing.
@@ -108,8 +108,8 @@ browser; it measures nothing.
 | `model-text`: model outage | `model_text`, policy unit | deterministic fallback, else abstain |
 | `model-text`: page moves during model call | `model_text` | ticket stale, nothing typed; model re-asked with new fingerprint |
 | `model-text`: feature off / default builder | `model_text`, CLI unit | deterministic resolver; `--text-model-cmd` refused |
-| wrong effect (page mangles value) | `adversarial` | `wrong-effect` ×3 → blocked |
-| repeated no-effect click | `adversarial` | bounded → blocked |
+| wrong effect (page mangles value) | `adversarial` | `wrong-effect` ×2 → Abstained (ADR 0008 habituation freeze) |
+| repeated no-effect click | `adversarial`, `mock_loop` | ×2 → Abstained (ADR 0008) |
 | page never settles | `adversarial` | stale bound → failed, no input |
 | off-menu / selector / kind-mismatch policy output | `adversarial`, `remote` unit, `remote_e2e` | hard error, no input |
 | ticket reuse / operation swap | executor unit, `props` | refused |

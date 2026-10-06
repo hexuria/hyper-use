@@ -34,7 +34,7 @@ pub use session::{
 };
 pub use transport::CdpTransport;
 pub use verify::{verify, verify_delta, Expectation, VerifyError};
-pub use ws::{WebSocketTransport, DEFAULT_CDP_HTTP};
+pub use ws::{open_tab, WebSocketTransport, DEFAULT_CDP_HTTP};
 
 #[cfg(feature = "fuzz-support")]
 pub use compact::compact_parse_fuzzable;

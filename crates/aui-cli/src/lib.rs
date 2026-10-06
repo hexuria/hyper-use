@@ -172,7 +172,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "ultra-instinct run|observe|locate|inspect|guard|verify|diff|mcp\nrun --goal <text> (--cdp [url] [--url <page>] | --fixture <replay.cdp.json|page.manifold>) [--max-steps N] [--text-model-cmd <program>]\n  owned agent loop: observe -> Instinct -> gate -> ticket -> execute -> verify (no LLM, no MCP)\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
+    "ultra-instinct run|observe|locate|inspect|guard|verify|diff|mcp\nrun --goal <text> (--cdp [url] [--url <page>] | --fixture <replay.cdp.json|page.manifold>) [--max-steps N] [--text-model-cmd <program>]\n  owned agent loop: observe -> Instinct -> gate -> ticket -> execute -> verify (no LLM, no MCP)\n  --cdp with --url opens a background tab and closes it at exit; without --url drives the first existing tab\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.

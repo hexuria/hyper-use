@@ -1,0 +1,31 @@
+# 3-way decision-provider race on the same 69 runs: clef-flash vs jev vs clef.
+# Same tasks/caps/seed as race.toml; A3q (jev-ultrafast) kept as the reference arm.
+# `bench/bench run --config bench/race-clef.toml --seed 42`
+[run]
+seed = 42
+reps = 3
+max_tries = 1
+arms = ["A3q", "A10", "A11", "A12"]
+scenarios = ["acme-mail", "shop-checkout", "admin-table", "booking-calendar", "hard-dom", "travel-search"]
+
+[caps]
+steps = 20
+model_calls = 40
+wall_s = 180
+stuck_repeats = 3
+page_acts = 40
+
+[models]
+luna = "gpt-6-luna"
+luna_effort = "low"
+jev = "jev-latest"
+
+[viewport]
+width = 1280
+height = 800
+headless = false
+
+[ports]
+server = 8775
+proxy = 8776
+chrome = 9433

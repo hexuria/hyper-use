@@ -55,6 +55,10 @@ ARMS["A10"] = {"name": "ultra-instinct aui run (--policy jev)", "python": MAIN_P
 # Diagnostic only (not a race arm): A9 without the shared GOAL_SUFFIX.
 ARMS["A9b"] = {**ARMS["A9"], "name": "ultra-instinct aui run (Instinct, bare goal; diagnostic)",
                "options": {"policy": "instinct", "bare_goal": True}}
+ARMS["A11"] = {"name": "ultra-instinct aui run (--policy clef-flash)", "python": MAIN_PY, "script": "arms/a9_aui.py", "browser": "harness",
+               "typesafe": False, "options": {"policy": "clef-flash"}}
+ARMS["A12"] = {"name": "ultra-instinct aui run (--policy clef)", "python": MAIN_PY, "script": "arms/a9_aui.py", "browser": "harness",
+               "typesafe": False, "options": {"policy": "clef"}}
 for mode in ["oracle", "saboteur", "spinner", "wanderer", "sleeper"]:
     ARMS[f"mock-{mode}"] = {"name": f"mock {mode}", "python": MAIN_PY, "script": "arms/mock.py", "browser": "harness",
                             "typesafe": False, "options": {"mode": mode}, "mock": True}

@@ -236,8 +236,12 @@ def run_attempt(arm_id: str, task, attempt: int, out: Path, cfg: dict, server: B
     viewports = [p.get("viewport") for p in snap["pages"].values() if p.get("viewport")]
     cleanup_external(rows, bu_name)
     if arm.get("bu_daemon"):
-        subprocess.run([str(MAIN_PY), "-c", "import sys; from browser_harness.admin import restart_daemon; restart_daemon(sys.argv[1])", bu_name],
-                       capture_output=True, timeout=20, env={**os.environ, "BU_NAME": bu_name})
+        try:
+            subprocess.run([str(MAIN_PY), "-c", "import sys; from browser_harness.admin import restart_daemon; restart_daemon(sys.argv[1])", bu_name],
+                           capture_output=True, timeout=60, env={**os.environ, "BU_NAME": bu_name})
+        except subprocess.TimeoutExpired:
+            # Mac flakiness: daemon restart can hang; do not drop a completed attempt.
+            print(f"warn: restart_daemon timed out for {bu_name}; continuing", flush=True)
     if chrome:
         chrome.kill()
     meter = proxy.meter.snapshot()

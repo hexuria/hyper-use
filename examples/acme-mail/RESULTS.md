@@ -1,5 +1,23 @@
 # acme-mail: results
 
+## Mac remasure 2026-10-06 — A3 vs A8 (fair parity)
+
+> Tip `acb3a33`. Seed 42, n=1, Luna up. Vendor pin `1231850a…`.
+> Run id `20261006-081905`. Full writeup:
+> [`../../bench/results/MAC-A3-A8-COMPARE.md`](../../bench/results/MAC-A3-A8-COMPARE.md).
+
+**Accuracy:** A8 **7/7**, A3 **5/7** (press-only both 5/5). A3 type failures
+were browser_harness IPC timeouts. **Speed:** mixed (~26s vs ~34s pass mean;
+A8 `tm-print` refuse ~103s skews mean).
+
+Unfair precursor A3 vs A5 (`20261006-074743`): A3 4/7, A5 2/7 — A5 cannot type
+(no Luna). Not parity.
+
+Older leaderboard below is the merged historical pass
+(`20261005-131001`+`141625`+`153648`) and is **stale** for live A3/A8 claims.
+
+---
+
 Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Tasks: `examples/acme-mail/tasks.yaml`. Site: `examples/acme-mail/site/`.
 
 **n = 1 run per arm per task** (up to 3 fresh tries, stopping at the first pass). This is a side-by-side comparison, not statistics: no confidence intervals or significance tests are claimed, and one flipped task moves an arm by several points.

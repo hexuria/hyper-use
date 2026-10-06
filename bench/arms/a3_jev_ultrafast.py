@@ -76,9 +76,16 @@ def main() -> None:
             if agent:
                 agent.close()
         finally:
+            # Mac: restart_daemon can hang; bound it so the attempt can finish.
             try:
-                from browser_harness.admin import restart_daemon
-                restart_daemon(spec["bu_name"])
+                import subprocess
+                subprocess.run(
+                    [sys.executable, "-c",
+                     "import sys; from browser_harness.admin import restart_daemon; restart_daemon(sys.argv[1])",
+                     spec["bu_name"]],
+                    capture_output=True, timeout=15,
+                    env={**os.environ, "BU_NAME": spec["bu_name"]},
+                )
             except Exception:
                 pass
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install the ultra-instinct CLI (`aui` + `ultra-instinct` binaries).
-# Idempotent: exits early when `aui` is already on PATH.
+# Idempotent: exits early when `aui` is already on PATH (AUI_FORCE=1 to force).
 #
 # Sources, in order:
 #   1. This repo, when the script runs from inside a checkout
@@ -17,8 +17,9 @@ FEATURES="jev clef model-text"
 REPO_URL="https://github.com/hexuria/ultra-instinct"
 CACHE_SRC="${XDG_CACHE_HOME:-$HOME/.cache}/ultra-instinct"
 
-if command -v aui >/dev/null 2>&1; then
+if command -v aui >/dev/null 2>&1 && [ "${AUI_FORCE:-0}" != "1" ]; then
     echo "aui already installed: $(command -v aui)"
+    echo "(if it lacks the jev/clef/model-text features, rerun with AUI_FORCE=1)"
     exit 0
 fi
 
@@ -28,8 +29,10 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 1
 fi
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ -d "$HERE/crates/aui-cli" ]; then
+# Locate the repo root from the script's own path; empty when piped/copied.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true)"
+if [ -n "$HERE" ] && [ -f "$HERE/crates/aui-cli/Cargo.toml" ] \
+    && grep -q 'name = "aui-cli"' "$HERE/crates/aui-cli/Cargo.toml"; then
     SRC="$HERE"
 else
     SRC="$CACHE_SRC"
@@ -40,7 +43,11 @@ else
     fi
 fi
 
-cargo install --locked --path "$SRC/crates/aui-cli" --features "$FEATURES"
+# cargo install resolves the rustup toolchain from the invocation cwd, not
+# the source tree — cd into the source so its rust-toolchain.toml (1.99.0)
+# applies even when the caller's default toolchain is older.
+cd "$SRC"
+cargo install --locked --path crates/aui-cli --features "$FEATURES"
 
 BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
 case ":$PATH:" in

@@ -6,6 +6,8 @@
 //! ultra-instinct run --goal <text> --fixture <page.manifold>     # predict only (dry run)
 //! ultra-instinct run ... --text-model-cmd <program>   # feature `model-text`: model TYPE/SELECT payloads
 //! ultra-instinct run ... --policy jev                 # feature `jev`: JEV decides every step (default)
+//! ultra-instinct run ... --policy clef                # feature `clef`: Cloudflare Clef (27B) decides
+//! ultra-instinct run ... --policy clef-flash          # feature `clef`: Cloudflare Clef-Flash (9B) decides
 //! ultra-instinct run ... --policy instinct            # offline; `pua` is a deprecated alias
 //! ```
 //!
@@ -25,6 +27,13 @@
 //! unchanged. Reads `TYPESAFE_API_KEY` (required), `TYPESAFE_MODEL`,
 //! `TYPESAFE_BASE_URL`. It does not read `TEXT_MODEL_*` yet; combine with
 //! `--text-model-cmd` for model-written payloads.
+//!
+//! `--policy clef` / `--policy clef-flash` (built with `--features clef`) decide
+//! through Cloudflare Workers AI Clef models — same closed wire and the same
+//! System One body as `jev`, POSTed to `…/accounts/{id}/ai/run/@cf/cloudflare/{model}`.
+//! Reads `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (required), `CLEF_MODEL`,
+//! `CLEF_BASE_URL`. A target head with one offered candidate never reaches the
+//! wire — it is answered locally.
 //!
 //! `--text-model-cmd` (built with `--features model-text`) only changes where
 //! TYPE_TEXT / SELECT *payloads* come from: a user program speaking the
@@ -53,6 +62,8 @@ struct RunArgs {
 enum PolicyKind {
     Instinct,
     Jev,
+    Clef,
+    ClefFlash,
 }
 
 fn parse(args: &[String]) -> Result<RunArgs, CliError> {
@@ -94,9 +105,11 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
                 let kind = match raw.as_str() {
                     "instinct" | "pua" => PolicyKind::Instinct,
                     "jev" => PolicyKind::Jev,
+                    "clef" => PolicyKind::Clef,
+                    "clef-flash" => PolicyKind::ClefFlash,
                     _ => {
                         return Err(CliError::UnknownFlag(format!(
-                            "unknown policy `{raw}` (instinct|jev)"
+                            "unknown policy `{raw}` (instinct|jev|clef|clef-flash)"
                         )))
                     }
                 };
@@ -198,6 +211,8 @@ pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
             predict_once(MockBrowser::new(manifold), InstinctPolicy::default(), &args)
         }
         PolicyKind::Jev => predict_jev(manifold, &args),
+        PolicyKind::Clef => predict_clef(manifold, &args, "clef"),
+        PolicyKind::ClefFlash => predict_clef(manifold, &args, "clef-flash"),
     }
 }
 
@@ -252,10 +267,38 @@ fn predict_jev(
     ))
 }
 
+#[cfg(feature = "clef")]
+fn predict_clef(
+    manifold: aui_core::InteractionManifold,
+    args: &RunArgs,
+    model: &str,
+) -> Result<String, CliError> {
+    let transport = crate::clef::ClefTransport::from_env(model)
+        .map_err(|err| CliError::Config(format!("clef: {err}")))?;
+    predict_once(
+        MockBrowser::new(manifold),
+        aui_policy::RemotePolicy::new(transport),
+        args,
+    )
+}
+
+#[cfg(not(feature = "clef"))]
+fn predict_clef(
+    _manifold: aui_core::InteractionManifold,
+    _args: &RunArgs,
+    _model: &str,
+) -> Result<String, CliError> {
+    Err(CliError::UnknownFlag(
+        "--policy clef requires building with --features clef".into(),
+    ))
+}
+
 fn drive<T: CdpTransport>(session: BrowserSession<T>, args: &RunArgs) -> Result<String, CliError> {
     match args.policy {
         PolicyKind::Instinct => drive_with(session, InstinctPolicy::default(), args),
         PolicyKind::Jev => drive_jev(session, args),
+        PolicyKind::Clef => drive_clef(session, args, "clef"),
+        PolicyKind::ClefFlash => drive_clef(session, args, "clef-flash"),
     }
 }
 
@@ -290,6 +333,28 @@ fn drive_jev<T: CdpTransport>(
 ) -> Result<String, CliError> {
     Err(CliError::UnknownFlag(
         "--policy jev requires building with --features jev".into(),
+    ))
+}
+
+#[cfg(feature = "clef")]
+fn drive_clef<T: CdpTransport>(
+    session: BrowserSession<T>,
+    args: &RunArgs,
+    model: &str,
+) -> Result<String, CliError> {
+    let transport = crate::clef::ClefTransport::from_env(model)
+        .map_err(|err| CliError::Config(format!("clef: {err}")))?;
+    drive_with(session, aui_policy::RemotePolicy::new(transport), args)
+}
+
+#[cfg(not(feature = "clef"))]
+fn drive_clef<T: CdpTransport>(
+    _session: BrowserSession<T>,
+    _args: &RunArgs,
+    _model: &str,
+) -> Result<String, CliError> {
+    Err(CliError::UnknownFlag(
+        "--policy clef requires building with --features clef".into(),
     ))
 }
 

@@ -27,4 +27,4 @@ deterministic abstention, ActionTickets, postcondition verification
 ## hexuria/instinct
 
 Domain-agnostic decision engine. ADR 0010: Instinct owns HOW; Ultra-Instinct owns WHAT.
-Pinned by git rev `a42d16b` in the workspace; `InstinctPolicy` is the default policy. Repo: <https://github.com/hexuria/instinct>
+Pinned by git rev `a42d16b` in the workspace; `InstinctPolicy` is the offline policy (`--policy instinct`); `jev` builds default to `RemotePolicy`. Repo: <https://github.com/hexuria/instinct>

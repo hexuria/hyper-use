@@ -115,7 +115,7 @@ crate.
 | `aui-protocol` | Guard / ticket / verify wire types |
 | `aui-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
 | `aui-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
-| `aui-cli` | `ultra-instinct run` (agent loop, `--policy instinct|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
+| `aui-cli` | `ultra-instinct run` (agent loop, `--policy instinct|jev|clef|clef-flash`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire); `ClefTransport` (feature `clef`: Cloudflare Workers AI Clef / Clef-Flash over the same wire, one decision call, single-candidate heads answered locally) |
 
 Instinct is pinned by git rev in the workspace `Cargo.toml`; bump only with a
 deliberate eval. HGRA lives in `experiments/hgra/` and the resonance `hgra`

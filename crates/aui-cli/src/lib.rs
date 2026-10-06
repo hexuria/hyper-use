@@ -436,6 +436,8 @@ mod compare;
 pub(crate) mod run_cmd;
 pub(crate) mod session_cmd;
 
+#[cfg(feature = "clef")]
+pub mod clef;
 #[cfg(feature = "jev")]
 pub mod typesafe;
 

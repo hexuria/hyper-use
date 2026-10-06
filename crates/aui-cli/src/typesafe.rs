@@ -93,22 +93,22 @@ impl TypesafeTransport {
 }
 
 /// (criterion key, about text) pairs for one question.
-type Criteria = Vec<(String, Option<JsonContent>)>;
+pub(crate) type Criteria = Vec<(String, Option<JsonContent>)>;
 
 /// Criteria key sets of the built questions, kept for answer validation:
 /// the operation head's keys, then each target head's keys.
-struct BuiltQuestions {
-    state: Value,
-    questions: Vec<(String, Question)>,
+pub(crate) struct BuiltQuestions {
+    pub(crate) state: Value,
+    pub(crate) questions: Vec<(String, Question)>,
     /// head name -> criteria keys it offers.
-    criteria_keys: Vec<(String, Vec<String>)>,
+    pub(crate) criteria_keys: Vec<(String, Vec<String>)>,
 }
 
 /// Build `(state, questions)` for one System One call from the wire request.
 /// Questions keep jev's names (`operation`, `click_target`, …) and criteria
 /// keys (kind names, region ids) so the model sees the same shape it does
 /// under jev-ultrafast.
-fn build_questions(request: &Value) -> Result<BuiltQuestions, String> {
+pub(crate) fn build_questions(request: &Value) -> Result<BuiltQuestions, String> {
     let goal = request["goal"].as_str().ok_or("request: `goal` missing")?;
     let actions = request["actions"]
         .as_array()
@@ -277,7 +277,7 @@ impl RemoteTransport for TypesafeTransport {
 /// that head's answer from the response. The operation must be offered; an
 /// element operation then needs a valid answer on its own `<kind>_target`
 /// head (never another kind's head); a control operation needs none.
-fn compose_reply<'a>(
+pub(crate) fn compose_reply<'a>(
     criteria_keys: &[(String, Vec<String>)],
     answer_for: impl Fn(&str) -> Result<&'a ChoiceAnswer, String>,
 ) -> Result<String, String> {

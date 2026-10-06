@@ -43,6 +43,8 @@ path = "src/bin/aui.rs"
 default = []
 # Optional System One client. Not part of `cargo build` or `cargo test`.
 jev = ["dep:typesafe-sdk", "dep:serde_json", "aui-policy/remote"]
+# Optional Cloudflare Workers AI Clef / Clef-Flash client (same closed remote wire).
+clef = ["jev", "dep:reqwest"]
 # Experimental HGRA matcher (wires into aui-mcp / mcp locate+guard).
 hgra = ["aui-mcp/hgra"]
 # Model-backed TYPE_TEXT / SELECT payloads via `run --text-model-cmd <program>`.
@@ -57,3 +59,9 @@ features = ["blocking"]
 [dependencies.serde_json]
 version = "1"
 optional = true
+
+[dependencies.reqwest]
+version = "0.12"
+optional = true
+default-features = false
+features = ["blocking", "json", "rustls-tls", "http2", "system-proxy", "charset"]

@@ -87,7 +87,35 @@ pub(crate) fn dom_document(document_json: &str) -> Result<DomDocument, BrowserEr
     let mut out = DomDocument::default();
     let mut ancestors = Vec::new();
     walk_dom(root, None, &mut ancestors, &mut out);
+    drop_ambiguous_hu_k(&mut out);
     Ok(out)
+}
+
+/// A `data-hu-k` carried by more than one element (a page clone of a tagged
+/// node, or a frame the walk could not reach forging a value) cannot be
+/// joined to one compact record. Every element sharing it is untagged so it
+/// takes the per-node fallback, and a compact hit naming it resolves to no
+/// backend, which also falls back.
+fn drop_ambiguous_hu_k(out: &mut DomDocument) {
+    let mut seen = std::collections::BTreeMap::<u32, usize>::new();
+    for k in out.hu_k_of_backend.values() {
+        *seen.entry(*k).or_default() += 1;
+    }
+    let ambiguous: std::collections::BTreeSet<u32> = seen
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(k, _)| k)
+        .collect();
+    if ambiguous.is_empty() {
+        return;
+    }
+    out.hu_k_of_backend.retain(|_, k| !ambiguous.contains(k));
+    out.backend_of_hu_k.retain(|k, _| !ambiguous.contains(k));
+    for element in &mut out.elements {
+        if element.hu_k.is_some_and(|k| ambiguous.contains(&k)) {
+            element.hu_k = None;
+        }
+    }
 }
 
 pub(crate) fn ax_elements(tree_json: &str) -> Result<Vec<AxElement>, BrowserError> {

@@ -129,8 +129,8 @@ impl<T: CdpTransport> BrowserSession<T> {
     /// tags every reachable element `data-hu-k` and returns its rect,
     /// computed style, and hit-test result in one reply. `None` when the
     /// transport cannot run it (a replay script that never scripted the
-    /// step, or a protocol error), which leaves the per-node fallback.
-    /// A thrown expression is a bug in the walk and aborts.
+    /// step, a protocol error, or a walk that threw — e.g. a page that
+    /// replaced DOM globals), which leaves the per-node fallback.
     fn compact_eval(&mut self) -> Result<Option<compact::CompactSnapshot>, BrowserError> {
         let params = json!({
             "expression": compact::COMPACT_JS,
@@ -140,9 +140,7 @@ impl<T: CdpTransport> BrowserSession<T> {
         match self.call("Runtime.evaluate", &params) {
             Ok(body) => {
                 if extract::call_threw(&body)? {
-                    return Err(BrowserError::Cdp(CdpError::Protocol {
-                        message: "compact snapshot eval threw".into(),
-                    }));
+                    return Ok(None);
                 }
                 Ok(Some(compact::parse(&body)?))
             }
@@ -281,12 +279,9 @@ impl<T: CdpTransport> BrowserSession<T> {
             let covered = backend
                 .and_then(|b| dom.hu_k_of_backend.get(&b))
                 .and_then(|k| compact.and_then(|c| c.node(*k)));
-            match covered {
-                Some(node) => {
-                    styles.insert(
-                        id,
-                        (crate::stacking::style_from_computed(&node.style), order),
-                    );
+            match covered.and_then(|node| node.style.as_ref()) {
+                Some(style) => {
+                    styles.insert(id, (crate::stacking::style_from_computed(style), order));
                 }
                 None => pending.push((id, node_id, order)),
             }
@@ -349,15 +344,21 @@ impl<T: CdpTransport> BrowserSession<T> {
             .collect();
         let mut buried = Vec::new();
         for (id, backend, x, y) in targets {
-            let hit = match dom
+            let evidence = dom
                 .hu_k_of_backend
                 .get(&backend)
                 .and_then(|k| compact.and_then(|c| c.node(*k)))
-            {
-                // Tagged: the blob's hit k resolves to a backend id through
-                // the same document's `data-hu-k` attributes.
-                Some(node) => node.hit.and_then(|k| dom.backend_of_hu_k.get(&k).copied()),
-                // Untagged: per-node fallback.
+                .map_or(compact::Hit::NotCollected, |node| node.hit);
+            let resolved = match evidence {
+                compact::Hit::Nothing => Some(None),
+                // The blob's hit k resolves through the same document's
+                // `data-hu-k` attributes; an ambiguous or unknown k falls back.
+                compact::Hit::Key(k) => dom.backend_of_hu_k.get(&k).map(|b| Some(*b)),
+                compact::Hit::NotCollected => None,
+            };
+            let hit = match resolved {
+                Some(hit) => hit,
+                // Untagged, not collected, or unresolvable: per-node fallback.
                 None => {
                     let params = json!({"x": x.round() as i64, "y": y.round() as i64}).to_string();
                     let body = match self.call("DOM.getNodeForLocation", &params) {

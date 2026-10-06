@@ -21,8 +21,17 @@
 //! Semantics preserved from the per-node calls: `display:none` (no client
 //! rects) omits a node like a `getBoxModel` error; the rect is the content
 //! box (border box minus computed border + padding) in top-viewport
-//! coordinates; a hit that lands on an iframe descends into it when the
-//! iframe is same-origin.
+//! coordinates; hit tests start in the top document at top-viewport
+//! coordinates (so parent overlays above an iframe count), descend into open
+//! shadow roots, and descend into same-origin iframes, as
+//! `DOM.getNodeForLocation` does. Style and hit evidence is collected only
+//! for elements that can become regions; others fall back per node.
+//!
+//! Side effect: the `data-hu-k` attributes stay on the page and are visible
+//! to its scripts. Each walk re-tags every reachable element; a key carried
+//! by more than one element (a page clone, a forged value in an unreachable
+//! frame) is dropped by `extract` and those elements fall back per node.
+//! A walk that throws (hostile page globals) falls back entirely.
 
 use std::collections::BTreeMap;
 
@@ -35,10 +44,13 @@ use crate::error::{BrowserError, CdpError};
 /// Attribute the walk injects. Read back off `DOM.getDocument` nodes.
 pub(crate) const HU_K_ATTR: &str = "data-hu-k";
 
-/// The single-eval walk. Returns `{nodes: {"<k>": {r,s,h}}}` where `r` is
+/// The single-eval walk. Returns `{nodes: {"<k>": {r,s?,h?}}}` where `r` is
 /// `[x,y,w,h]` or null, `s` the computed-style name/value pairs
 /// `style_from_computed` consumes, and `h` the `data-hu-k` of the element
-/// under the content center (or null when nothing is there).
+/// under the content center (null when nothing is there). `s` and `h` are
+/// present only on boxed elements that can become regions (the JS mirror of
+/// `extract::keep_element`); an absent field means "not collected" and the
+/// consumer falls back to the per-node call.
 pub(crate) const COMPACT_JS: &str = r#"(function(){
 var ATTR='data-hu-k';
 var PROPS=['z-index','position','opacity','transform','filter','isolation','mix-blend-mode','will-change','pointer-events'];
@@ -95,33 +107,67 @@ function hitKey(node){
   }
   return null;
 }
-// Top-down hit test: elementFromPoint in `doc`, descending into
-// same-origin iframe hits the way CDP hit testing does.
-function hitAt(doc,x,y){
+// Deepest element under a point in `root`'s coordinates, descending into
+// open shadow roots: `elementFromPoint` retargets to the shadow host, while
+// CDP hit testing returns the node inside the shadow tree.
+function deepAt(root,x,y){
   var el=null;
-  try{el=doc.elementFromPoint(x,y);}catch(e){return null;}
+  try{el=root.elementFromPoint(x,y);}catch(e){return null;}
+  while(el&&el.shadowRoot){
+    var inner=null;
+    try{inner=el.shadowRoot.elementFromPoint(x,y);}catch(e){}
+    if(!inner||inner===el)break;
+    el=inner;
+  }
+  return el;
+}
+// Hit test at top-viewport point (tx,ty), starting in `doc` (always the top
+// document from `visit`, so parent overlays above an iframe are seen) and
+// descending into same-origin iframe hits the way CDP hit testing does.
+function hitAt(doc,tx,ty){
+  var o=docOffset(doc);
+  var el=deepAt(doc,tx-o[0],ty-o[1]);
   if(!el)return null;
   try{
     if(el.contentDocument){
-      var o=docOffset(el.contentDocument);
-      var inner=hitAt(el.contentDocument,x-o[0],y-o[1]);
+      var inner=hitAt(el.contentDocument,tx,ty);
       if(inner!==null)return inner;
     }
   }catch(e){}
   return hitKey(el);
 }
+// Mirrors `extract::keep_element`: only elements that can become regions
+// get style and hit evidence. Everything else carries a rect only; a region
+// whose element lacks evidence takes the per-node fallback.
+var KEEP={BUTTON:1,A:1,INPUT:1,TEXTAREA:1,SELECT:1,OPTION:1,NAV:1,IMG:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,DIALOG:1};
+var TEXTUAL={LABEL:1,SPAN:1,P:1,DIV:1};
+function directText(el){
+  for(var c=el.firstChild;c;c=c.nextSibling){
+    if(c.nodeType===3&&c.nodeValue&&c.nodeValue.trim()!=='')return true;
+  }
+  return false;
+}
+function candidate(el){
+  var name=el.nodeName.toUpperCase();
+  if(name==='SCRIPT'||name==='STYLE'||name==='HEAD'||name==='HTML'||name==='BODY')return false;
+  if(el.hasAttribute('role'))return true;
+  if(KEEP[name])return true;
+  if(!TEXTUAL[name])return false;
+  var aria=el.getAttribute('aria-label');
+  return (aria!==null&&aria.trim()!=='')||directText(el);
+}
 function visit(el,doc,off){
   if(el.nodeType!==1)return;
   var k=next++;
   el.setAttribute(ATTR,String(k));
-  var rec={r:null,s:[],h:null};
+  var rec={r:null};
   var r=contentRect(el,off);
   if(r){
     rec.r=r;
-    rec.s=stylePairs(el);
-    var lx=r[0]-off[0]+r[2]/2;
-    var ly=r[1]-off[1]+r[3]/2;
-    rec.h=hitAt(doc,lx,ly);
+    if(candidate(el)){
+      rec.s=stylePairs(el);
+      rec.h=hitAt(document,r[0]+r[2]/2,r[1]+r[3]/2);
+    }
   }
   nodes[k]=rec;
   var kids=el.children;
@@ -152,10 +198,23 @@ pub(crate) struct CompactNode {
     /// Content box in top-viewport coordinates; `None` = omit like a
     /// `getBoxModel` protocol error.
     pub rect: Option<Rect>,
-    /// `CSS.getComputedStyleForNode` name/value pairs.
-    pub style: Vec<(String, String)>,
-    /// `data-hu-k` of the element under the content center.
-    pub hit: Option<u32>,
+    /// `CSS.getComputedStyleForNode` name/value pairs; `None` = not
+    /// collected (per-node fallback).
+    pub style: Option<Vec<(String, String)>>,
+    /// Hit test at the content center.
+    pub hit: Hit,
+}
+
+/// Compact hit-test evidence for one element.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Hit {
+    /// The walk did not hit-test this element; use `DOM.getNodeForLocation`.
+    #[default]
+    NotCollected,
+    /// Nothing tagged lies under the point (like a protocol error: skip).
+    Nothing,
+    /// `data-hu-k` of the element under the point.
+    Key(u32),
 }
 
 /// One compact snapshot keyed by `data-hu-k`.
@@ -200,22 +259,30 @@ pub(crate) fn parse(eval_result_json: &str) -> Result<CompactSnapshot, BrowserEr
             let h = r[3].as_f64()?;
             Rect::try_new(x, y, w, h).ok()
         });
-        let style = record
-            .get("s")
-            .and_then(Value::as_array)
-            .map(|pairs| {
-                pairs
-                    .iter()
-                    .filter_map(|pair| {
-                        let pair = pair.as_array()?;
-                        let name = pair.first()?.as_str()?;
-                        let value = pair.get(1)?.as_str()?;
-                        Some((name.to_owned(), value.to_owned()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let hit = record.get("h").and_then(Value::as_u64).map(|h| h as u32);
+        let style = record.get("s").and_then(Value::as_array).map(|pairs| {
+            pairs
+                .iter()
+                .filter_map(|pair| {
+                    let pair = pair.as_array()?;
+                    let name = pair.first()?.as_str()?;
+                    let value = pair.get(1)?.as_str()?;
+                    Some((name.to_owned(), value.to_owned()))
+                })
+                .collect()
+        });
+        let hit = match record.get("h") {
+            None => Hit::NotCollected,
+            Some(Value::Null) => Hit::Nothing,
+            Some(value) => {
+                let key = value
+                    .as_u64()
+                    .and_then(|h| u32::try_from(h).ok())
+                    .ok_or_else(|| CdpError::BadJson {
+                        message: format!("compact node `{k}` hit `{value}` is not a u32"),
+                    })?;
+                Hit::Key(key)
+            }
+        };
         out.nodes.insert(k, CompactNode { rect, style, hit });
     }
     Ok(out)

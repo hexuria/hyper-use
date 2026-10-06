@@ -1016,6 +1016,44 @@ mod compact_observe {
     }
 
     #[test]
+    #[ignore = "needs a live Chrome serving the compact test page; set HYPER_USE_CDP=http://127.0.0.1:PORT"]
+    fn live_compact_observe_tags_and_regions_on_real_chrome() {
+        let endpoint =
+            std::env::var("HYPER_USE_CDP").unwrap_or_else(|_| DEFAULT_CDP_HTTP.to_owned());
+        let transport = WebSocketTransport::connect(&endpoint).expect("connect");
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().expect("observe");
+        let labels: Vec<String> = manifold
+            .regions()
+            .map(|region| region.label().to_owned())
+            .collect();
+        for want in ["Sign in", "Email", "Plan", "Shadow action", "Frame action"] {
+            assert!(
+                labels
+                    .iter()
+                    .any(|label| label == want || label.contains(want)),
+                "missing {want}: {labels:?}"
+            );
+        }
+        // The compact walk leaves its mark on the live DOM: data-hu-k tags
+        // the per-node path never injects. A second ws client reads them back.
+        let mut probe = WebSocketTransport::connect(&endpoint).expect("probe");
+        let body = probe
+            .call(
+                "Runtime.evaluate",
+                &serde_json::json!({
+                    "expression": "document.querySelectorAll('[data-hu-k]').length",
+                    "returnByValue": true
+                })
+                .to_string(),
+            )
+            .expect("eval");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let tagged = value["result"]["value"].as_i64().unwrap_or(0);
+        assert!(tagged > 0, "compact walk left no data-hu-k tags: {body}");
+    }
+
+    #[test]
     fn compact_blob_decodes_rects_styles_and_hits() {
         let body = serde_json::json!({
             "result": {"type": "object", "value": {"nodes": {

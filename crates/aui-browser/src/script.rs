@@ -582,27 +582,17 @@ impl ScriptBuilder {
     }
 
     /// Read a by-value autocomplete signature through the bound DOM node.
-    pub fn dom_read_autocomplete_signature(mut self, node_id: i64, value: Value) -> Self {
-        let object = format!("obj-{node_id}");
-        self.calls.push(result(
-            "DOM.resolveNode",
-            json!({"object": {"type": "object", "objectId": object}}),
-        ));
-        self.calls.push(result(
-            "Runtime.callFunctionOn",
-            json!({"result":{"value":value}}),
-        ));
-        self
+    pub fn dom_read_autocomplete_signature(self, node_id: i64, value: Value) -> Self {
+        self.dom_read_result(node_id, json!({"value":value}))
     }
 
     /// A `BrowserSession::ready_state` result.
-    pub fn ready_state(self, value: &str) -> Self {
-        let mut builder = self;
-        builder.calls.push(result(
+    pub fn ready_state(mut self, value: &str) -> Self {
+        self.calls.push(result(
             "Runtime.evaluate",
             json!({"result":{"value":value}}),
         ));
-        builder
+        self
     }
 
     /// A DOM input by node id that the page refuses (the function throws).
@@ -623,7 +613,11 @@ impl ScriptBuilder {
     }
 
     /// Read-back of a field value (`BrowserSession::field_value`).
-    pub fn dom_read_value(mut self, node_id: i64, value: &str, text: &str) -> Self {
+    pub fn dom_read_value(self, node_id: i64, value: &str, text: &str) -> Self {
+        self.dom_read_result(node_id, json!({"type":"object","value":[value,text]}))
+    }
+
+    fn dom_read_result(mut self, node_id: i64, result_value: Value) -> Self {
         let object = format!("obj-{node_id}");
         self.calls.push(result(
             "DOM.resolveNode",
@@ -631,7 +625,7 @@ impl ScriptBuilder {
         ));
         self.calls.push(result(
             "Runtime.callFunctionOn",
-            json!({"result": {"type": "object", "value": [value, text]}}),
+            json!({"result": result_value}),
         ));
         self
     }

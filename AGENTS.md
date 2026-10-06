@@ -77,7 +77,8 @@ crate.
 >    atomics shared across threads, single-threaded blocking CDP, no recovery
 >    protocol): Loom / Kani / TLA+ / Miri / Lean are **NOT JUSTIFIED**. The
 >    owners are unit tests, `proptest`, adversarial fixtures, replay fixtures,
->    and cargo-mutants (nightly).
+>    cargo-mutants (nightly), and cargo-fuzz on the untrusted-input parsers
+>    (nightly).
 >
 > Any change to observable semantics on this path names the boundary it
 > affects (gate, ticket, executor, world, policy, text) and the test that owns
@@ -117,6 +118,19 @@ feature, not the default product path.
 - `write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP
   replay is a different grammar. Fusion is the only DOM/accessibility merge.
   Region identity across observations is owned by the browser `IdentityMap`.
+- Untrusted input (fixture grammar, CDP replay scripts, MCP stdin lines,
+  remote-model replies, model-text replies): `fuzz/` cargo-fuzz targets on a
+  dated nightly (`scripts/fuzz-smoke.sh`, `.github/workflows/nightly.yml`),
+  backed by the structured/garbage proptests at small case counts.
+- Observe protocol cost: `crates/hyper-use-browser/tests/call_budget.rs`
+  pins the CDP call count per observe as a regression tripwire.
+- Repo rules (toolchain pin, `forbid(unsafe_code)`, crate ceilings, pinned
+  nightlies): `scripts/check_repo_rules.sh`. Dependency direction and the
+  no-async/no-model-SDK ban below `hyper-use-cli`:
+  `scripts/architecture.txt` + `scripts/check_architecture.py`. Both run in
+  `ci.yml`'s `repo-rules` job.
+- Workflow integrity: `zizmor --persona=auditor` in `ci.yml`. Dependency
+  stagnation: `.github/dependabot.yml`.
 - Mutation testing: `.github/workflows/mutants.yml` (nightly + manual) on
   `gate.rs`, `ticket.rs`, `executor.rs`, and `world.rs` (`of_target` /
   `neighborhood_of` / `nearby`). How to run locally:

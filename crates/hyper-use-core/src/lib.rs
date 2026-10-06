@@ -265,6 +265,33 @@ mod tests {
         assert_eq!(parsed, manifold);
         assert_eq!(parsed.get_str("quote").unwrap().label(), "Say \"hi\"");
 
+        // strip_comment must honor \-escapes inside quotes: a label holding
+        // both a quote and a '#' truncated the written line mid-token and
+        // could not re-parse (found by the `fixture` fuzz target).
+        let hash = InteractionRegion::try_new(RegionParts {
+            id: RegionId::try_new("hash").unwrap(),
+            role: Role::Button,
+            label: "a\"#b".into(),
+            rect: Rect::try_new(0.0, 0.0, 1.0, 1.0).unwrap(),
+            actions: vec![Action::Click],
+            parent: None,
+            sources: SourceMask::DOM,
+            flags: RegionFlags::none(),
+            temporal_stability: UnitInterval::ONE,
+        })
+        .unwrap();
+        let manifold = InteractionManifold::try_new(viewport, vec![hash], 0).unwrap();
+        let written = write_fixture(&manifold).unwrap();
+        let parsed = parse_fixture(&written).unwrap();
+        assert_eq!(parsed, manifold);
+        assert_eq!(parsed.get_str("hash").unwrap().label(), "a\"#b");
+        // The same shape hand-written with a trailing comment still parses.
+        let parsed = parse_fixture(
+            "viewport w=10 h=10\nregion id=a role=button label=\"x\\\"#y\" x=0 y=0 w=1 h=1 # tail\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.get_str("a").unwrap().label(), "x\"#y");
+
         let shifted = InteractionManifold::try_new(
             Rect::try_viewport(4.0, 0.0, 100.0, 80.0).unwrap(),
             vec![region("only", "Only", 1.0)],

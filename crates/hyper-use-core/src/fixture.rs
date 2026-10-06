@@ -212,9 +212,18 @@ pub fn parse_fixture(input: &str) -> Result<InteractionManifold, FixtureError> {
 }
 
 fn strip_comment(line: &str) -> &str {
+    // Quotes opened by an escaped `\"` do not toggle quote state, matching
+    // split_tokens; without this a label holding `"` followed by `#` would
+    // truncate the line mid-token and fail to re-parse.
     let mut in_quotes = false;
+    let mut escaped = false;
     for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
         match ch {
+            '\\' if in_quotes => escaped = true,
             '"' => in_quotes = !in_quotes,
             '#' if !in_quotes => return &line[..idx],
             _ => {}

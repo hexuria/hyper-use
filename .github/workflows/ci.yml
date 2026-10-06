@@ -1,35 +1,158 @@
+# Pull-request gate (skill "CI shape": PR tier). Every job runs on the pinned 1.99.0 toolchain from
+# rust-toolchain.toml. `ci-ok` is the single required check.
+#
+# Still deliberately absent (docs/DECISIONS.md, docs/IMPECCABLE-AUDIT.md):
+#   Miri, Loom, Kani, TLA+, Lean — #![forbid(unsafe_code)] everywhere, the CDP
+#   client is blocking and single-threaded, no recovery protocol.
+#   cargo-semver-checks — publish = false until 1.0.
 name: ci
+
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  repo-rules:
+    name: repo rules (toolchain pin, forbid unsafe, ceilings, architecture)
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: clippy, rustfmt
-      # Miri, Loom, and Kani are not justified: no unsafe, no atomics, no threads.
-      # Browser tests use a CDP replay fixture. The ignored live test is not in CI.
-      # cargo-semver-checks is not justified until a crate is published.
-      # See docs/DECISIONS.md.
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      # Optional HGRA experiment still compiles behind its feature.
-      - run: cargo test -p hyper-use-resonance --features hgra
-      - run: cargo clippy -p hyper-use-cli --all-targets --features jev -- -D warnings
-      - run: cargo test -p hyper-use-cli --features jev
-      # Optional remote escalation (arm D) behind its feature.
-      - run: cargo test -p hyper-use-policy -p hyper-use-agent --features hyper-use-agent/remote,hyper-use-policy/remote
-      # Optional model-text TextResolver: scripted / local-command models only (no network, no keys).
-      - run: cargo clippy -p hyper-use-policy -p hyper-use-agent -p hyper-use-cli --all-targets --features hyper-use-policy/model-text,hyper-use-agent/model-text,hyper-use-cli/model-text -- -D warnings
-      - run: cargo test -p hyper-use-policy -p hyper-use-agent -p hyper-use-cli --features hyper-use-policy/model-text,hyper-use-agent/model-text,hyper-use-cli/model-text
-  deny:
-    runs-on: ubuntu-latest
+          persist-credentials: false
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version | grep -q '^rustc 1\.99\.0 '
+      - run: scripts/check_repo_rules.sh
+      - run: python3 scripts/check_architecture.py --self-test
+      - run: python3 scripts/check_architecture.py
+
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (-D warnings)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo clippy -p hyper-use-cli --all-targets --features jev --locked -- -D warnings
+
+  check-crates:
+    name: each crate alone (--no-default-features, --locked)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: cargo check per crate
+        run: |
+          set -euo pipefail
+          for pkg in $(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[].name' | sort); do
+            echo "::group::$pkg"
+            RUSTFLAGS="-D warnings" cargo check -p "$pkg" --no-default-features --locked
+            RUSTFLAGS="-D warnings" cargo check -p "$pkg" --all-features --locked
+            echo "::endgroup::"
+          done
+
+  test:
+    name: tests (nextest + feature matrix + doctests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --workspace --locked --profile ci --no-tests=pass
+      # Optional HGRA experiment still compiles and tests behind its feature.
+      - run: cargo nextest run -p hyper-use-resonance --features hgra --locked --profile ci
+      # Optional remote escalation behind its feature.
+      - run: cargo nextest run -p hyper-use-policy -p hyper-use-agent --features hyper-use-agent/remote,hyper-use-policy/remote --locked --profile ci
+      # Optional model-text TextResolver: scripted / local-command models only (no network, no keys).
+      - run: cargo nextest run -p hyper-use-policy -p hyper-use-agent -p hyper-use-cli --features hyper-use-policy/model-text,hyper-use-agent/model-text,hyper-use-cli/model-text --locked --profile ci
+      # Optional System One client example still compiles behind its feature.
+      - run: cargo nextest run -p hyper-use-cli --features jev --locked --profile ci
+      - run: cargo test --workspace --all-features --locked --doc
+      - name: Upload JUnit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: junit
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+  docs:
+    name: rustdoc (-D warnings)
+    runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --workspace --no-deps --all-features --locked
+
+  deny:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check advisories
+
+  zizmor:
+    name: zizmor (workflow audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit workflows
+        run: |
+          python3 -m pip install --quiet 'zizmor==1.30.1'
+          zizmor --persona=auditor --format plain .github/workflows/
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [repo-rules, fmt, clippy, check-crates, test, docs, deny, zizmor]
+    runs-on: ubuntu-24.04
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: All required jobs passed
+        run: echo "$NEEDS" | jq -e 'to_entries | all(.value.result == "success")'

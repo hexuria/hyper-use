@@ -1,0 +1,29 @@
+{
+  "calls": [
+    {
+      "method": "DOM.resolveNode",
+      "params": {
+        "nodeId": 10
+      },
+      "result": {
+        "object": {
+          "type": "object",
+          "objectId": "obj-10"
+        }
+      }
+    },
+    {
+      "method": "Runtime.callFunctionOn",
+      "params": {
+        "functionDeclaration": "function(){this.click()}",
+        "objectId": "obj-10",
+        "returnByValue": true
+      },
+      "result": {
+        "result": {
+          "type": "undefined"
+        }
+      }
+    }
+  ]
+}

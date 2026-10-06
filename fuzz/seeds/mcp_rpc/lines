@@ -1,0 +1,3 @@
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"observe","arguments":{}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"not":"json"}

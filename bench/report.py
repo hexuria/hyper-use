@@ -175,7 +175,7 @@ def manifest_md(mans: list[dict], merged_label: str) -> list[str]:
         lines += [
             f"| Run `{rid}` started | {man['started']} |",
             f"| Run `{rid}` bench HEAD | `{g['bench_uniform_head'][:12]}`{' (dirty)' if g['dirty'] else ''} |",
-            f"| Run `{rid}` ultra-instinct merged | `{g['ultra_instinct_merged']}` |",
+            f"| Run `{rid}` ultra-instinct merged | `{g['aui_merged']}` |",
             f"| Run `{rid}` TYPESAFE_API_KEY present | {man['typesafe_key_present']} |",
         ]
     # shared settings from the first manifest (same config_hash across both)

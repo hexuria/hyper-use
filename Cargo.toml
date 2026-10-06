@@ -1,23 +1,23 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ultra-instinct-core",
-    "crates/ultra-instinct-geometry",
-    "crates/ultra-instinct-observe",
-    "crates/ultra-instinct-resonance",
-    "crates/ultra-instinct-browser",
-    "crates/ultra-instinct-protocol",
-    "crates/ultra-instinct-guard",
-    "crates/ultra-instinct-policy",
-    "crates/ultra-instinct-agent",
-    "crates/ultra-instinct-mcp",
-    "crates/ultra-instinct-cli",
-    # Experimental. Not on the product path. Build with -p ultra-instinct-hyper --features unused
-    # or via ultra-instinct-resonance's `hgra` feature.
-    "experiments/hgra/ultra-instinct-hyper",
+    "crates/aui-core",
+    "crates/aui-geometry",
+    "crates/aui-observe",
+    "crates/aui-resonance",
+    "crates/aui-browser",
+    "crates/aui-protocol",
+    "crates/aui-guard",
+    "crates/aui-policy",
+    "crates/aui-agent",
+    "crates/aui-mcp",
+    "crates/aui-cli",
+    # Experimental. Not on the product path. Build with -p aui-hyper --features unused
+    # or via aui-resonance's `hgra` feature.
+    "experiments/hgra/aui-hyper",
 ]
 # Deleted from the product graph (see docs/DECISIONS.md product pivot):
-# ultra-instinct-browser-use, ultra-instinct-cua, ultra-instinct-macos, ultra-instinct-executor
+# aui-browser-use, aui-cua, aui-macos, aui-executor
 
 [workspace.package]
 version = "0.1.0"

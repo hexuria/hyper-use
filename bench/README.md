@@ -53,7 +53,7 @@ out of reach for A5/A6; the leaderboard has a press-only column.
 cd bench
 UV_PROJECT_ENVIRONMENT=.venv uv sync --python 3.12
 (cd envs/cua && UV_PROJECT_ENVIRONMENT=.venv uv sync --python 3.12)
-cargo build --release -p ultra-instinct-cli && cargo build --release -p ultra-instinct-cli --features jev --example live_drive
+cargo build --release -p aui-cli && cargo build --release -p aui-cli --features jev --example live_drive
 # vendor pins (gitignored): see RESULTS.md manifest
 bench/bench run --mock --arms mock-oracle,mock-saboteur     # no keys: validates pages, checkers, harness
 bench/bench run --config bench/bench.toml --seed 42         # the real run

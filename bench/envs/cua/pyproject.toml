@@ -1,5 +1,5 @@
 [project]
-name = "ultra-instinct-bench-cua"
+name = "aui-bench-cua"
 version = "0.1.0"
 description = "Env for the CUA arms (A2 Luna+CUA, A4 CUA jev-use): matches the jev-use recipe's mcp<2 pin"
 requires-python = ">=3.12,<3.13"

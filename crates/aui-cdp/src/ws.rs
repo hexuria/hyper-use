@@ -1,9 +1,9 @@
 //! Blocking CDP websocket. Plain `ws://` only. `wss://` is refused: this
 //! crate does not pull a TLS stack. Chrome's local debugging port is `ws`.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tungstenite::{Message, WebSocket};
@@ -13,6 +13,9 @@ use crate::{CdpError, CdpTransport};
 /// Documented default. Pass `--cdp` with no value to use it. A live Chrome
 /// must already be listening; ultra-instinct does not launch a browser.
 pub const DEFAULT_CDP_HTTP: &str = "http://127.0.0.1:9222";
+
+/// Maximum time to wait for a CDP response after sending a call.
+const CALL_DEADLINE: Duration = Duration::from_secs(30);
 
 type Socket = WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
 
@@ -108,10 +111,27 @@ impl CdpTransport for WebSocketTransport {
             .map_err(|err| CdpError::Transport {
                 message: err.to_string(),
             })?;
-        for _ in 0..64 {
-            let message = self.socket.read().map_err(|err| CdpError::Transport {
-                message: err.to_string(),
-            })?;
+        let deadline = Instant::now() + CALL_DEADLINE;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(call_deadline_error(method));
+            }
+            let message = match self.socket.read() {
+                Ok(message) => message,
+                Err(tungstenite::Error::Io(error))
+                    if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                {
+                    if Instant::now() >= deadline {
+                        return Err(call_deadline_error(method));
+                    }
+                    continue;
+                }
+                Err(err) => {
+                    return Err(CdpError::Transport {
+                        message: err.to_string(),
+                    });
+                }
+            };
             let Message::Text(text) = message else {
                 continue;
             };
@@ -133,9 +153,15 @@ impl CdpTransport for WebSocketTransport {
             let result = value.get("result").cloned().unwrap_or(Value::Null);
             return Ok(result.to_string());
         }
-        Err(CdpError::Transport {
-            message: format!("no CDP result for `{method}` after 64 messages"),
-        })
+    }
+}
+
+fn call_deadline_error(method: &str) -> CdpError {
+    CdpError::Transport {
+        message: format!(
+            "no CDP result for `{method}` within {} s",
+            CALL_DEADLINE.as_secs()
+        ),
     }
 }
 

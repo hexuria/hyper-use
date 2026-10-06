@@ -1,7 +1,7 @@
 use std::net::TcpListener;
 use std::thread;
 
-use aui_browser::{CdpTransport, WebSocketTransport};
+use aui_cdp::{CdpTransport, WebSocketTransport};
 use serde_json::{json, Value};
 use tungstenite::{accept, Message};
 

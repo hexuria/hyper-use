@@ -21,7 +21,8 @@ mod stacking;
 mod verify;
 
 pub use aui_cdp::{
-    script, CdpError, CdpTransport, ReplayTransport, WebSocketTransport, DEFAULT_CDP_HTTP,
+    open_tab, script, CdpError, CdpTransport, ReplayTransport, WebSocketTransport,
+    DEFAULT_CDP_HTTP,
 };
 pub use error::{ActMechanism, BrowserError};
 pub use fusion::{MAX_CENTROID_PX, MIN_IOU, MIN_LABEL_JACCARD};

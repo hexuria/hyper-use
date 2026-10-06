@@ -85,9 +85,6 @@ impl CdpTransport for WebSocketTransport {
                     });
                 }
             };
-            if Instant::now() >= deadline {
-                return Err(call_deadline_error(method));
-            }
             let Message::Text(text) = message else {
                 continue;
             };

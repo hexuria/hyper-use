@@ -55,6 +55,10 @@ cargo run -p aui-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
+Each `ultra-instinct run --cdp ... --url ...` opens its own background tab and
+closes it when the run ends, so multiple agents can run against one Chrome.
+`--cdp` without `--url` continues to drive the first existing tab.
+
 Optional model payloads (feature `model-text`, ADR 0006): Instinct still picks the
 target; a model only extracts a TYPE_TEXT / SELECT value that must occur in the
 goal, else deterministic fallback, else abstain. Tests use scripted models.

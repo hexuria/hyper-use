@@ -46,6 +46,19 @@ ARMS = {
     "A7": {"name": "Luna + JEV + ultra-instinct + CUA", "python": MAIN_PY, "script": "arms/a7_combo_cua.py", "browser": "cua", "typesafe": True},
     "A8": {"name": "Luna + JEV + ultra-instinct + Browser Use", "python": MAIN_PY, "script": "arms/a8_combo_bu.py", "browser": "harness", "typesafe": True},
 }
+# Head-to-head race (bench/race.toml): text from quoted goal literals on every arm, no text model.
+ARMS["A3q"] = {**ARMS["A3"], "name": "jev-ultrafast (quoted-literal text)", "options": {"text": "quoted"}}
+ARMS["A9"] = {"name": "ultra-instinct aui run (Instinct)", "python": MAIN_PY, "script": "arms/a9_aui.py", "browser": "harness",
+              "typesafe": False, "options": {"policy": "instinct"}}
+ARMS["A10"] = {"name": "ultra-instinct aui run (--policy jev)", "python": MAIN_PY, "script": "arms/a9_aui.py", "browser": "harness",
+               "typesafe": True, "options": {"policy": "jev"}}
+# Diagnostic only (not a race arm): A9 without the shared GOAL_SUFFIX.
+ARMS["A9b"] = {**ARMS["A9"], "name": "ultra-instinct aui run (Instinct, bare goal; diagnostic)",
+               "options": {"policy": "instinct", "bare_goal": True}}
+ARMS["A11"] = {"name": "ultra-instinct aui run (--policy clef-flash)", "python": MAIN_PY, "script": "arms/a9_aui.py", "browser": "harness",
+               "typesafe": False, "options": {"policy": "clef-flash"}}
+ARMS["A12"] = {"name": "ultra-instinct aui run (--policy clef)", "python": MAIN_PY, "script": "arms/a9_aui.py", "browser": "harness",
+               "typesafe": False, "options": {"policy": "clef"}}
 for mode in ["oracle", "saboteur", "spinner", "wanderer", "sleeper"]:
     ARMS[f"mock-{mode}"] = {"name": f"mock {mode}", "python": MAIN_PY, "script": "arms/mock.py", "browser": "harness",
                             "typesafe": False, "options": {"mode": mode}, "mock": True}

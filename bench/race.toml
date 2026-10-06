@@ -1,0 +1,32 @@
+# Head-to-head race: jev-ultrafast (A3q) vs ultra-instinct `aui run` (A9 Instinct, A10 JEV policy).
+# `bench/bench run --config bench/race.toml --seed 42`. Text is quoted goal literals on every arm.
+[run]
+seed = 42
+reps = 3          # runs per arm per task
+max_tries = 1     # no retries: every attempt counts
+arms = ["A3q", "A9", "A10"]
+scenarios = ["acme-mail", "shop-checkout", "admin-table", "booking-calendar", "hard-dom", "travel-search"]
+
+[caps]            # enforced by the harness from outside every arm, per attempt
+steps = 20
+model_calls = 40
+wall_s = 180
+stuck_repeats = 3
+page_acts = 40    # backstop: page-observed actions (one arm step can be 2, e.g. click + fill)
+
+[models]
+luna = "gpt-6-luna"
+luna_effort = "low"
+jev = "jev-latest"
+
+[viewport]
+width = 1280
+height = 800
+# Headless (same Chrome binary): the Mac runs AeroSpace, a tiling window manager that
+# resizes every new headed window, so a headed 1280x800 viewport cannot be held.
+headless = true
+
+[ports]
+server = 8775
+proxy = 8776
+chrome = 9433

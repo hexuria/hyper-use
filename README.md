@@ -46,6 +46,15 @@ Crates are `aui-*` (Autonomous Ultra Instinct, e.g. `aui-agent`,
 `aui-browser`). The binary is `ultra-instinct`, with `aui` as a short
 alias for the same CLI.
 
+## Install
+
+```bash
+scripts/install-aui.sh   # idempotent; installs aui + ultra-instinct to ~/.cargo/bin
+```
+
+Agents: `skills/ultra-instinct/SKILL.md` turns a plain-language goal into one
+`aui run` call — install, CDP check, policy pick, and run are all covered there.
+
 ## Run the agent
 
 ```bash

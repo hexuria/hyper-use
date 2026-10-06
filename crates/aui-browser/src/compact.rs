@@ -39,10 +39,10 @@ use serde_json::Value;
 
 use aui_core::Rect;
 
-use crate::error::{BrowserError, CdpError};
+use aui_cdp::CdpError;
+pub(crate) use aui_cdp::HU_K_ATTR;
 
-/// Attribute the walk injects. Read back off `DOM.getDocument` nodes.
-pub(crate) const HU_K_ATTR: &str = "data-hu-k";
+use crate::error::BrowserError;
 
 /// The single-eval walk. Returns `{nodes: {"<k>": {r,s?,h?}}}` where `r` is
 /// `[x,y,w,h]` or null, `s` the computed-style name/value pairs

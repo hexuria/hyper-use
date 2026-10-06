@@ -9,7 +9,9 @@ use serde_json::Value;
 
 use aui_core::{Action, Rect, Role};
 
-use crate::error::{BrowserError, CdpError};
+use aui_cdp::CdpError;
+
+use crate::error::BrowserError;
 
 #[derive(Clone, Debug)]
 pub(crate) struct DomElement {

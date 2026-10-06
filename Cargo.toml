@@ -5,6 +5,7 @@ members = [
     "crates/aui-geometry",
     "crates/aui-observe",
     "crates/aui-resonance",
+    "crates/aui-cdp",
     "crates/aui-browser",
     "crates/aui-protocol",
     "crates/aui-guard",

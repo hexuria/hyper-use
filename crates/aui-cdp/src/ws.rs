@@ -8,8 +8,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tungstenite::{Message, WebSocket};
 
-use crate::error::CdpError;
-use crate::transport::CdpTransport;
+use crate::{CdpError, CdpTransport};
 
 /// Documented default. Pass `--cdp` with no value to use it. A live Chrome
 /// must already be listening; ultra-instinct does not launch a browser.

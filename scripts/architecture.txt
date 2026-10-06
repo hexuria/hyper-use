@@ -23,7 +23,9 @@ aui-resonance: aui-core aui-geometry aui-hyper
     | tokio axum sqlx reqwest hyper typesafe-sdk
 aui-protocol: aui-core
     | tokio axum sqlx reqwest hyper typesafe-sdk
-aui-browser: aui-core aui-geometry aui-observe aui-resonance
+aui-cdp:
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+aui-browser: aui-cdp aui-core aui-geometry aui-observe aui-resonance
     | tokio axum sqlx reqwest hyper typesafe-sdk
 aui-guard: aui-core aui-protocol aui-resonance
     | tokio axum sqlx reqwest hyper typesafe-sdk

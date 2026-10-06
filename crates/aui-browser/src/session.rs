@@ -36,12 +36,13 @@ use serde_json::{json, Value};
 use aui_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId};
 
 use crate::compact;
-use crate::error::{ActMechanism, BrowserError, CdpError};
+use aui_cdp::{CdpError, CdpTransport};
+
+use crate::error::{ActMechanism, BrowserError};
 use crate::extract::{self, content_rect, AxElement};
 use crate::fusion::{self, NodeBinding, RawNode};
 use crate::identity::IdentityMap;
 use crate::page::PageState;
-use crate::transport::CdpTransport;
 use crate::verify::{self, Expectation};
 
 pub const DOM_CLICK_FUNCTION: &str = "function(){this.click()}";

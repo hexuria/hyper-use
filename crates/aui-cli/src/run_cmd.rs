@@ -11,12 +11,13 @@
 //! ultra-instinct run ... --policy instinct            # offline; `pua` is a deprecated alias
 //! ```
 //!
-//! Live mode drives the attached Chrome page: observe → policy → gate → ticket →
-//! executor (revalidate + consume) → input → observe → verify, until DONE,
-//! BLOCKED, abstain, or a bound. With the `jev` feature the default policy
-//! is JEV (System One). `--policy instinct` is the offline policy: no LLM and
-//! no MCP are involved; Instinct abstains rather than guessing. `--policy pua`
-//! remains a deprecated alias for `--policy instinct`.
+//! Live mode with `--url` opens an owned background tab; it closes when the run
+//! ends. Without `--url`, it drives the first existing Chrome page. The loop is
+//! observe → policy → gate → ticket → executor (revalidate + consume) → input →
+//! observe → verify, until DONE, BLOCKED, abstain, or a bound. With the `jev`
+//! feature the default policy is JEV (System One). `--policy instinct` is the
+//! offline policy: no LLM and no MCP are involved; Instinct abstains rather than
+//! guessing. `--policy pua` remains a deprecated alias for `--policy instinct`.
 //!
 //! `--policy jev` (built with `--features jev`) decides through JEV (System
 //! One) instead: the offered ActionSpace becomes one `operation` + one
@@ -41,7 +42,7 @@
 //! resolver, then abstain. The program owns any API keys.
 
 use aui_agent::{Agent, AgentBuilder, AgentOutcome, BrowserRuntime, MockBrowser};
-use aui_browser::{BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
+use aui_browser::{open_tab, BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
 use aui_core::parse_fixture;
 use aui_policy::{BrowserPolicy, InstinctPolicy, TextResolver};
 
@@ -177,8 +178,12 @@ fn set<T>(slot: &mut Option<T>, flag: &'static str, value: T) -> Result<(), CliE
 pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
     let args = parse(args)?;
     if let Some(endpoint) = &args.cdp {
-        let transport = WebSocketTransport::connect(endpoint)
-            .map_err(|err| CliError::Browser(err.to_string()))?;
+        let transport = if args.url.is_some() {
+            open_tab(endpoint)
+        } else {
+            WebSocketTransport::connect(endpoint)
+        }
+        .map_err(|err| CliError::Browser(err.to_string()))?;
         let mut session = BrowserSession::new(transport);
         if let Some(url) = &args.url {
             session

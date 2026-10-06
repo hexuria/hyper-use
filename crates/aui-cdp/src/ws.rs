@@ -14,36 +14,84 @@ use crate::{CdpError, CdpTransport};
 /// must already be listening; ultra-instinct does not launch a browser.
 pub const DEFAULT_CDP_HTTP: &str = "http://127.0.0.1:9222";
 
+type Socket = WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
+
+#[derive(Clone)]
+struct OwnedTarget {
+    http: String,
+    target_id: String,
+}
+
 pub struct WebSocketTransport {
-    socket: WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>,
+    socket: Socket,
     next_id: i64,
+    owned: Option<OwnedTarget>,
 }
 
 impl WebSocketTransport {
     pub fn connect(endpoint: &str) -> Result<Self, CdpError> {
         let ws_url = resolve_websocket_url(endpoint)?;
-        if ws_url.starts_with("wss://") {
-            return Err(CdpError::Transport {
-                message: "wss is not supported; use a local ws:// debugging port".into(),
-            });
+        Ok(Self {
+            socket: connect_socket(&ws_url)?,
+            next_id: 1,
+            owned: None,
+        })
+    }
+
+    fn open_tab_inner(endpoint: &str) -> Result<Self, CdpError> {
+        let http = http_endpoint(endpoint)?.to_owned();
+        let version = http_get(&format!("{http}/json/version"))?;
+        let browser_url = version_websocket_url(&version)?;
+        let mut browser = Self {
+            socket: connect_socket(&browser_url)?,
+            next_id: 1,
+            owned: None,
+        };
+        let result = browser.call(
+            "Target.createTarget",
+            &json!({"url": "about:blank", "background": true}).to_string(),
+        )?;
+        let target_id = created_target_id(&result)?;
+        drop(browser);
+
+        let owned = OwnedTarget {
+            http: http.clone(),
+            target_id: target_id.clone(),
+        };
+        let result: Result<Self, CdpError> = (|| {
+            let page_url = page_socket_url(&http, &target_id)?;
+            let mut transport = Self {
+                socket: connect_socket(&page_url)?,
+                next_id: 1,
+                owned: None,
+            };
+            transport.call(
+                "Emulation.setFocusEmulationEnabled",
+                &json!({"enabled": true}).to_string(),
+            )?;
+            transport.owned = Some(owned.clone());
+            Ok(transport)
+        })();
+        if result.is_err() {
+            close_owned_target(&owned);
         }
-        let (socket, _response) =
-            tungstenite::connect(&ws_url).map_err(|err| CdpError::Transport {
-                message: err.to_string(),
-            })?;
-        if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_ref() {
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .map_err(|err| CdpError::Transport {
-                    message: err.to_string(),
-                })?;
-            stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
-                .map_err(|err| CdpError::Transport {
-                    message: err.to_string(),
-                })?;
+        result
+    }
+
+    pub fn target_id(&self) -> Option<&str> {
+        self.owned.as_ref().map(|target| target.target_id.as_str())
+    }
+}
+
+pub fn open_tab(endpoint: &str) -> Result<WebSocketTransport, CdpError> {
+    WebSocketTransport::open_tab_inner(endpoint)
+}
+
+impl Drop for WebSocketTransport {
+    fn drop(&mut self) {
+        if let Some(target) = self.owned.take() {
+            close_owned_target(&target);
         }
-        Ok(Self { socket, next_id: 1 })
     }
 }
 
@@ -91,6 +139,35 @@ impl CdpTransport for WebSocketTransport {
     }
 }
 
+fn connect_socket(ws_url: &str) -> Result<Socket, CdpError> {
+    if ws_url.starts_with("wss://") {
+        return Err(CdpError::Transport {
+            message: "wss is not supported; use a local ws:// debugging port".into(),
+        });
+    }
+    if !ws_url.starts_with("ws://") {
+        return Err(CdpError::Transport {
+            message: format!("websocket URL `{ws_url}` must use ws://"),
+        });
+    }
+    let (socket, _response) = tungstenite::connect(ws_url).map_err(|err| CdpError::Transport {
+        message: err.to_string(),
+    })?;
+    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_ref() {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .map_err(|err| CdpError::Transport {
+                message: err.to_string(),
+            })?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .map_err(|err| CdpError::Transport {
+                message: err.to_string(),
+            })?;
+    }
+    Ok(socket)
+}
+
 fn resolve_websocket_url(endpoint: &str) -> Result<String, CdpError> {
     if endpoint.starts_with("ws://") || endpoint.starts_with("wss://") {
         return Ok(endpoint.to_owned());
@@ -103,11 +180,11 @@ fn resolve_websocket_url(endpoint: &str) -> Result<String, CdpError> {
     }
     // `/json/version` names the browser target, which has no `Page` domain.
     // The tools need a page, so pick the first page target from `/json/list`.
-    page_websocket_url(&http_get(&format!("{http}/json/list"))?)
+    first_page_websocket_url(&http_get(&format!("{http}/json/list"))?)
 }
 
 /// First `"type": "page"` target's websocket URL in a `/json/list` body.
-fn page_websocket_url(body: &str) -> Result<String, CdpError> {
+fn first_page_websocket_url(body: &str) -> Result<String, CdpError> {
     let value: Value = serde_json::from_str(body).map_err(|err| CdpError::BadJson {
         message: err.to_string(),
     })?;
@@ -121,6 +198,77 @@ fn page_websocket_url(body: &str) -> Result<String, CdpError> {
         .ok_or_else(|| CdpError::Transport {
             message: "json/list has no page target with a webSocketDebuggerUrl".into(),
         })
+}
+
+fn http_endpoint(endpoint: &str) -> Result<&str, CdpError> {
+    let http = endpoint.trim_end_matches('/');
+    if !http.starts_with("http://") || http.len() == "http://".len() {
+        return Err(CdpError::Transport {
+            message: "open_tab needs the http:// debugging endpoint".into(),
+        });
+    }
+    Ok(http)
+}
+
+fn version_websocket_url(body: &str) -> Result<String, CdpError> {
+    let value: Value = serde_json::from_str(body).map_err(|err| CdpError::BadJson {
+        message: err.to_string(),
+    })?;
+    value
+        .get("webSocketDebuggerUrl")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CdpError::Transport {
+            message: "json/version has no webSocketDebuggerUrl".into(),
+        })
+}
+
+fn created_target_id(body: &str) -> Result<String, CdpError> {
+    let value: Value = serde_json::from_str(body).map_err(|err| CdpError::BadJson {
+        message: err.to_string(),
+    })?;
+    value
+        .get("targetId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CdpError::Transport {
+            message: "Target.createTarget result has no targetId".into(),
+        })
+}
+
+fn page_socket_url(endpoint: &str, target_id: &str) -> Result<String, CdpError> {
+    let http = http_endpoint(endpoint)?;
+    let host = http
+        .strip_prefix("http://")
+        .unwrap_or_default()
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    if host.is_empty() {
+        return Err(CdpError::Transport {
+            message: "open_tab needs an http:// debugging endpoint".into(),
+        });
+    }
+    Ok(format!("ws://{host}/devtools/page/{target_id}"))
+}
+
+fn close_owned_target(target: &OwnedTarget) {
+    let result = (|| {
+        let version = http_get(&format!("{}/json/version", target.http))?;
+        let browser_url = version_websocket_url(&version)?;
+        let socket = connect_socket(&browser_url)?;
+        let mut browser = WebSocketTransport {
+            socket,
+            next_id: 1,
+            owned: None,
+        };
+        browser.call(
+            "Target.closeTarget",
+            &json!({"targetId": target.target_id}).to_string(),
+        )?;
+        Ok::<(), CdpError>(())
+    })();
+    let _ = result;
 }
 
 fn http_get(url: &str) -> Result<String, CdpError> {
@@ -245,7 +393,7 @@ mod tests {
             {"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9333/devtools/page/B"}
         ]"#;
         assert_eq!(
-            page_websocket_url(body),
+            first_page_websocket_url(body),
             Ok("ws://127.0.0.1:9333/devtools/page/A".to_owned())
         );
     }
@@ -254,17 +402,17 @@ mod tests {
     fn json_list_without_a_page_target_is_a_transport_error() {
         let body = r#"[{"type": "service_worker", "webSocketDebuggerUrl": "ws://x/sw"}, {"type": "page"}]"#;
         assert_eq!(
-            page_websocket_url(body),
+            first_page_websocket_url(body),
             Err(CdpError::Transport {
                 message: "json/list has no page target with a webSocketDebuggerUrl".into(),
             })
         );
         assert!(matches!(
-            page_websocket_url("{}"),
+            first_page_websocket_url("{}"),
             Err(CdpError::Transport { .. })
         ));
         assert!(matches!(
-            page_websocket_url("not json"),
+            first_page_websocket_url("not json"),
             Err(CdpError::BadJson { .. })
         ));
     }
@@ -296,5 +444,52 @@ mod tests {
                 message: "CDP endpoint `ftp://127.0.0.1/json` must be http:// or ws://".into(),
             }
         );
+    }
+
+    #[test]
+    fn json_version_resolves_browser_websocket_url() {
+        assert_eq!(
+            version_websocket_url(
+                r#"{"Browser":"Chrome","webSocketDebuggerUrl":"ws://127.0.0.1:9333/devtools/browser/BROWSER"}"#
+            ),
+            Ok("ws://127.0.0.1:9333/devtools/browser/BROWSER".to_owned())
+        );
+    }
+
+    #[test]
+    fn json_version_without_websocket_url_is_a_transport_error() {
+        assert_eq!(
+            version_websocket_url(r#"{"Browser":"Chrome"}"#),
+            Err(CdpError::Transport {
+                message: "json/version has no webSocketDebuggerUrl".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn page_socket_url_uses_http_endpoint_host_and_target_id() {
+        assert_eq!(
+            page_socket_url("http://127.0.0.1:9333", "TARGET"),
+            Ok("ws://127.0.0.1:9333/devtools/page/TARGET".to_owned())
+        );
+    }
+
+    #[test]
+    fn open_tab_refuses_non_http_endpoints_without_a_socket() {
+        for endpoint in [
+            "ws://127.0.0.1:9333/devtools/page/TARGET",
+            "ftp://127.0.0.1",
+        ] {
+            let error = match open_tab(endpoint) {
+                Err(error) => error,
+                Ok(_) => panic!("open_tab must refuse non-http endpoints"),
+            };
+            assert_eq!(
+                error,
+                CdpError::Transport {
+                    message: "open_tab needs the http:// debugging endpoint".into(),
+                }
+            );
+        }
     }
 }

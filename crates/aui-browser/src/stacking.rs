@@ -20,7 +20,7 @@
 //!
 //! - the coverer's box contains the victim's center;
 //! - the coverer has `pointer-events` other than `none`;
-//! - the victim is not a descendant of the coverer (parent chain);
+//! - the coverer is neither an ancestor nor a descendant of the victim;
 //! - the coverer's paint key is strictly greater than the victim's.
 //!
 //! Known CDP limits (see docs/DECISIONS.md): we do not rebuild the full
@@ -153,8 +153,8 @@ pub fn style_from_computed(computed: &[(String, String)]) -> StackingStyle {
 }
 
 /// Mark clickable regions whose center is covered by a higher-painting kept
-/// region. Regions already `occluded` stay occluded. Returns how many newly
-/// buried ids were marked.
+/// region. Ancestors and descendants do not bury one another. Regions already
+/// `occluded` stay occluded. Returns how many newly buried ids were marked.
 pub fn apply_stacking_occlusion(
     manifold: &mut InteractionManifold,
     styles: &BTreeMap<RegionId, (StackingStyle, u32)>,
@@ -183,7 +183,9 @@ pub fn apply_stacking_occlusion(
             if !contains_point(coverer.rect(), center) {
                 continue;
             }
-            if manifold.is_within(victim.id(), coverer.id()) {
+            if manifold.is_within(victim.id(), coverer.id())
+                || manifold.is_within(coverer.id(), victim.id())
+            {
                 continue;
             }
             if cover_style.paint_key(*cover_order) > victim_key {
@@ -311,6 +313,33 @@ mod tests {
         );
         assert_eq!(apply_stacking_occlusion(&mut m, &styles), 0);
         assert!(!m.get_str("ok").unwrap().flags().occluded());
+    }
+
+    #[test]
+    fn descendant_does_not_bury_its_ancestor() {
+        let rect = (100.0, 100.0, 200.0, 40.0);
+        let mut field = button("field", rect, None).to_parts();
+        field.role = Role::TextField;
+        field.actions.push(Action::Type);
+        let field = InteractionRegion::try_new(field).unwrap();
+
+        let mut editor = button("editor", rect, Some("field")).to_parts();
+        editor.role = Role::Generic;
+        editor.actions.clear();
+        let editor = InteractionRegion::try_new(editor).unwrap();
+
+        let mut m = page(vec![field, editor]);
+        let mut styles = BTreeMap::new();
+        styles.insert(
+            RegionId::try_new("field").unwrap(),
+            (StackingStyle::default(), 0),
+        );
+        styles.insert(
+            RegionId::try_new("editor").unwrap(),
+            (StackingStyle::default(), 1),
+        );
+        assert_eq!(apply_stacking_occlusion(&mut m, &styles), 0);
+        assert!(!m.get_str("field").unwrap().flags().occluded());
     }
 
     #[test]

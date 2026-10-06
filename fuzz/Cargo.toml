@@ -17,7 +17,7 @@ members = ["."]
 libfuzzer-sys = "0.4"
 serde_json = "1"
 hyper-use-core = { path = "../crates/hyper-use-core" }
-hyper-use-browser = { path = "../crates/hyper-use-browser" }
+hyper-use-browser = { path = "../crates/hyper-use-browser", features = ["fuzz-support"] }
 hyper-use-mcp = { path = "../crates/hyper-use-mcp" }
 hyper-use-policy = { path = "../crates/hyper-use-policy", features = ["remote", "model-text"] }
 
@@ -52,6 +52,13 @@ bench = false
 [[bin]]
 name = "command_reply"
 path = "fuzz_targets/command_reply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compact_snapshot"
+path = "fuzz_targets/compact_snapshot.rs"
 test = false
 doc = false
 bench = false

@@ -229,6 +229,15 @@ impl CompactSnapshot {
     }
 }
 
+/// Trust-boundary entry for the `hyper-use-fuzz` `compact_snapshot` target.
+/// The JSON is CDP-controlled in production but a live page shapes the node
+/// records inside it, so the parser must never panic. Returns `true` when the
+/// blob parses; every malformed input must return `false`, not panic.
+#[cfg(feature = "fuzz-support")]
+pub fn compact_parse_fuzzable(eval_result_json: &str) -> bool {
+    parse(eval_result_json).is_ok()
+}
+
 /// Parse the `Runtime.evaluate` result of [`COMPACT_JS`].
 pub(crate) fn parse(eval_result_json: &str) -> Result<CompactSnapshot, BrowserError> {
     let value: Value = serde_json::from_str(eval_result_json).map_err(|err| CdpError::BadJson {

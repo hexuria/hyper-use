@@ -23,6 +23,10 @@ const AUTOCOMPLETE_POLL_MS: u64 = 25;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     Click,
+    /// A click sent as a trusted pointer event at the target's center. Same
+    /// ticket capability as [`Input::Click`]; used after a semantic click on
+    /// the same target had no effect.
+    PointerClick,
     /// Replace the field value with this text.
     Type(String),
     /// Choose the one option whose value / label / text matches.
@@ -33,7 +37,7 @@ impl Input {
     /// Region capability this input needs (and the ticket must carry).
     pub fn action(&self) -> Action {
         match self {
-            Self::Click => Action::Click,
+            Self::Click | Self::PointerClick => Action::Click,
             Self::Type(_) => Action::Type,
             Self::Select(_) => Action::Select,
         }
@@ -42,7 +46,7 @@ impl Input {
     /// Text payload, if any.
     pub fn payload(&self) -> Option<&str> {
         match self {
-            Self::Click => None,
+            Self::Click | Self::PointerClick => None,
             Self::Type(text) | Self::Select(text) => Some(text),
         }
     }
@@ -81,6 +85,16 @@ pub trait BrowserRuntime {
     /// Let the page settle after an input (navigation, rerender). Default: no-op.
     fn settle(&mut self) {}
 
+    /// The last observation, without observing again. Default: none.
+    fn last_observation(&self) -> Option<&InteractionManifold> {
+        None
+    }
+
+    /// Pause between re-checks while a clause waits. Default: real sleep.
+    fn pause(&mut self, ms: u64) {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
+
     /// Settle after a ticketed region input. Default: `settle()`.
     fn settle_after_input(&mut self, _target: &RegionId, _input: &Input) {
         self.settle()
@@ -114,6 +128,10 @@ impl<T: CdpTransport> BrowserRuntime for BrowserSession<T> {
         BrowserSession::page(self).and_then(|p| p.focused().cloned())
     }
 
+    fn last_observation(&self) -> Option<&InteractionManifold> {
+        BrowserSession::manifold(self)
+    }
+
     fn page(&self) -> Option<&PageState> {
         BrowserSession::page(self)
     }
@@ -121,6 +139,7 @@ impl<T: CdpTransport> BrowserRuntime for BrowserSession<T> {
     fn dispatch(&mut self, target: &RegionId, input: &Input) -> Result<(), AgentError> {
         match input {
             Input::Click => BrowserSession::press(self, target, Action::Click).map(|_| ()),
+            Input::PointerClick => BrowserSession::pointer_click(self, target).map(|_| ()),
             Input::Type(text) => BrowserSession::type_text(self, target, text).map(|_| ()),
             Input::Select(option) => {
                 BrowserSession::select_option(self, target, option).map(|_| ())
@@ -229,6 +248,8 @@ pub struct MockBrowser {
     page: PageState,
     /// When set, the next dispatch replaces the manifold with this snapshot.
     on_press: Option<InteractionManifold>,
+    /// Page (URL / title) after the next dispatch: simulates a navigation.
+    on_press_page: Option<PageState>,
     /// `(observes_remaining, next)`: swap after that many more observes.
     scheduled: Option<(u32, InteractionManifold)>,
     press_log: Vec<(RegionId, Action)>,
@@ -240,6 +261,7 @@ pub struct MockBrowser {
     /// Value the page "really" ends up with, regardless of what was typed.
     value_override: Option<String>,
     observe_count: u32,
+    pauses: u32,
 }
 
 impl MockBrowser {
@@ -249,6 +271,7 @@ impl MockBrowser {
             focused: None,
             page: PageState::blank(),
             on_press: None,
+            on_press_page: None,
             scheduled: None,
             press_log: Vec::new(),
             input_log: Vec::new(),
@@ -257,6 +280,7 @@ impl MockBrowser {
             reject_next: None,
             value_override: None,
             observe_count: 0,
+            pauses: 0,
         }
     }
 
@@ -267,6 +291,11 @@ impl MockBrowser {
 
     pub fn set_on_press(&mut self, next: InteractionManifold) {
         self.on_press = Some(next);
+    }
+
+    /// After the next dispatch the page is `next` (a navigation).
+    pub fn set_on_press_page(&mut self, next: PageState) {
+        self.on_press_page = Some(next);
     }
 
     /// Replace the manifold after `observes` more observations return the
@@ -298,6 +327,11 @@ impl MockBrowser {
 
     pub fn scroll_log(&self) -> &[ScrollDirection] {
         &self.scroll_log
+    }
+
+    /// Waits taken by a waiting clause.
+    pub fn pauses(&self) -> u32 {
+        self.pauses
     }
 
     pub fn observe_count(&self) -> u32 {
@@ -353,12 +387,24 @@ impl BrowserRuntime for MockBrowser {
         if let Some(next) = self.on_press.take() {
             self.manifold = next;
         }
+        if let Some(next) = self.on_press_page.take() {
+            self.page = next;
+        }
         Ok(())
     }
 
     fn scroll(&mut self, direction: ScrollDirection) -> Result<(), AgentError> {
         self.scroll_log.push(direction);
         Ok(())
+    }
+
+    fn last_observation(&self) -> Option<&InteractionManifold> {
+        Some(&self.manifold)
+    }
+
+    /// No real sleep in tests; each pause counts as one observation tick.
+    fn pause(&mut self, _ms: u64) {
+        self.pauses += 1;
     }
 
     fn read_value(&mut self, target: &RegionId) -> Option<FieldValue> {

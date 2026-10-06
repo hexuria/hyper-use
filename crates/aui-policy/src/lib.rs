@@ -21,6 +21,7 @@ mod text;
 mod types;
 
 pub use escalate::EscalatingPolicy;
+pub use evidence::{label_covers_target, label_names_target};
 pub use goal::{split_sequential_clauses, AgentGoal};
 pub use instinct_policy::{InstinctPolicy, HABITUATION_STEP};
 #[cfg(feature = "model-text")]

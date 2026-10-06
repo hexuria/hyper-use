@@ -1,7 +1,7 @@
 //! `ultra-instinct run`: the owned agent loop from the command line.
 //!
 //! ```text
-//! ultra-instinct run --goal <text> --cdp [url] [--url <page>] [--max-steps N]
+//! ultra-instinct run --goal <text> --cdp [url] [--url <page>] [--max-steps N] [--wait-secs N]
 //! ultra-instinct run --goal <text> --fixture <replay.cdp.json>   # full loop over a CDP replay
 //! ultra-instinct run --goal <text> --fixture <page.manifold>     # predict only (dry run)
 //! ultra-instinct run ... --text-model-cmd <program>   # feature `model-text`: model TYPE/SELECT payloads
@@ -54,6 +54,7 @@ struct RunArgs {
     url: Option<String>,
     fixture: Option<String>,
     max_steps: u32,
+    wait_secs: Option<u32>,
     text_model_cmd: Option<String>,
     policy: PolicyKind,
 }
@@ -72,6 +73,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
     let mut url = None;
     let mut fixture = None;
     let mut max_steps = None;
+    let mut wait_secs = None;
     let mut text_model_cmd = None;
     let mut policy = None;
     let mut i = 0;
@@ -123,6 +125,14 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
                 })?;
                 set(&mut max_steps, "--max-steps", n)?;
             }
+            "--wait-secs" => {
+                let raw = value("--wait-secs")?;
+                let n: u32 = raw.parse().map_err(|_| CliError::BadNumber {
+                    flag: "--wait-secs",
+                    value: raw.clone(),
+                })?;
+                set(&mut wait_secs, "--wait-secs", n)?;
+            }
             "--cdp" => {
                 if cdp.is_some() {
                     return Err(CliError::DuplicateFlag("--cdp"));
@@ -159,6 +169,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         url,
         fixture,
         max_steps: max_steps.unwrap_or(20),
+        wait_secs,
         text_model_cmd,
         #[cfg(feature = "jev")]
         policy: policy.unwrap_or(PolicyKind::Jev),
@@ -307,7 +318,14 @@ fn drive_with<T: CdpTransport, P: BrowserPolicy>(
     policy: P,
     args: &RunArgs,
 ) -> Result<String, CliError> {
-    let builder = AgentBuilder::new(session, policy).max_steps(args.max_steps);
+    let mut builder = AgentBuilder::new(session, policy).max_steps(args.max_steps);
+    if let Some(secs) = args.wait_secs {
+        // One re-check per WAIT_POLL_MS.
+        let polls = u64::from(secs) * 1_000 / aui_agent::WAIT_POLL_MS;
+        builder = builder
+            .max_wait_polls(u32::try_from(polls).unwrap_or(u32::MAX))
+            .max_wait(std::time::Duration::from_secs(u64::from(secs)));
+    }
     if let Some(program) = args.text_model_cmd.as_deref() {
         return drive_model_text(builder, program, args);
     }

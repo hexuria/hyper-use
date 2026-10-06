@@ -409,7 +409,7 @@ fn multi_step_type_then_click_runs_both_clauses() {
                 agent.browser_mut().set_on_press(after_go.clone());
             }
             Ok(TickResult::Stepped(_)) | Ok(TickResult::StaleDiscarded { .. }) => {}
-            Ok(TickResult::ClauseAdvanced { .. }) => {}
+            Ok(TickResult::ClauseAdvanced { .. }) | Ok(TickResult::Rethink) => {}
             Ok(TickResult::Finished(o)) => {
                 outcome = Some(o);
                 break;
@@ -498,7 +498,8 @@ fn autocomplete_type_then_click_option_with_ticket_revalidate() {
             }
             Ok(TickResult::Stepped(_))
             | Ok(TickResult::StaleDiscarded { .. })
-            | Ok(TickResult::ClauseAdvanced { .. }) => {}
+            | Ok(TickResult::ClauseAdvanced { .. })
+            | Ok(TickResult::Rethink) => {}
             Ok(TickResult::Finished(o)) => {
                 outcome = Some(o);
                 break;
@@ -561,7 +562,8 @@ fn virtualized_list_scroll_then_click_newly_visible_row() {
         match agent.tick() {
             Ok(TickResult::Stepped(_))
             | Ok(TickResult::StaleDiscarded { .. })
-            | Ok(TickResult::ClauseAdvanced { .. }) => {}
+            | Ok(TickResult::ClauseAdvanced { .. })
+            | Ok(TickResult::Rethink) => {}
             Ok(TickResult::Finished(o)) => {
                 outcome = Some(o);
                 break;

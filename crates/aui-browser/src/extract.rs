@@ -53,9 +53,11 @@ pub(crate) fn parse_viewport(result_json: &str) -> Result<aui_core::Rect, Browse
         .ok_or_else(|| BrowserError::BadViewport("missing clientWidth".into()))?;
     let height = number(css, "clientHeight")
         .ok_or_else(|| BrowserError::BadViewport("missing clientHeight".into()))?;
-    let x = number(css, "pageX").unwrap_or(0.0);
-    let y = number(css, "pageY").unwrap_or(0.0);
-    Rect::try_viewport(x, y, width, height)
+    // Region rects (box model, compact walk) are in viewport coordinates,
+    // so the viewport sits at the origin; `pageX` / `pageY` is the scroll
+    // offset, and using it would mark every visible region offscreen after
+    // a scroll.
+    Rect::try_viewport(0.0, 0.0, width, height)
         .map_err(|err| BrowserError::BadViewport(err.to_string()))
 }
 
@@ -577,6 +579,18 @@ fn parse_json(text: &str) -> Result<Value, BrowserError> {
 #[cfg(test)]
 mod pierce_tests {
     use super::*;
+
+    #[test]
+    fn scrolled_viewport_stays_at_the_origin() {
+        let vp = parse_viewport(
+            r#"{"cssLayoutViewport":{"clientWidth":900,"clientHeight":1042,"pageX":0,"pageY":834}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (vp.x(), vp.y(), vp.width(), vp.height()),
+            (0.0, 0.0, 900.0, 1042.0)
+        );
+    }
 
     #[test]
     fn open_shadow_roots_are_walked_when_present() {

@@ -24,8 +24,9 @@ use aui_browser::ScrollDirection;
 use aui_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
 use aui_guard::{gate, with_front_layer, TicketLedger};
 use aui_policy::{
-    ground_select, split_sequential_clauses, AgentGoal, BrowserPolicy, DeterministicTextResolver,
-    HistoryEntry, PolicyDecision, PolicyOutcome, TextContext, TextError, TextResolver,
+    ground_select, label_covers_target, label_names_target, split_sequential_clauses, AgentGoal,
+    BrowserPolicy, DeterministicTextResolver, HistoryEntry, PolicyDecision, PolicyOutcome,
+    TextContext, TextError, TextResolver,
 };
 #[cfg(feature = "model-text")]
 use aui_policy::{ModelTextResolver, TextModel};
@@ -35,6 +36,102 @@ use crate::executor::{execute_ticketed, ExecError};
 use crate::outcome::{AgentOutcome, StepRecord, VerificationKind};
 use crate::runtime::{BrowserRuntime, Input};
 use crate::verify_map::{classify_delta, classify_value};
+
+/// Abstains re-decided on a fresh observation after a step before the
+/// abstain is final.
+const MAX_ABSTAIN_RETRIES: u32 = 3;
+
+/// Pause between re-checks while a clause waits for its target.
+pub const WAIT_POLL_MS: u64 = 1_000;
+
+/// How long a `… while M` clause waits for M to first appear.
+const MARKER_GRACE_MS: u64 = 3_000;
+
+/// Pause between re-checks of a `… while M` clause.
+pub const WHILE_POLL_MS: u64 = 250;
+
+/// Default re-checks for a waiting clause.
+pub const DEFAULT_WAIT_POLLS: u32 = 30;
+
+/// Default wall-clock cap for a waiting clause.
+pub const DEFAULT_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How one `then` clause runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ClauseMode {
+    /// Act once (the default).
+    Act,
+    /// `… if present` / `if shown` / `if visible`: act when the target shows
+    /// up within the wait budget; otherwise the clause is skipped. With
+    /// `… while M`, the clause lasts exactly as long as a region named M is
+    /// on screen (an ad marker): it acts whenever the target is there, keeps
+    /// going after an effect (a second ad), and ends when M is gone.
+    Optional { while_marker: Option<String> },
+    /// `wait for X` / `wait until X`: no action; the clause ends when a
+    /// target named X is on screen, or when the wait budget runs out.
+    WaitFor(String),
+}
+
+/// Split a clause into the goal text the policy sees and its mode.
+fn clause_mode(clause: &str) -> (String, ClauseMode) {
+    let trimmed = clause.trim();
+    let lower = trimmed.to_lowercase();
+    for prefix in ["wait for ", "wait until "] {
+        if lower.starts_with(prefix) {
+            let target = trimmed[prefix.len()..].trim();
+            let target = target
+                .strip_suffix(" appears")
+                .or_else(|| target.strip_suffix(" shows"))
+                .unwrap_or(target)
+                .trim();
+            if !target.is_empty() {
+                return (trimmed.to_owned(), ClauseMode::WaitFor(target.to_owned()));
+            }
+        }
+    }
+    // `<act> if present while <marker>`: split the marker off first.
+    let (body, while_marker) = match lower.rfind(" while ") {
+        Some(at) if at > 0 => {
+            let marker = trimmed[at + " while ".len()..].trim();
+            if marker.is_empty() {
+                (trimmed, None)
+            } else {
+                (trimmed[..at].trim(), Some(marker.to_owned()))
+            }
+        }
+        _ => (trimmed, None),
+    };
+    let body_lower = body.to_lowercase();
+    for suffix in [" if present", " if shown", " if visible", " if available"] {
+        if body_lower.ends_with(suffix) {
+            let goal = body[..body.len() - suffix.len()].trim();
+            if !goal.is_empty() {
+                return (goal.to_owned(), ClauseMode::Optional { while_marker });
+            }
+        }
+    }
+    (trimmed.to_owned(), ClauseMode::Act)
+}
+
+/// Scrolls down per clause while its target is not on screen.
+const MAX_FIND_SCROLLS: u32 = 6;
+
+/// A visible region whose label names `marker` (any role: a "Sponsored"
+/// badge is not clickable).
+fn marker_on_screen(manifold: &InteractionManifold, marker: &str) -> bool {
+    manifold.regions().any(|region| {
+        let flags = region.flags();
+        !flags.hidden()
+            && !flags.offscreen()
+            && !region.rect().is_zero_area()
+            && label_covers_target(marker, region.label())
+    })
+}
+
+/// Abstains about *which* target, not about the operation.
+fn is_target_abstain(reason: &str) -> bool {
+    reason == "target abstain" || reason.starts_with("no viable targets")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentState {
@@ -74,6 +171,24 @@ pub struct Agent<B, P, T = DeterministicTextResolver> {
     /// Full goal split on `then` / `and then`. [`Self::goal`] is the active clause.
     clauses: Vec<String>,
     clause_index: usize,
+    /// The active clause already ran a step with a verified effect.
+    clause_effect: bool,
+    /// Abstains re-decided on a fresh observation since the last step.
+    abstain_retries: u32,
+    /// Scrolls taken looking for the active clause's target.
+    find_scrolls: u32,
+    /// How the active clause runs (act, optional act, wait for a target).
+    mode: ClauseMode,
+    /// Re-checks spent waiting in the active clause.
+    wait_polls: u32,
+    max_wait_polls: u32,
+    max_wait: std::time::Duration,
+    /// When the active clause started waiting.
+    wait_started: Option<std::time::Instant>,
+    /// The active `… while M` clause has seen M on screen.
+    marker_seen: bool,
+    /// The next decision reuses the observation just taken.
+    reuse_observation: bool,
     state: AgentState,
     predicted: Option<Predicted>,
     history: Vec<StepRecord>,
@@ -98,6 +213,8 @@ pub struct AgentBuilder<B, P, T = DeterministicTextResolver> {
     max_policy_calls: u32,
     max_consecutive_no_effect: u32,
     max_consecutive_stale: u32,
+    max_wait_polls: u32,
+    max_wait: std::time::Duration,
 }
 
 impl<B, P> AgentBuilder<B, P, DeterministicTextResolver> {
@@ -110,6 +227,8 @@ impl<B, P> AgentBuilder<B, P, DeterministicTextResolver> {
             max_policy_calls: 120,
             max_consecutive_no_effect: 3,
             max_consecutive_stale: 5,
+            max_wait_polls: DEFAULT_WAIT_POLLS,
+            max_wait: DEFAULT_MAX_WAIT,
         }
     }
 }
@@ -124,6 +243,8 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             max_policy_calls: self.max_policy_calls,
             max_consecutive_no_effect: self.max_consecutive_no_effect,
             max_consecutive_stale: self.max_consecutive_stale,
+            max_wait_polls: self.max_wait_polls,
+            max_wait: self.max_wait,
         }
     }
 
@@ -161,10 +282,25 @@ impl<B, P, T> AgentBuilder<B, P, T> {
         self
     }
 
+    /// Re-checks (one per [`WAIT_POLL_MS`]) a `wait for X` or
+    /// `… if present` clause makes before it gives up and moves on.
+    pub fn max_wait_polls(mut self, n: u32) -> Self {
+        self.max_wait_polls = n;
+        self
+    }
+
+    /// Wall-clock cap for one waiting clause; whichever of this and
+    /// [`Self::max_wait_polls`] is reached first ends the wait.
+    pub fn max_wait(mut self, limit: std::time::Duration) -> Self {
+        self.max_wait = limit;
+        self
+    }
+
     pub fn build(self, goal: impl Into<String>) -> Agent<B, P, T> {
         let raw = goal.into();
         let clauses = split_sequential_clauses(&raw);
         let active = clauses.first().cloned().unwrap_or_default();
+        let (active, mode) = clause_mode(&active);
         Agent {
             browser: self.browser,
             policy: self.policy,
@@ -172,6 +308,16 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             goal: AgentGoal::new(active),
             clauses,
             clause_index: 0,
+            clause_effect: false,
+            abstain_retries: 0,
+            find_scrolls: 0,
+            mode,
+            wait_polls: 0,
+            max_wait_polls: self.max_wait_polls,
+            max_wait: self.max_wait,
+            wait_started: None,
+            marker_seen: false,
+            reuse_observation: false,
             state: AgentState::Ready,
             predicted: None,
             history: Vec::new(),
@@ -245,11 +391,19 @@ where
             return false;
         }
         self.clause_index = next;
-        self.goal = AgentGoal::new(self.clauses[next].clone());
+        let (goal, mode) = clause_mode(&self.clauses[next]);
+        self.goal = AgentGoal::new(goal);
+        self.mode = mode;
+        self.wait_polls = 0;
+        self.wait_started = None;
+        self.marker_seen = false;
         self.state = AgentState::Ready;
         self.predicted = None;
         self.consecutive_no_effect = 0;
         self.consecutive_stale = 0;
+        self.clause_effect = false;
+        self.abstain_retries = 0;
+        self.find_scrolls = 0;
         true
     }
 
@@ -291,13 +445,32 @@ where
         if !matches!(self.state, AgentState::Ready | AgentState::Predicted) {
             return Err(AgentError::InvalidState("predict from terminal state"));
         }
-        if self.policy_calls >= self.max_policy_calls {
+        // Re-checks of a waiting optional clause are bounded by the wait
+        // budget, not the policy-call budget.
+        let waiting = matches!(self.mode, ClauseMode::Optional { .. }) && self.wait_polls > 0;
+        if self.policy_calls >= self.max_policy_calls && !waiting {
             return Err(AgentError::MaxPolicyCalls);
         }
         self.predicted = None;
         self.state = AgentState::Ready;
 
-        let manifold = self.browser.observe()?.clone();
+        // A `… while M` re-check that just observed hands that observation
+        // to this decision (one observe per re-check). The executor still
+        // observes fresh before any dispatch.
+        let manifold = match self
+            .reuse_observation
+            .then(|| self.browser.last_observation().cloned())
+            .flatten()
+        {
+            Some(m) => {
+                self.reuse_observation = false;
+                m
+            }
+            None => {
+                self.reuse_observation = false;
+                self.browser.observe()?.clone()
+            }
+        };
         let focused = self.browser.focused();
         let space = Self::action_space(&manifold);
         self.policy_calls += 1;
@@ -436,6 +609,16 @@ where
         };
         self.consecutive_stale = 0;
         self.steps_taken += 1;
+        if matches!(
+            record.verification,
+            VerificationKind::Success
+                | VerificationKind::StateChanged
+                | VerificationKind::Navigation
+        ) && label_covers_target(self.goal.as_str(), &record.label)
+        {
+            self.clause_effect = true;
+        }
+        self.abstain_retries = 0;
         self.history.push(record.clone());
         self.policy_history.push(HistoryEntry {
             step: record.step,
@@ -515,6 +698,29 @@ where
         .map_err(|reason| AgentError::Guard(format!("refuse: {reason}")))?;
 
         let input = match kind {
+            // A semantic click on this same label just had no effect (the
+            // page ignored a script click): retry as a trusted pointer click.
+            // `… while M` clauses act on time-critical overlay controls (an
+            // ad's skip button) that ignore script clicks: go trusted first.
+            ActionKind::Click
+                if matches!(
+                    self.mode,
+                    ClauseMode::Optional {
+                        while_marker: Some(_)
+                    }
+                ) =>
+            {
+                Input::PointerClick
+            }
+            ActionKind::Click
+                if self.history.last().is_some_and(|step| {
+                    step.kind == ActionKind::Click
+                        && step.label == predicted.decision.target_label
+                        && step.verification == VerificationKind::NoEffect
+                }) =>
+            {
+                Input::PointerClick
+            }
             ActionKind::Click => Input::Click,
             ActionKind::TypeText => Input::Type(
                 predicted
@@ -570,7 +776,79 @@ where
             AgentState::Ready | AgentState::Predicted => {}
         }
 
+        // `… if present while M`: the clause runs while M is on screen.
         if self.state == AgentState::Ready {
+            if let ClauseMode::Optional {
+                while_marker: Some(marker),
+            } = self.mode.clone()
+            {
+                let manifold = self.browser.observe()?.clone();
+                self.reuse_observation = true;
+                let on_screen = marker_on_screen(&manifold, &marker);
+                self.marker_seen |= on_screen;
+                // An ad can start a moment after the page loads: give an
+                // unseen marker a short grace before deciding there is none.
+                if !on_screen
+                    && !self.marker_seen
+                    && self.waited_ms() < MARKER_GRACE_MS
+                    && self.may_wait()
+                {
+                    self.reuse_observation = false;
+                    self.wait_polls += 1;
+                    self.browser.pause(self.poll_ms());
+                    return Ok(TickResult::Rethink);
+                }
+                if !on_screen || !self.may_wait() {
+                    self.reuse_observation = false;
+                    if self.advance_clause() {
+                        return Ok(TickResult::ClauseAdvanced {
+                            next_clause: self.goal.as_str().to_owned(),
+                        });
+                    }
+                    self.state = AgentState::Done;
+                    return Ok(TickResult::Finished(self.finish_done("marker gone")));
+                }
+                // Another ad may follow a skipped one: an effect does not end
+                // this clause, only the marker leaving does.
+                self.clause_effect = false;
+            }
+        }
+
+        // One clause is one intent: once an action that names the clause's
+        // target navigated, the clause is done. Deciding again on the new
+        // page would let a near-twin (a related video) win.
+        if self.state == AgentState::Ready
+            && self.clause_effect
+            && self
+                .history
+                .last()
+                .is_some_and(|step| step.verification == VerificationKind::Navigation)
+        {
+            if self.advance_clause() {
+                return Ok(TickResult::ClauseAdvanced {
+                    next_clause: self.goal.as_str().to_owned(),
+                });
+            }
+            self.state = AgentState::Done;
+            return Ok(TickResult::Finished(self.finish_done("clause satisfied")));
+        }
+
+        if self.state == AgentState::Ready {
+            if let ClauseMode::WaitFor(target) = self.mode.clone() {
+                return self.tick_wait_for(&target);
+            }
+        }
+
+        if self.state == AgentState::Ready {
+            let satisfied = self.clause_effect
+                && !matches!(
+                    self.mode,
+                    ClauseMode::Optional {
+                        while_marker: Some(_)
+                    }
+                );
+            let optional = matches!(self.mode, ClauseMode::Optional { .. });
+            let goal_text = self.goal.as_str().to_owned();
             match self.predict() {
                 Ok(None) => {
                     if self.state == AgentState::Blocked {
@@ -586,8 +864,99 @@ where
                     }
                     return Ok(TickResult::Finished(self.finish_done("policy chose DONE")));
                 }
+                // The clause already had a matching effect: a further target
+                // action would be a second intent (a near-twin), so the
+                // clause is done instead. `… while M` clauses keep going.
+                Ok(Some(_)) if satisfied => {
+                    self.predicted = None;
+                    self.state = AgentState::Ready;
+                    if self.advance_clause() {
+                        return Ok(TickResult::ClauseAdvanced {
+                            next_clause: self.goal.as_str().to_owned(),
+                        });
+                    }
+                    self.state = AgentState::Done;
+                    return Ok(TickResult::Finished(self.finish_done("clause satisfied")));
+                }
+                Ok(Some(predicted))
+                    if optional
+                        && !predicted.decision.kind.is_control()
+                        && !label_names_target(&goal_text, &predicted.decision.target_label) =>
+                {
+                    // An optional clause acts only on the target it names;
+                    // a look-alike ("Skip navigation") means "not yet".
+                    self.predicted = None;
+                    self.state = AgentState::Ready;
+                    if self.may_wait() {
+                        self.wait_polls += 1;
+                        self.browser.pause(self.poll_ms());
+                        return Ok(TickResult::Rethink);
+                    }
+                    if self.advance_clause() {
+                        return Ok(TickResult::ClauseAdvanced {
+                            next_clause: self.goal.as_str().to_owned(),
+                        });
+                    }
+                    self.state = AgentState::Done;
+                    return Ok(TickResult::Finished(
+                        self.finish_done("optional target never appeared"),
+                    ));
+                }
                 Ok(Some(_)) => {}
+                // A single-intent clause whose action already had a verified
+                // effect is satisfied even when its target left the action
+                // space (a dialog took the front layer): advance, never act.
                 Err(AgentError::Abstain(reason)) => {
+                    if self.clause_effect {
+                        if self.advance_clause() {
+                            return Ok(TickResult::ClauseAdvanced {
+                                next_clause: self.goal.as_str().to_owned(),
+                            });
+                        }
+                        self.state = AgentState::Done;
+                        return Ok(TickResult::Finished(
+                            self.finish_done("clause satisfied; target left the action space"),
+                        ));
+                    }
+                    // After a step the page may still be rendering (a dialog
+                    // opening): settle and decide again on a fresh observe.
+                    if self.steps_taken > 0 && self.abstain_retries < MAX_ABSTAIN_RETRIES {
+                        self.abstain_retries += 1;
+                        self.browser.settle();
+                        return Ok(TickResult::Rethink);
+                    }
+                    // An optional clause waits for its target instead of
+                    // scrolling, then is skipped when it never shows up.
+                    if matches!(self.mode, ClauseMode::Optional { .. })
+                        && is_target_abstain(&reason)
+                    {
+                        if self.may_wait() {
+                            self.wait_polls += 1;
+                            self.browser.pause(self.poll_ms());
+                            return Ok(TickResult::Rethink);
+                        }
+                        if self.advance_clause() {
+                            return Ok(TickResult::ClauseAdvanced {
+                                next_clause: self.goal.as_str().to_owned(),
+                            });
+                        }
+                        self.state = AgentState::Done;
+                        return Ok(TickResult::Finished(
+                            self.finish_done("optional target never appeared"),
+                        ));
+                    }
+                    // The clause names a target that is not on screen yet:
+                    // scroll down and decide again (bounded). Never clicks a
+                    // weaker match; an operation abstain does not scroll.
+                    if is_target_abstain(&reason)
+                        && !self.clause_effect
+                        && self.find_scrolls < MAX_FIND_SCROLLS
+                    {
+                        self.find_scrolls += 1;
+                        self.browser.scroll(ScrollDirection::Down)?;
+                        self.browser.settle();
+                        return Ok(TickResult::Rethink);
+                    }
                     return Ok(TickResult::Finished(AgentOutcome::Abstained {
                         steps: self.history.clone(),
                         reason: format!("abstain: {reason}"),
@@ -629,7 +998,8 @@ where
                 Ok(TickResult::Finished(outcome)) => return outcome,
                 Ok(TickResult::Stepped(_))
                 | Ok(TickResult::StaleDiscarded { .. })
-                | Ok(TickResult::ClauseAdvanced { .. }) => continue,
+                | Ok(TickResult::ClauseAdvanced { .. })
+                | Ok(TickResult::Rethink) => continue,
                 Err(e) => {
                     return AgentOutcome::Failed {
                         steps: self.history.clone(),
@@ -638,6 +1008,58 @@ where
                 }
             }
         }
+    }
+
+    /// The waiting clause still has re-checks and wall-clock time left.
+    /// Pause between re-checks: fast for `… while M` (an overlay control
+    /// should go as soon as it shows), [`WAIT_POLL_MS`] otherwise.
+    fn poll_ms(&self) -> u64 {
+        match self.mode {
+            ClauseMode::Optional {
+                while_marker: Some(_),
+            } => WHILE_POLL_MS,
+            _ => WAIT_POLL_MS,
+        }
+    }
+
+    /// Pause time spent waiting in the active clause.
+    fn waited_ms(&self) -> u64 {
+        u64::from(self.wait_polls) * self.poll_ms()
+    }
+
+    fn may_wait(&mut self) -> bool {
+        let started = *self
+            .wait_started
+            .get_or_insert_with(std::time::Instant::now);
+        self.waited_ms() < u64::from(self.max_wait_polls) * WAIT_POLL_MS
+            && started.elapsed() < self.max_wait
+    }
+
+    /// One re-check of a `wait for X` clause. Never acts on the page.
+    fn tick_wait_for(&mut self, target: &str) -> Result<TickResult, AgentError> {
+        let manifold = self.browser.observe()?.clone();
+        let space = Self::action_space(&manifold);
+        let present = space
+            .actions()
+            .filter(|action| action.target().is_some())
+            .any(|action| label_covers_target(target, action.label()));
+        if !present && self.may_wait() {
+            self.wait_polls += 1;
+            self.browser.pause(self.poll_ms());
+            return Ok(TickResult::Rethink);
+        }
+        if self.advance_clause() {
+            return Ok(TickResult::ClauseAdvanced {
+                next_clause: self.goal.as_str().to_owned(),
+            });
+        }
+        self.state = AgentState::Done;
+        let reason = if present {
+            "waited target appeared"
+        } else {
+            "wait timed out"
+        };
+        Ok(TickResult::Finished(self.finish_done(reason)))
     }
 
     fn finish_done(&self, reason: &str) -> AgentOutcome {
@@ -665,5 +1087,8 @@ pub enum TickResult {
     ClauseAdvanced {
         next_clause: String,
     },
+    /// The policy abstained soon after a step; the page settled and the
+    /// next tick decides again on a fresh observation (bounded).
+    Rethink,
     Finished(AgentOutcome),
 }

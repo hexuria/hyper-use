@@ -5,6 +5,10 @@
 > product. The keep/kill experiment is B0/B1/B2 (`bench/arms/B01.md`): same
 > Browser Use, invisible Hyper-Use interceptor, Weighted only, no JEV/HGRA.
 > HGRA development is frozen until that ablation finishes.
+>
+> **Live remasure note (2026-10-06):** older A3/A5 leaderboard cells are
+> stale for JEV+hyper-use claims. See **Mac remasure 2026-10-06 — A3 vs A8**
+> below (fair Luna+JEV both sides).
 
 ## Agent + PUA pivot (offline arm C)
 
@@ -33,6 +37,41 @@ fixtures. It does **not** measure live sites, Luna, JEV, or Browser Use.
 
 Arms A / B / D live parity: **blocked** (need unpaid `jev-ultrafast` / paid
 remote). Historical A1–A8 table below is pre-pivot and not agent+PUA evidence.
+
+
+## Mac remasure 2026-10-06 — A3 vs A8 (acme-mail, fair parity)
+
+> Tip `acb3a33`. Host: Uriah Mac. Seed 42, n=1, Luna up (`:8080` HTTP 200).
+> Vendor jev-ultrafast pin `1231850a…`. Run id `20261006-081905`.
+> Writeup: [`bench/results/MAC-A3-A8-COMPARE.md`](bench/results/MAC-A3-A8-COMPARE.md).
+
+**Older A3/A5 rows in the leaderboard below are historical/stale** for live
+JEV remasure claims (pre-ActionTicket uniform bench around `4ae30d3`, and the
+unfair A3-vs-A5 press-only Mac pass). Prefer this section for current A3/A8.
+
+### Unfair precursor (A3 vs A5) — do not use for parity
+
+Mac run `20261006-074743`: A3 4/7 vs A5 2/7. A5 is JEV+hyper-use **presses
+only** (no Luna typing). Not a fair stack comparison.
+
+### Fair remasure (A3 vs A8)
+
+Same planner/decider shape on both sides; only the browser layer differs:
+
+| Arm | Stack | Full | Press-only | Pass wall mean |
+|---|---|---|---|---|
+| **A3** | jev-ultrafast (JEV + Luna-for-text) + browser_harness | 5/7 | 5/5 | ~26.2s |
+| **A8** | Luna planner + JEV + hyper-use + Browser Use | **7/7** | 5/5 | ~33.6s |
+
+- **Accuracy:** A8 wins (7/7 vs 5/7). A3 missed both type tasks
+  (`am-compose-send`, `am-reply`) on `browser_harness` `_IPCResponseTimeout`
+  (daemon flakiness), not Luna HTTP failure.
+- **Speed:** Mixed. A8 presses are often ~10–15s; `am-tm-print` safe-refusal
+  (~103s) skews A8 mean. Excluding that outlier, A8 press walls are competitive
+  or faster than A3.
+- **Harness:** This PR bounds Mac `restart_daemon` hangs so completed attempts
+  are not dropped (`bench/run.py` 60s best-effort; A3 finally 15s).
+
 
 
 Branch: https://github.com/hexuria/hyper-use/tree/bench/uniform. Merged runs: `20261005-131001`, `20261005-141625`, `20261005-153648`. Harness: `bench/` (see `bench/README.md`).

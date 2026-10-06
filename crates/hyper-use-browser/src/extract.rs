@@ -26,6 +26,8 @@ pub(crate) struct DomElement {
     pub modal: bool,
     /// Backend ids of kept ancestors, nearest first.
     pub ancestors: Vec<i64>,
+    /// `data-hu-k` injected by the compact walk, when observe ran it first.
+    pub hu_k: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +65,11 @@ pub(crate) struct DomDocument {
     /// Used by hit-test to decide whether the node under a region's center is
     /// inside that region (the region owns the hit) or something else covers it.
     pub parent_of: std::collections::BTreeMap<i64, i64>,
+    /// Element backend id → `data-hu-k`, for every element the compact walk
+    /// tagged (present only when a compact eval ran before `DOM.getDocument`).
+    pub hu_k_of_backend: std::collections::BTreeMap<i64, u32>,
+    /// `data-hu-k` → element backend id, the reverse map for hit resolution.
+    pub backend_of_hu_k: std::collections::BTreeMap<u32, i64>,
 }
 
 #[allow(dead_code)]
@@ -80,7 +87,35 @@ pub(crate) fn dom_document(document_json: &str) -> Result<DomDocument, BrowserEr
     let mut out = DomDocument::default();
     let mut ancestors = Vec::new();
     walk_dom(root, None, &mut ancestors, &mut out);
+    drop_ambiguous_hu_k(&mut out);
     Ok(out)
+}
+
+/// A `data-hu-k` carried by more than one element (a page clone of a tagged
+/// node, or a frame the walk could not reach forging a value) cannot be
+/// joined to one compact record. Every element sharing it is untagged so it
+/// takes the per-node fallback, and a compact hit naming it resolves to no
+/// backend, which also falls back.
+fn drop_ambiguous_hu_k(out: &mut DomDocument) {
+    let mut seen = std::collections::BTreeMap::<u32, usize>::new();
+    for k in out.hu_k_of_backend.values() {
+        *seen.entry(*k).or_default() += 1;
+    }
+    let ambiguous: std::collections::BTreeSet<u32> = seen
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(k, _)| k)
+        .collect();
+    if ambiguous.is_empty() {
+        return;
+    }
+    out.hu_k_of_backend.retain(|_, k| !ambiguous.contains(k));
+    out.backend_of_hu_k.retain(|k, _| !ambiguous.contains(k));
+    for element in &mut out.elements {
+        if element.hu_k.is_some_and(|k| ambiguous.contains(&k)) {
+            element.hu_k = None;
+        }
+    }
 }
 
 pub(crate) fn ax_elements(tree_json: &str) -> Result<Vec<AxElement>, BrowserError> {
@@ -240,6 +275,13 @@ fn walk_dom(
                 out.parent_of.insert(backend, parent);
             }
             next_parent = Some(backend);
+            if let Some(k) = attr_map(node)
+                .get(crate::compact::HU_K_ATTR)
+                .and_then(|raw| raw.parse::<u32>().ok())
+            {
+                out.hu_k_of_backend.insert(backend, k);
+                out.backend_of_hu_k.insert(k, backend);
+            }
         }
         if let Some(mut element) = element_from(node) {
             element.ancestors = kept_ancestors.iter().rev().copied().collect();
@@ -304,6 +346,9 @@ fn element_from(node: &Value) -> Option<DomElement> {
     let readonly = attributes.contains_key("readonly")
         || attributes.get("aria-readonly").map(String::as_str) == Some("true");
     let modal = attributes.get("aria-modal").map(String::as_str) == Some("true");
+    let hu_k = attributes
+        .get(crate::compact::HU_K_ATTR)
+        .and_then(|raw| raw.parse::<u32>().ok());
     Some(DomElement {
         node_id,
         backend_node_id,
@@ -315,6 +360,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         readonly,
         modal,
         ancestors: Vec::new(),
+        hu_k,
     })
 }
 

@@ -161,15 +161,14 @@ impl<T: CdpTransport> BrowserRuntime for BrowserSession<T> {
         }
 
         let mut previous = None;
+        let mut first = None;
         for poll in 0..AUTOCOMPLETE_MAX_POLLS {
-            match BrowserSession::autocomplete_options_signature(self) {
+            match BrowserSession::autocomplete_options_signature(self, target) {
                 Ok(Some(signature)) => {
-                    let stable = previous.as_deref() == Some(signature.as_str());
-                    let has_options = signature
-                        .split_once(':')
-                        .and_then(|(count, _)| count.parse::<u32>().ok())
-                        .is_some_and(|count| count != 0);
-                    if stable && has_options {
+                    if first.is_none() {
+                        first = Some(signature.clone());
+                    }
+                    if autocomplete_settled(first.as_deref(), previous.as_deref(), &signature) {
                         return;
                     }
                     previous = Some(signature);
@@ -194,6 +193,32 @@ impl<T: CdpTransport> BrowserRuntime for BrowserSession<T> {
 
 fn wants_autocomplete_settle(role: Option<Role>, input: &Input) -> bool {
     role == Some(Role::ComboBox) && matches!(input, Input::Type(_))
+}
+
+fn autocomplete_settled(first: Option<&str>, previous: Option<&str>, current: &str) -> bool {
+    if previous != Some(current) {
+        return false;
+    }
+    let Some((&scope, rest)) = current.as_bytes().split_first() else {
+        return false;
+    };
+    let Ok(rest) = std::str::from_utf8(rest) else {
+        return false;
+    };
+    let Some((count, _)) = rest.split_once(':') else {
+        return false;
+    };
+    let Ok(count) = count.parse::<u32>() else {
+        return false;
+    };
+    if count == 0 {
+        return false;
+    }
+    match scope {
+        b'o' => true,
+        b'd' => Some(current) != first,
+        _ => false,
+    }
 }
 
 /// In-memory browser for offline agent tests. Mutators simulate UI changes.
@@ -364,5 +389,30 @@ mod tests {
             &Input::Select("Manila".into())
         ));
         assert!(!wants_autocomplete_settle(None, &Input::Type("man".into())));
+    }
+
+    #[test]
+    fn autocomplete_settle_requires_stable_scoped_options() {
+        assert!(autocomplete_settled(
+            Some("o1:Manila"),
+            Some("o1:Manila"),
+            "o1:Manila"
+        ));
+        assert!(!autocomplete_settled(Some("o0:"), Some("o0:"), "o0:"));
+        assert!(!autocomplete_settled(
+            Some("d1:Canada"),
+            Some("d1:Canada"),
+            "d1:Canada"
+        ));
+        assert!(autocomplete_settled(
+            Some("d1:Canada"),
+            Some("d2:Canada\u{001f}Manila"),
+            "d2:Canada\u{001f}Manila"
+        ));
+        assert!(!autocomplete_settled(
+            Some("x1:Canada"),
+            Some("x1:Canada"),
+            "x1:Canada"
+        ));
     }
 }

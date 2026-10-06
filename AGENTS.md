@@ -61,7 +61,13 @@ crate.
 >    `TextResolver`, checked against their context fingerprint, before the
 >    ticket is consumed, so executor revalidation always runs after resolver
 >    latency. Payloads are CDP arguments, never spliced into script source;
->    there is no coordinate tier for text.
+>    there is no coordinate tier for text. SELECT payloads are grounded in
+>    observed enabled options when observe captured them: resolver text must
+>    equal one option label, else exactly one option label must occur in the
+>    goal, else the agent abstains. The deterministic resolver excludes
+>    literals successfully typed earlier, then picks an untyped quoted literal
+>    whose preceding three goal words share a word with the field label, else
+>    the first untyped literal, else abstains (parity with the bench A3q helper).
 > 7a. **Model text is payload-only and grounded** (feature `model-text`,
 >    ADR 0006). The model fills the payload of an action Instinct already chose;
 >    replies must echo the context fingerprint, pass shape checks, and occur
@@ -72,14 +78,20 @@ crate.
 >    first-class roles. Virtualized lists are the visible window only (scroll
 >    + re-observe). Autocomplete is TYPE then ticketed option act after
 >    re-observe. After combobox TYPE, read-only option settling is limited to
->    10 polls at 25 ms intervals and never re-dispatches input. Do not claim
->    cross-origin iframe or closed-shadow coverage.
+>    10 polls at 25 ms intervals and reads its `aria-controls` / `aria-owns`
+>    popup when present. The document fallback ends early only after visible
+>    options change from the first poll and stabilize; input is never
+>    re-dispatched. Observe also records control state (value, checked,
+>    expanded, select options) as evidence only: it is not in the region
+>    fingerprint, and password values are never read. Do not claim cross-origin
+>    iframe or closed-shadow coverage.
 > 8. **Remote escalation is explicit and closed.** Feature `remote`;
 >    reply is exactly a choice id + kind from the offered menu or abstain.
 >    Selectors, coordinates, scripts, extra fields → hard error.
 > 9. **HGRA stays frozen.** No matcher tuning on the agent path.
-> 10. **Formal tools stay unjustified** for this path (no `unsafe`, no
->    atomics shared across threads, single-threaded blocking CDP, no recovery
+> 10. **One blocking CDP socket per agent.** Parallelism means separate agents
+>    in separate tabs with no shared state. Formal tools stay unjustified for
+>    this path (no `unsafe`, no atomics shared across threads, no recovery
 >    protocol): Loom / Kani / TLA+ / Miri / Lean are **NOT JUSTIFIED**. The
 >    owners are unit tests, `proptest`, adversarial fixtures, replay fixtures,
 >    cargo-mutants (nightly), and cargo-fuzz on the untrusted-input parsers
@@ -94,7 +106,8 @@ crate.
 | Crate | Owns |
 |---|---|
 | `aui-core` | `InteractionManifold`, regions, `ActionSpace`, fixture grammar |
-| `aui-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
+| `aui-cdp` | CDP transport trait, websocket, replay transport, replay script builder |
+| `aui-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs |
 | `aui-observe` | Observation history and id diff |
 | `aui-geometry` | Geometry helpers |
 | `aui-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |

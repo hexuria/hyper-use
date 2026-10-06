@@ -35,7 +35,9 @@ pub type PuaPolicy = InstinctPolicy;
 pub use remote::{
     parse_reply, request_json, RemotePolicy, RemoteTransport, ScriptedRemote, UnconfiguredRemote,
 };
-pub use text::{DeterministicTextResolver, TextContext, TextError, TextResolution, TextResolver};
+pub use text::{
+    ground_select, DeterministicTextResolver, TextContext, TextError, TextResolution, TextResolver,
+};
 pub use types::{
     BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, RankedAction,
 };

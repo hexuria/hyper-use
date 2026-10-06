@@ -3,8 +3,7 @@
 
 use serde_json::Value;
 
-use crate::error::CdpError;
-use crate::transport::CdpTransport;
+use crate::{CdpError, CdpTransport};
 
 #[derive(Clone, Debug)]
 struct Step {
@@ -19,8 +18,8 @@ enum Outcome {
     Protocol(String),
 }
 
-/// In-memory CDP peer. Tests and `--fixture` use this. It is not a second
-/// browser: [`crate::session::BrowserSession`] does not know which transport it holds.
+/// In-memory CDP peer. Tests and `--fixture` use this. Browser sessions use
+/// whichever [`CdpTransport`] implementation they are given.
 #[derive(Clone, Debug)]
 pub struct ReplayTransport {
     steps: Vec<Step>,

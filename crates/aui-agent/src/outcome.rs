@@ -31,6 +31,8 @@ pub struct StepRecord {
     pub action_id: ActionId,
     pub kind: ActionKind,
     pub label: String,
+    /// Payload sent with TYPE_TEXT or SELECT, if any.
+    pub payload: Option<String>,
     pub verification: VerificationKind,
     pub stale_retries: u32,
 }

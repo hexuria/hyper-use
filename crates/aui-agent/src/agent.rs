@@ -24,8 +24,8 @@ use aui_browser::ScrollDirection;
 use aui_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
 use aui_guard::{gate, with_front_layer, TicketLedger};
 use aui_policy::{
-    split_sequential_clauses, AgentGoal, BrowserPolicy, DeterministicTextResolver, HistoryEntry,
-    PolicyDecision, PolicyOutcome, TextContext, TextError, TextResolver,
+    ground_select, split_sequential_clauses, AgentGoal, BrowserPolicy, DeterministicTextResolver,
+    HistoryEntry, PolicyDecision, PolicyOutcome, TextContext, TextError, TextResolver,
 };
 #[cfg(feature = "model-text")]
 use aui_policy::{ModelTextResolver, TextModel};
@@ -214,6 +214,17 @@ where
         &self.history
     }
 
+    fn typed_text_history(&self) -> Vec<String> {
+        self.history
+            .iter()
+            .filter(|record| {
+                record.kind == ActionKind::TypeText
+                    && record.verification == VerificationKind::Success
+            })
+            .filter_map(|record| record.payload.clone())
+            .collect()
+    }
+
     pub fn goal(&self) -> &AgentGoal {
         &self.goal
     }
@@ -325,7 +336,35 @@ where
         }
 
         let mut payload = None;
-        if matches!(decision.kind, ActionKind::TypeText | ActionKind::Select) {
+        if decision.kind == ActionKind::Select && !offered.state().options.is_empty() {
+            let ctx = TextContext {
+                goal: self.goal.clone(),
+                field_label: offered.label().to_owned(),
+                field_role: "select".to_owned(),
+                typed: self.typed_text_history(),
+                context_fingerprint: offered.target_fingerprint(),
+            };
+            let resolved = match self.text.resolve(&ctx) {
+                Ok(resolution) => {
+                    if resolution.context_fingerprint != ctx.fingerprint() {
+                        return Err(AgentError::Text(
+                            "resolution belongs to a different context".into(),
+                        ));
+                    }
+                    Some(resolution.text)
+                }
+                Err(_) => None,
+            };
+            payload = Some(
+                ground_select(
+                    self.goal.as_str(),
+                    resolved.as_deref(),
+                    &offered.state().options,
+                    offered.state().selected.as_deref(),
+                )
+                .map_err(|e| AgentError::Abstain(format!("select: {e}")))?,
+            );
+        } else if matches!(decision.kind, ActionKind::TypeText | ActionKind::Select) {
             let ctx = TextContext {
                 goal: self.goal.clone(),
                 field_label: offered.label().to_owned(),
@@ -337,6 +376,7 @@ where
                         .map(|r| r.as_str().to_owned())
                         .unwrap_or_default()
                 },
+                typed: self.typed_text_history(),
                 context_fingerprint: offered.target_fingerprint(),
             };
             let resolution = self.text.resolve(&ctx).map_err(|e| match e {
@@ -427,6 +467,7 @@ where
             action_id: predicted.decision.action_id.clone(),
             kind,
             label: predicted.decision.target_label.clone(),
+            payload: predicted.payload.clone(),
             verification,
             stale_retries,
         };

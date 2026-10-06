@@ -5,14 +5,14 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
-description = "CDP browser session for ultra-instinct. Replay and websocket share one client."
+description = "CDP browser session for ultra-instinct."
 
 [dependencies]
+aui-cdp = { path = "../aui-cdp" }
 aui-observe = { path = "../aui-observe" }
 aui-core = { path = "../aui-core" }
 aui-geometry = { path = "../aui-geometry" }
 serde_json = "1"
-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
 aui-resonance = { path = "../aui-resonance" }

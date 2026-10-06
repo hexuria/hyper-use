@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod action_space;
+mod element_state;
 mod error;
 mod fixture;
 mod id;
@@ -19,6 +20,7 @@ mod text;
 mod vocab;
 
 pub use action_space::{ActionId, ActionKind, ActionSpace, ObservedAction};
+pub use element_state::ElementState;
 pub use error::{CoreError, FixtureError};
 pub use fixture::{parse_fixture, write_fixture};
 pub use id::{RegionId, StateFingerprint, UnitInterval};
@@ -118,6 +120,21 @@ mod tests {
         .unwrap();
         assert_eq!(again, rebuilt.fingerprint());
         assert_ne!(region.fingerprint(), region_changed_label().fingerprint());
+    }
+
+    #[test]
+    fn element_state_does_not_change_the_region_fingerprint() {
+        let region = region("field", "Name", 4.0);
+        let fingerprint = region.fingerprint();
+        let state = ElementState {
+            value: Some("Ana".to_owned()),
+            ..ElementState::default()
+        };
+
+        let region = region.with_state(state.clone());
+
+        assert_eq!(region.fingerprint(), fingerprint);
+        assert_eq!(region.state(), &state);
     }
 
     fn region_changed_label() -> InteractionRegion {

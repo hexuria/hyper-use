@@ -5,14 +5,50 @@
 //! ULTRA_INSTINCT_CDP=http://127.0.0.1:9222 cargo test -p aui-agent --test live_smoke -- --ignored --nocapture
 //! ```
 //!
-//! Navigates the first page target to an inline `data:` page (no server) and
+//! Opens an owned background tab, navigates to an inline `data:` page (no server), and
 //! runs TYPE_TEXT → SELECT → CLICK → SCROLL goals through observe → Instinct →
 //! gate → ticket → executor → verify, then checks the page DOM result.
 
 use aui_agent::{AgentBuilder, AgentOutcome, BrowserRuntime, VerificationKind};
-use aui_browser::{BrowserSession, WebSocketTransport};
-use aui_core::ActionKind;
-use aui_policy::InstinctPolicy;
+use aui_browser::{open_tab, BrowserSession, WebSocketTransport};
+use aui_core::{ActionKind, ActionSpace};
+use aui_policy::{
+    AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
+    PolicyOutcome,
+};
+
+#[derive(Default)]
+struct SelectThenDone;
+
+impl BrowserPolicy for SelectThenDone {
+    fn decide(
+        &mut self,
+        space: &ActionSpace,
+        _goal: &AgentGoal,
+        history: &[HistoryEntry],
+    ) -> Result<PolicyOutcome, PolicyError> {
+        let action = if history.is_empty() {
+            space.targets_of(ActionKind::Select).next()
+        } else {
+            space.get_str(ActionKind::Done.as_str())
+        };
+        let Some(action) = action else {
+            return Ok(PolicyOutcome::Abstain {
+                reason: "select live action unavailable".into(),
+                operation_ranked: Vec::new(),
+                target_ranked: Vec::new(),
+            });
+        };
+        Ok(PolicyOutcome::Choice(PolicyDecision {
+            action_id: action.id().clone(),
+            kind: action.kind(),
+            target_label: action.label().to_owned(),
+            confidence_millis: 1_000,
+            operation_ranked: Vec::new(),
+            target_ranked: Vec::new(),
+        }))
+    }
+}
 
 const PAGE: &str = "<!doctype html><title>HU live smoke</title><h1>Flight search</h1>\
 <input id=q aria-label=Search style=width:300px>\
@@ -58,7 +94,7 @@ fn step(
 fn owned_loop_drives_type_select_click_scroll_on_live_chrome() {
     let endpoint =
         std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
-    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    let mut session = BrowserSession::new(open_tab(&endpoint).unwrap());
     session.navigate(&data_url()).unwrap();
     session.settle();
 
@@ -122,6 +158,9 @@ fn harder_data_url() -> String {
 
 const AUTOCOMPLETE: &str = r#"<!doctype html><title>HU autocomplete</title>
 <input id=city role=combobox aria-label=City>
+<div role=listbox aria-label=Country>
+  <div role=option aria-label=Canada>Canada</div>
+</div>
 <div id=suggestions role=listbox aria-label=Suggestions></div>
 <p id=out></p>
 <script>
@@ -141,9 +180,17 @@ city.addEventListener('input', () => setTimeout(() => {
 </script>
 "#;
 
-fn autocomplete_data_url() -> String {
+fn autocomplete_data_url(with_controls: bool) -> String {
+    let html = if with_controls {
+        AUTOCOMPLETE.replace(
+            "role=combobox aria-label=City",
+            "role=combobox aria-label=City aria-controls=suggestions",
+        )
+    } else {
+        AUTOCOMPLETE.to_owned()
+    };
     let mut out = String::from("data:text/html,");
-    for b in AUTOCOMPLETE.bytes() {
+    for b in html.bytes() {
         if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
             out.push(b as char);
         } else {
@@ -158,7 +205,7 @@ fn autocomplete_data_url() -> String {
 fn harder_page_types_observe_shadow_iframe_combobox_on_live_chrome() {
     let endpoint =
         std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
-    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    let mut session = BrowserSession::new(open_tab(&endpoint).unwrap());
     session.navigate(&harder_data_url()).unwrap();
     session.settle();
     let m = BrowserRuntime::observe(&mut session).unwrap().clone();
@@ -188,7 +235,7 @@ fn autocomplete_waits_for_delayed_option_on_live_chrome() {
     let endpoint =
         std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
     let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
-    session.navigate(&autocomplete_data_url()).unwrap();
+    session.navigate(&autocomplete_data_url(true)).unwrap();
     session.settle();
 
     let mut agent = AgentBuilder::new(session, InstinctPolicy::default())
@@ -202,4 +249,148 @@ fn autocomplete_waits_for_delayed_option_on_live_chrome() {
     assert_eq!(steps[0].kind, ActionKind::TypeText);
     assert_eq!(steps[1].kind, ActionKind::Click);
     assert_eq!(steps[1].label, "Manila");
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn autocomplete_ignores_unrelated_visible_options_on_live_chrome() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    for with_controls in [true, false] {
+        let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+        session
+            .navigate(&autocomplete_data_url(with_controls))
+            .unwrap();
+        session.settle();
+
+        let mut agent = AgentBuilder::new(session, InstinctPolicy::default())
+            .max_steps(4)
+            .build(r#"Type "man" into City then click Manila"#);
+        let outcome = agent.run();
+        eprintln!("unrelated options with aria-controls={with_controls}: {outcome:?}");
+        assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+        let steps = outcome.steps();
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert_eq!(steps[0].kind, ActionKind::TypeText);
+        assert_eq!(steps[1].kind, ActionKind::Click);
+        assert_eq!(steps[1].label, "Manila");
+    }
+}
+
+const ELEMENT_STATE_PAGE: &str = r#"<!doctype html><title>HU element state</title>
+<label>Name <input aria-label=Name value=Ana></label>
+<label>Subscribe <input type=checkbox aria-label=Subscribe checked></label>
+<label>Time zone <select aria-label="Time zone">
+  <option>UTC</option><option>Asia/Manila</option><option disabled>Mars</option>
+</select></label>
+<label>Password <input type=password aria-label=Password value=hunter2></label>"#;
+
+fn element_state_data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in ELEMENT_STATE_PAGE.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn live_observe_captures_control_state_without_password_values() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&element_state_data_url()).unwrap();
+    session.settle();
+
+    let manifold = session.observe().unwrap().clone();
+    let space = ActionSpace::from_manifold(&manifold);
+    let name = space
+        .targets_of(ActionKind::TypeText)
+        .find(|action| action.label() == "Name")
+        .unwrap();
+    assert_eq!(name.state().value.as_deref(), Some("Ana"));
+    let subscribe = space
+        .targets_of(ActionKind::Click)
+        .find(|action| action.label() == "Subscribe")
+        .unwrap();
+    assert_eq!(subscribe.state().checked, Some(true));
+    let time_zone = space
+        .targets_of(ActionKind::Select)
+        .find(|action| action.label() == "Time zone")
+        .unwrap();
+    assert_eq!(
+        time_zone.state().options,
+        vec!["UTC".to_owned(), "Asia/Manila".to_owned()]
+    );
+    assert_eq!(time_zone.state().selected.as_deref(), Some("UTC"));
+    let password = space
+        .targets_of(ActionKind::TypeText)
+        .find(|action| action.label() == "Password")
+        .unwrap();
+    assert!(password.state().value.is_none());
+    for action in space.actions() {
+        let state = action.state();
+        assert!(state
+            .value
+            .iter()
+            .chain(state.selected.iter())
+            .chain(state.options.iter())
+            .all(|value| !value.contains("hunter2")));
+    }
+}
+
+const SELECT_GROUNDING_PAGE: &str = r#"<!doctype html><title>HU SELECT grounding</title>
+<label>Time zone <select aria-label="Time zone">
+  <option>UTC</option><option>Asia/Manila</option>
+</select></label>"#;
+
+fn select_grounding_data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in SELECT_GROUNDING_PAGE.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn live_select_uses_an_observed_option_for_an_unquoted_goal() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&select_grounding_data_url()).unwrap();
+    session.settle();
+
+    let mut agent = AgentBuilder::new(session, SelectThenDone)
+        .max_steps(2)
+        .build("Set the time zone to Asia/Manila");
+    let outcome = agent.run();
+    eprintln!("observed-option SELECT: {outcome:?}");
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1, "{outcome:?}");
+    assert_eq!(outcome.steps()[0].kind, ActionKind::Select);
+    assert_eq!(outcome.steps()[0].verification, VerificationKind::Success);
+
+    let region_id = BrowserRuntime::observe(agent.browser_mut())
+        .unwrap()
+        .regions()
+        .find(|region| region.label() == "Time zone")
+        .unwrap()
+        .id()
+        .clone();
+    let actual = agent
+        .browser_mut()
+        .field_value(&region_id)
+        .unwrap()
+        .unwrap()
+        .0;
+    assert_eq!(actual, "Asia/Manila");
 }

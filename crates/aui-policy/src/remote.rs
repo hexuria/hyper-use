@@ -9,9 +9,14 @@
 //!
 //! ```json
 //! {"goal": "...",
-//!  "actions": [{"id": "CLICK:n12", "kind": "CLICK", "label": "Go"}, ...],
-//!  "history": [{"step": 1, "id": "TYPE_TEXT:n4", "verification": "success"}]}
+//!  "actions": [{"id": "TYPE_TEXT:n4", "kind": "TYPE_TEXT", "label": "Name",
+//!               "state": {"value": "Ana"}}, ...],
+//!  "history": [{"step": 1, "id": "TYPE_TEXT:n4", "kind": "TYPE_TEXT",
+//!               "label": "Name", "verification": "success"}]}
 //! ```
+//!
+//! Region-bound actions include nonempty observed control state as additive
+//! evidence. The reply remains closed to the offered id and kind.
 //!
 //! Reply (exactly one of):
 //!
@@ -29,7 +34,7 @@
 //! `EscalatingPolicy<InstinctPolicy, UnconfiguredRemote>` changes nothing until a
 //! real transport is plugged in.
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use aui_core::{ActionKind, ActionSpace};
 
@@ -68,8 +73,9 @@ impl<T: RemoteTransport> RemotePolicy<T> {
 /// Build the request object for `space` / `goal` / `history`.
 ///
 /// Each action carries `id`, `kind`, `label`, and — for region-bound
-/// actions — `role`. Extra fields are additive for transports; a consumer
-/// may ignore them.
+/// actions — `role` and nonempty observed `state`. History includes the
+/// executed action's `kind` and `label`. Extra fields are additive for
+/// transports; a consumer may ignore them.
 pub fn request_json(space: &ActionSpace, goal: &AgentGoal, history: &[HistoryEntry]) -> String {
     let actions: Vec<Value> = space
         .actions()
@@ -79,14 +85,40 @@ pub fn request_json(space: &ActionSpace, goal: &AgentGoal, history: &[HistoryEnt
             if let Some(role) = a.role() {
                 action["role"] = json!(role.as_str());
             }
+            let observed = a.state();
+            if !observed.is_empty() {
+                let mut state = Map::new();
+                if let Some(value) = &observed.value {
+                    state.insert("value".to_owned(), json!(value));
+                }
+                if let Some(checked) = observed.checked {
+                    state.insert("checked".to_owned(), json!(checked));
+                }
+                if let Some(expanded) = observed.expanded {
+                    state.insert("expanded".to_owned(), json!(expanded));
+                }
+                if let Some(selected) = &observed.selected {
+                    state.insert("selected".to_owned(), json!(selected));
+                }
+                if !observed.options.is_empty() {
+                    state.insert("options".to_owned(), json!(&observed.options));
+                }
+                action["state"] = Value::Object(state);
+            }
             action
         })
         .collect();
     let history: Vec<Value> = history
         .iter()
-        .map(
-            |h| json!({"step": h.step, "id": h.action_id.as_str(), "verification": h.verification}),
-        )
+        .map(|h| {
+            json!({
+                "step": h.step,
+                "id": h.action_id.as_str(),
+                "kind": h.kind.as_str(),
+                "label": h.label,
+                "verification": h.verification
+            })
+        })
         .collect();
     json!({"goal": goal.as_str(), "actions": actions, "history": history}).to_string()
 }
@@ -214,7 +246,7 @@ mod tests {
     use super::*;
     use crate::escalate::EscalatingPolicy;
     use crate::instinct_policy::InstinctPolicy;
-    use aui_core::parse_fixture;
+    use aui_core::{parse_fixture, ActionId, ElementState};
 
     fn twins() -> ActionSpace {
         ActionSpace::from_manifold(
@@ -227,6 +259,30 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    fn stateful_space() -> ActionSpace {
+        let mut manifold = parse_fixture(
+            r#"
+            viewport w=800 h=600
+            region id=name role=text_field label="Name" x=10 y=10 w=160 h=24 actions=type sources=dom
+            region id=submit role=button label="Submit" x=10 y=50 w=80 h=24 actions=click sources=dom
+            "#,
+        )
+        .unwrap();
+        let name = manifold
+            .get_str("name")
+            .unwrap()
+            .clone()
+            .with_state(ElementState {
+                value: Some("Ana".to_owned()),
+                checked: Some(false),
+                expanded: Some(true),
+                selected: Some("UTC".to_owned()),
+                options: vec!["UTC".to_owned()],
+            });
+        manifold.replace(name);
+        ActionSpace::from_manifold(&manifold)
     }
 
     #[test]
@@ -253,6 +309,51 @@ mod tests {
             .unwrap()
             .iter()
             .any(|a| a["id"] == "CLICK:a"));
+    }
+
+    #[test]
+    fn request_includes_state_only_for_nonempty_actions_and_history_details() {
+        let space = stateful_space();
+        let history = [HistoryEntry {
+            step: 1,
+            action_id: ActionId::try_new("TYPE_TEXT:name").unwrap(),
+            kind: ActionKind::TypeText,
+            label: "Name".to_owned(),
+            verification: "success".to_owned(),
+        }];
+        let request: Value = serde_json::from_str(&request_json(
+            &space,
+            &AgentGoal::new("Fill the name"),
+            &history,
+        ))
+        .unwrap();
+        let actions = request["actions"].as_array().unwrap();
+        let name = actions
+            .iter()
+            .find(|action| action["id"] == "TYPE_TEXT:name")
+            .unwrap();
+        assert_eq!(
+            name["state"],
+            json!({
+                "value":"Ana",
+                "checked":false,
+                "expanded":true,
+                "selected":"UTC",
+                "options":["UTC"]
+            })
+        );
+        let submit = actions
+            .iter()
+            .find(|action| action["id"] == "CLICK:submit")
+            .unwrap();
+        assert!(submit.get("state").is_none());
+        let done = actions
+            .iter()
+            .find(|action| action["id"] == "DONE")
+            .unwrap();
+        assert!(done.get("state").is_none());
+        assert_eq!(request["history"][0]["kind"], "TYPE_TEXT");
+        assert_eq!(request["history"][0]["label"], "Name");
     }
 
     #[test]

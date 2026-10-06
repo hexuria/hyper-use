@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use aui_core::{ActionId, ActionKind, ActionSpace, ObservedAction};
+use aui_core::{tokenize, ActionId, ActionKind, ActionSpace, ObservedAction};
 use instinct_core::{
     arbitrate, Affinity, Answer, CandidateId, CandidateSet, Confidence, DriveIndex, Drives,
     Profile, Scores,
@@ -10,7 +10,7 @@ use instinct_core::{
 
 use crate::evidence::{missing_quoted_target, score_action, score_operation};
 use crate::goal::AgentGoal;
-use crate::text::{ground_select, label_literal};
+use crate::text::{ground_select, label_literal, quoted_literals};
 use crate::types::{
     BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, RankedAction,
 };
@@ -269,10 +269,17 @@ fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a
             continue;
         }
 
+        let mut positions = Vec::new();
         if let Some((position, literal)) = label_literal(goal, action.label(), &[]) {
             if !value_matches_literal(action.state().value.as_deref(), &literal) {
-                candidates.push((position, action));
+                positions.push(position);
             }
+        }
+        if let Some(position) = explicit_field_position(goal, action.label(), action.kind()) {
+            positions.push(position);
+        }
+        if let Some(position) = positions.into_iter().min() {
+            candidates.push((position, action));
         }
     }
 
@@ -290,6 +297,9 @@ fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a
             if !value_matches_literal(action.state().selected.as_deref(), &literal) {
                 positions.push(position);
             }
+        }
+        if let Some(position) = explicit_field_position(goal, action.label(), action.kind()) {
+            positions.push(position);
         }
         if !action.state().options.is_empty() {
             if let Ok(option) = ground_select(
@@ -320,6 +330,48 @@ fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a
     } else {
         Some(candidate)
     }
+}
+
+fn explicit_field_position(goal: &str, label: &str, kind: ActionKind) -> Option<usize> {
+    if score_operation(goal, kind, None).get() == 0 {
+        return None;
+    }
+
+    let quoted = quoted_literals(goal);
+    let mut offset = 0;
+    while offset < goal.len() {
+        let position = offset + phrase_position(&goal[offset..], label)?;
+        if !position_is_quoted(goal, position, &quoted) {
+            let prefix = tokenize(&goal[..position]);
+            let field_preposition = prefix
+                .last()
+                .is_some_and(|word| matches!(word.as_str(), "in" | "into"))
+                || (prefix.len() >= 2
+                    && matches!(prefix[prefix.len() - 2].as_str(), "in" | "into")
+                    && matches!(prefix.last().map(String::as_str), Some("the" | "a" | "an")));
+            if field_preposition {
+                return Some(position);
+            }
+        }
+        offset = goal[position..]
+            .char_indices()
+            .nth(1)
+            .map_or(goal.len(), |(relative, _)| position + relative);
+    }
+    None
+}
+
+fn position_is_quoted(goal: &str, position: usize, quoted: &[(usize, String)]) -> bool {
+    quoted.iter().any(|(opening_quote, literal)| {
+        let Some(opening) = goal
+            .get(*opening_quote..)
+            .and_then(|suffix| suffix.chars().next())
+        else {
+            return false;
+        };
+        let content_start = opening_quote + opening.len_utf8();
+        position >= content_start && position < content_start + literal.len()
+    })
 }
 
 fn value_matches_literal(value: Option<&str>, literal: &str) -> bool {
@@ -674,6 +726,42 @@ mod tests {
         let choice = outcome.as_choice().expect("expected choice");
         assert_eq!(choice.kind, ActionKind::Click);
         assert_eq!(choice.target_label, "Save");
+    }
+
+    #[test]
+    fn explicit_text_field_reference_selects_text_target() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=search role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+            region id=go role=button label="Go" x=320 y=10 w=60 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = format!("type rust ownership in the Search box{BENCH_SUFFIX}");
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::TypeText);
+        assert_eq!(choice.target_label, "Search");
+    }
+
+    #[test]
+    fn explicit_select_field_reference_selects_select_target() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=cabin role=combobox label="Cabin class" x=10 y=10 w=200 h=24 actions=select sources=dom,accessibility
+            region id=find role=button label="Find flights" x=10 y=50 w=120 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = format!("select business in Cabin class{BENCH_SUFFIX}");
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Select);
+        assert_eq!(choice.target_label, "Cabin class");
     }
 
     #[test]

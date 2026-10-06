@@ -8,13 +8,16 @@ use instinct_core::{
     Profile, Scores,
 };
 
-use crate::evidence::{score_action, score_operation};
+use crate::evidence::{missing_quoted_target, score_action, score_operation};
 use crate::goal::AgentGoal;
+use crate::text::{ground_select, label_literal};
 use crate::types::{
     BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, RankedAction,
 };
 
 pub const HABITUATION_STEP: i16 = 250;
+const FORM_FIRST_CAP: i16 = 800;
+const MISSING_QUOTED_TARGET_CAP: i16 = 500;
 
 /// Instinct-backed finite policy. Hard-invalid targets are already absent from
 /// [`ActionSpace`]; this policy never applies occlusion/disabled as scores.
@@ -56,15 +59,25 @@ impl BrowserPolicy for InstinctPolicy {
         }
 
         let goal_text = goal.as_str();
+        let missing_target = missing_quoted_target(goal_text, space);
+        let form_first = if missing_target {
+            None
+        } else {
+            named_unsatisfied_field(goal_text, space)
+        };
 
         // --- Operation head -------------------------------------------------
         let kinds = offered_kinds(space);
         let mut op_scores = BTreeMap::new();
         let mut op_ids = BTreeMap::new();
         for kind in kinds.iter().copied() {
-            let best = space
-                .targets_of(kind)
-                .max_by_key(|a| score_action(goal_text, a).get());
+            let best = form_first
+                .filter(|action| action.kind() == kind)
+                .or_else(|| {
+                    space
+                        .targets_of(kind)
+                        .max_by_key(|a| score_action(goal_text, a).get())
+                });
             let id = if kind.is_control() {
                 ActionId::try_new(kind.as_str())
                     .map_err(|e| PolicyError::Internal(e.to_string()))?
@@ -72,7 +85,18 @@ impl BrowserPolicy for InstinctPolicy {
                 best.map(|action| action.id().clone())
                     .ok_or_else(|| PolicyError::Internal(format!("no target for {kind}")))?
             };
-            op_scores.insert(kind, score_operation(goal_text, kind, best));
+            let mut score = score_operation(goal_text, kind, best);
+            if let Some(field) = form_first {
+                if kind == field.kind() {
+                    score = Confidence::MAX;
+                } else {
+                    score = cap_confidence(score, FORM_FIRST_CAP);
+                }
+            }
+            if missing_target && !kind.is_control() {
+                score = cap_confidence(score, MISSING_QUOTED_TARGET_CAP);
+            }
+            op_scores.insert(kind, score);
             op_ids.insert(kind, id);
         }
 
@@ -133,7 +157,22 @@ impl BrowserPolicy for InstinctPolicy {
 
         let target_scores: Vec<(&ObservedAction, Confidence)> = targets
             .iter()
-            .map(|a| (*a, score_action(goal_text, a)))
+            .map(|action| {
+                let mut score = score_action(goal_text, action);
+                if let Some(field) = form_first {
+                    if action.kind() == field.kind() {
+                        if action.id() == field.id() {
+                            score = Confidence::MAX;
+                        } else {
+                            score = cap_confidence(score, FORM_FIRST_CAP);
+                        }
+                    }
+                }
+                if missing_target {
+                    score = cap_confidence(score, MISSING_QUOTED_TARGET_CAP);
+                }
+                (*action, score)
+            })
             .collect();
 
         let (chosen, target_ranked) = choose_targets(&target_scores, history, self.profile)?;
@@ -214,6 +253,102 @@ fn offered_kinds(space: &ActionSpace) -> Vec<ActionKind> {
         }
     }
     kinds
+}
+
+fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a ObservedAction> {
+    let mut candidates = Vec::new();
+    for kind in [ActionKind::TypeText, ActionKind::Select] {
+        for action in space.targets_of(kind) {
+            let mut positions = Vec::new();
+            if let Some((position, literal)) = label_literal(goal, action.label(), &[]) {
+                let current = match kind {
+                    ActionKind::TypeText => action.state().value.as_deref(),
+                    ActionKind::Select => action.state().selected.as_deref(),
+                    _ => None,
+                };
+                if !value_matches_literal(current, &literal) {
+                    positions.push(position);
+                }
+            }
+            if kind == ActionKind::Select && !action.state().options.is_empty() {
+                if let Ok(option) = ground_select(
+                    goal,
+                    None,
+                    &action.state().options,
+                    action.state().selected.as_deref(),
+                ) {
+                    if !value_matches_literal(action.state().selected.as_deref(), &option) {
+                        if let Some(position) = phrase_position(goal, &option) {
+                            positions.push(position);
+                        }
+                    }
+                }
+            }
+            if let Some(position) = positions.into_iter().min() {
+                candidates.push((position, action));
+            }
+        }
+    }
+
+    let earliest_position = candidates.iter().map(|(position, _)| *position).min()?;
+    let mut earliest = candidates
+        .into_iter()
+        .filter(|(position, _)| *position == earliest_position);
+    let (_, candidate) = earliest.next()?;
+    if earliest.next().is_some() {
+        None
+    } else {
+        Some(candidate)
+    }
+}
+
+fn value_matches_literal(value: Option<&str>, literal: &str) -> bool {
+    value.is_some_and(|value| value.trim().to_lowercase() == literal.trim().to_lowercase())
+}
+
+fn phrase_position(goal: &str, phrase: &str) -> Option<usize> {
+    let phrase = phrase.trim().to_lowercase();
+    if phrase.is_empty() {
+        return None;
+    }
+    for (start, _) in goal.char_indices() {
+        if !phrase_boundary_before(goal, start) {
+            continue;
+        }
+        let mut normalized = String::new();
+        for (offset, character) in goal[start..].char_indices() {
+            normalized.extend(character.to_lowercase());
+            let end = start + offset + character.len_utf8();
+            if normalized == phrase {
+                if phrase_boundary_after(goal, end) {
+                    return Some(start);
+                }
+                break;
+            }
+            if !phrase.starts_with(&normalized) {
+                break;
+            }
+        }
+    }
+    None
+}
+
+fn phrase_boundary_before(text: &str, position: usize) -> bool {
+    text[..position]
+        .chars()
+        .next_back()
+        .is_none_or(|character| !character.is_alphanumeric())
+}
+
+fn phrase_boundary_after(text: &str, position: usize) -> bool {
+    text[position..]
+        .chars()
+        .next()
+        .is_none_or(|character| !character.is_alphanumeric())
+}
+
+fn cap_confidence(score: Confidence, ceiling: i16) -> Confidence {
+    Confidence::saturating(i32::from(score.get().min(ceiling)))
 }
 
 fn habituation_weight(id: &ActionId, history: &[HistoryEntry]) -> Confidence {
@@ -455,11 +590,180 @@ fn ranked_from_answer_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aui_core::parse_fixture;
+    use aui_core::{parse_fixture, ElementState, InteractionManifold};
 
     fn space_from(fixture: &str) -> ActionSpace {
         let m = parse_fixture(fixture).unwrap();
         ActionSpace::from_manifold(&m)
+    }
+
+    const BENCH_SUFFIX: &str = " The page is already open in the browser. Use only this site. If the task cannot be done on this site, stop and say so (give up) without changing anything.";
+
+    fn space_with_state(fixture: &str, id: &str, state: ElementState) -> ActionSpace {
+        let manifold = parse_fixture(fixture).unwrap();
+        let regions = manifold
+            .regions()
+            .map(|region| {
+                if region.id().as_str() == id {
+                    region.clone().with_state(state.clone())
+                } else {
+                    region.clone()
+                }
+            })
+            .collect();
+        let manifold =
+            InteractionManifold::try_new(manifold.viewport(), regions, manifold.captured_at_ms())
+                .unwrap();
+        ActionSpace::from_manifold(&manifold)
+    }
+
+    #[test]
+    fn missing_quoted_button_target_abstains() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=inbox role=link label="Inbox" x=10 y=10 w=100 h=24 actions=click sources=dom,accessibility
+            region id=select-all role=checkbox label="Select all" x=10 y=50 w=100 h=24 actions=click sources=dom,accessibility
+            region id=compose role=button label="Compose" x=10 y=90 w=100 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal =
+            format!("Print all messages in the inbox with the \"Print all\" button.{BENCH_SUFFIX}");
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        assert!(
+            matches!(outcome, PolicyOutcome::Abstain { .. }),
+            "{outcome:?}"
+        );
+    }
+
+    #[test]
+    fn clause_head_save_beats_settings_link() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=save role=button label="Save" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+            region id=settings role=link label="Settings" x=10 y=50 w=100 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = format!("In Settings, save the signature.{BENCH_SUFFIX}");
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Click);
+        assert_eq!(choice.target_label, "Save");
+    }
+
+    #[test]
+    fn named_unsatisfied_timezone_is_selected_before_save() {
+        let fixture = r#"
+            viewport w=800 h=600
+            region id=timezone role=combobox label="Time zone" x=10 y=10 w=200 h=24 actions=select sources=dom,accessibility
+            region id=save role=button label="Save" x=10 y=50 w=80 h=24 actions=click sources=dom,accessibility
+            region id=settings role=link label="Settings" x=10 y=90 w=100 h=24 actions=click sources=dom,accessibility
+            "#;
+        let goal =
+            format!("Change the time zone to \"Asia/Manila\" and save the settings.{BENCH_SUFFIX}");
+        let unsatisfied = space_with_state(
+            fixture,
+            "timezone",
+            ElementState {
+                selected: Some("UTC".to_owned()),
+                options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
+                ..ElementState::default()
+            },
+        );
+        let outcome = InstinctPolicy::default()
+            .decide(&unsatisfied, &AgentGoal::new(&goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Select);
+        assert_eq!(choice.target_label, "Time zone");
+
+        let satisfied = space_with_state(
+            fixture,
+            "timezone",
+            ElementState {
+                selected: Some("Asia/Manila".to_owned()),
+                options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
+                ..ElementState::default()
+            },
+        );
+        let outcome = InstinctPolicy::default()
+            .decide(&satisfied, &AgentGoal::new(goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Click);
+        assert_eq!(choice.target_label, "Save");
+    }
+
+    #[test]
+    fn email_reply_selects_named_link_then_fills_then_sends() {
+        let list_page = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=q3 role=link label="Q3 launch checklist, from Maya Reyes" x=10 y=10 w=280 h=24 actions=click sources=dom,accessibility
+            region id=sprint role=link label="Sprint retro, from Maya Reyes" x=10 y=50 w=240 h=24 actions=click sources=dom,accessibility
+            region id=search role=text_field label="Search mail" x=10 y=90 w=200 h=24 actions=type sources=dom,accessibility
+            "#,
+        );
+        let goal = format!(
+            "Open the email \"Q3 launch checklist\" from Maya Reyes and send the quick reply \"On it, thanks\".{BENCH_SUFFIX}"
+        );
+        let outcome = InstinctPolicy::default()
+            .decide(&list_page, &AgentGoal::new(&goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Click);
+        assert_eq!(choice.target_label, "Q3 launch checklist, from Maya Reyes");
+
+        let email_fixture = r#"
+            viewport w=800 h=600
+            region id=reply role=text_field label="Reply to Maya Reyes" x=10 y=10 w=300 h=80 actions=type sources=dom,accessibility
+            region id=send role=button label="Send" x=10 y=110 w=80 h=24 actions=click sources=dom,accessibility
+            "#;
+        let empty_reply = space_with_state(email_fixture, "reply", ElementState::default());
+        let outcome = InstinctPolicy::default()
+            .decide(&empty_reply, &AgentGoal::new(&goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::TypeText);
+        assert_eq!(choice.target_label, "Reply to Maya Reyes");
+
+        let filled_reply = space_with_state(
+            email_fixture,
+            "reply",
+            ElementState {
+                value: Some("On it, thanks".to_owned()),
+                ..ElementState::default()
+            },
+        );
+        let outcome = InstinctPolicy::default()
+            .decide(&filled_reply, &AgentGoal::new(goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Click);
+        assert_eq!(choice.target_label, "Send");
+    }
+
+    #[test]
+    fn clause_head_archive_beats_named_email() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=archive role=button label="Archive" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+            region id=q3 role=link label="Q3 launch checklist, from Maya Reyes" x=10 y=50 w=280 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = format!("Archive the open email \"Q3 launch checklist\".{BENCH_SUFFIX}");
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        let choice = outcome.as_choice().expect("expected choice");
+        assert_eq!(choice.kind, ActionKind::Click);
+        assert_eq!(choice.target_label, "Archive");
     }
 
     #[test]

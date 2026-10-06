@@ -32,4 +32,3 @@ rust-version = "1.99"
 # Pinned Exact: hexuria/instinct @ a42d16b (ADR 0008). Bump only with deliberate eval.
 instinct-core = { git = "https://github.com/hexuria/instinct", rev = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea" }
 instinct-text = { git = "https://github.com/hexuria/instinct", rev = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea" }
-instinct-lexicon = { git = "https://github.com/hexuria/instinct", rev = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea" }

@@ -19,7 +19,6 @@ model-text = ["dep:serde_json"]
 aui-core = { path = "../aui-core" }
 instinct-core = { workspace = true }
 instinct-text = { workspace = true }
-instinct-lexicon = { workspace = true }
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]

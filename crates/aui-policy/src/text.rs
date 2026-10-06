@@ -160,25 +160,11 @@ impl TextResolver for DeterministicTextResolver {
                 ));
             }
 
-            let label_words = ascii_words(&context.field_label);
-            let selected = untyped
-                .iter()
-                .find(|(opening_quote, _)| {
-                    let before = &goal[..*opening_quote];
-                    let start = before
-                        .char_indices()
-                        .rev()
-                        .nth(31)
-                        .map_or(0, |(index, _)| index);
-                    ascii_words(&before[start..])
-                        .iter()
-                        .rev()
-                        .take(3)
-                        .any(|word| label_words.contains(word))
-                })
-                .unwrap_or(&untyped[0]);
+            let selected = label_literal(goal, &context.field_label, &context.typed)
+                .or_else(|| untyped.first().cloned())
+                .ok_or(TextError::Missing)?;
             return Ok(TextResolution {
-                text: selected.1.clone(),
+                text: selected.1,
                 context_fingerprint: context.fingerprint(),
             });
         }
@@ -210,7 +196,7 @@ impl TextResolver for DeterministicTextResolver {
     }
 }
 
-fn quoted_literals(goal: &str) -> Vec<(usize, String)> {
+pub(crate) fn quoted_literals(goal: &str) -> Vec<(usize, String)> {
     let mut literals = Vec::new();
     let mut cursor = 0;
     while cursor < goal.len() {
@@ -242,6 +228,32 @@ fn quoted_literals(goal: &str) -> Vec<(usize, String)> {
         cursor = content_end + closing.len_utf8();
     }
     literals
+}
+
+pub(crate) fn label_literal(
+    goal: &str,
+    label: &str,
+    excluded_literals: &[String],
+) -> Option<(usize, String)> {
+    let label_words = ascii_words(label);
+    quoted_literals(goal)
+        .into_iter()
+        .find(|(opening_quote, literal)| {
+            if excluded_literals.iter().any(|excluded| excluded == literal) {
+                return false;
+            }
+            let before = &goal[..*opening_quote];
+            let start = before
+                .char_indices()
+                .rev()
+                .nth(31)
+                .map_or(0, |(index, _)| index);
+            ascii_words(&before[start..])
+                .iter()
+                .rev()
+                .take(3)
+                .any(|word| label_words.contains(word))
+        })
 }
 
 fn ascii_words(text: &str) -> Vec<String> {

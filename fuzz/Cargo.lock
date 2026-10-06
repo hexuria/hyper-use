@@ -91,7 +91,6 @@ version = "0.1.0"
 dependencies = [
  "aui-core",
  "instinct-core",
- "instinct-lexicon",
  "instinct-text",
  "serde_json",
 ]
@@ -269,15 +268,6 @@ version = "0.0.0"
 source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
 dependencies = [
  "blake3",
-]
-
-[[package]]
-name = "instinct-lexicon"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
-dependencies = [
- "instinct-core",
- "instinct-text",
 ]
 
 [[package]]

@@ -1,9 +1,11 @@
 //! Integer evidence for browser candidates. No float thresholds.
 
-use aui_core::{tokenize, ActionKind, ObservedAction, Role};
+use std::collections::BTreeSet;
+
+use aui_core::{tokenize, ActionKind, ActionSpace, ObservedAction, Role};
 use instinct_core::Confidence;
-use instinct_lexicon::overlap;
-use instinct_text::{normalize, NormalizeConfig};
+
+use crate::text::quoted_literals;
 
 /// Score how well `action` matches `goal`. Returns Instinct confidence millis 0..=1000.
 ///
@@ -33,6 +35,15 @@ const LEADING_VERBS: &[&str] = &[
 
 /// Connectives dropped right after a stripped verb or quoted payload.
 const CONNECTIVES: &[&str] = &["into", "in", "on", "to", "the", "a", "an", "from", "as"];
+
+const STOPWORDS: &[&str] = &[
+    "a", "an", "the", "to", "of", "in", "on", "at", "for", "with", "and", "or", "from", "into",
+    "by", "as", "is", "are", "be", "it", "its", "this", "that", "these", "those", "then", "so",
+    "all", "any", "only", "already", "use", "page", "site", "browser", "without", "changing",
+    "anything", "stop", "say", "give", "up", "make", "sure", "me", "my", "your", "please",
+];
+
+const CONTEXT_PREPOSITIONS: &[&str] = &["in", "on", "at", "for", "with", "from"];
 
 /// The goal with quoted payloads, a leading operation verb, and the
 /// connectives that followed them removed. `None` when nothing is left.
@@ -99,46 +110,162 @@ fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
         return Confidence::saturating(920);
     }
 
-    let mut score = Confidence::ZERO;
-
-    if let Ok(ov) = lexical_overlap(goal, label) {
-        score = score.saturating_add(ov);
-    }
-
-    let g = fold(goal);
-    let l = fold(label);
-    if !l.is_empty() && g.contains(&l) {
-        score = score.saturating_add(Confidence::saturating(250));
-    } else if !g.is_empty() && l.contains(&g) {
-        score = score.saturating_add(Confidence::saturating(200));
-    }
-
-    let goal_tokens = tokenize(goal);
     let label_tokens = tokenize(label);
-    if !goal_tokens.is_empty() {
-        let hits = goal_tokens
-            .iter()
-            .filter(|t| label_tokens.iter().any(|lt| lt == *t))
-            .count();
-        if hits == goal_tokens.len() && hits > 0 {
-            score = score.saturating_add(Confidence::saturating(300));
-        } else if hits > 0 {
-            let part = i32::try_from(hits.saturating_mul(150) / goal_tokens.len()).unwrap_or(0);
-            score = score.saturating_add(Confidence::saturating(part));
-        }
-    }
+    let filtered_label_tokens: Vec<_> = label_tokens
+        .iter()
+        .filter(|token| !is_stopword(token))
+        .cloned()
+        .collect();
+    let content_label_tokens = if filtered_label_tokens.is_empty() {
+        &label_tokens
+    } else {
+        &filtered_label_tokens
+    };
+    let goal_tokens: BTreeSet<_> = instruction_tokens(goal)
+        .into_iter()
+        .filter(|token| !is_stopword(token))
+        .collect();
+    let unique_label_tokens: BTreeSet<_> =
+        content_label_tokens.iter().map(String::as_str).collect();
+    let hits = unique_label_tokens
+        .iter()
+        .filter(|token| goal_tokens.contains(**token))
+        .count();
+    let mut content_score = if content_label_tokens.is_empty() {
+        0
+    } else {
+        let value = 400_u128 * hits as u128 / content_label_tokens.len() as u128
+            + 50_u128 * hits.min(4) as u128;
+        i32::try_from(value).unwrap_or(600)
+    };
 
     if let Some(role) = action.role() {
         if role_mentioned(goal, role) {
-            score = score.saturating_add(Confidence::saturating(80));
+            content_score += 80;
         }
+    }
+    let mut score = content_score.min(600);
+
+    if content_label_tokens.first().is_some_and(|first| {
+        content_label_tokens
+            .iter()
+            .all(|token| goal_tokens.contains(token))
+            && clause_heads(goal).iter().any(|head| head == first)
+    }) {
+        score = score.max(950);
+    }
+
+    if quoted_literals(goal).iter().any(|(_, literal)| {
+        let literal_tokens = tokenize(literal);
+        !literal_tokens.is_empty()
+            && label_tokens
+                .windows(literal_tokens.len())
+                .any(|window| window == literal_tokens.as_slice())
+    }) {
+        score = score.max(800);
     }
 
     if kind == ActionKind::Done && done_language(goal) {
-        score = score.saturating_add(Confidence::saturating(100));
+        score += 100;
     }
 
-    score
+    Confidence::saturating(score)
+}
+
+pub(crate) fn missing_quoted_target(goal: &str, space: &ActionSpace) -> bool {
+    let target_labels = [ActionKind::Click, ActionKind::TypeText, ActionKind::Select]
+        .into_iter()
+        .flat_map(|kind| space.targets_of(kind));
+
+    let labels: Vec<_> = target_labels
+        .map(|action| tokenize(action.label()))
+        .collect();
+    quoted_literals(goal).iter().any(|(position, literal)| {
+        if !quoted_target_kind(goal, *position, literal) {
+            return false;
+        }
+        let literal_tokens = tokenize(literal);
+        !literal_tokens.is_empty()
+            && !labels.iter().any(|label| {
+                label
+                    .windows(literal_tokens.len())
+                    .any(|window| window == literal_tokens.as_slice())
+            })
+    })
+}
+
+fn quoted_target_kind(goal: &str, opening_quote: usize, literal: &str) -> bool {
+    let Some(opening) = goal[opening_quote..].chars().next() else {
+        return false;
+    };
+    let closing = if opening == '"' { '"' } else { '”' };
+    let suffix_start = opening_quote + opening.len_utf8() + literal.len() + closing.len_utf8();
+    goal.get(suffix_start..)
+        .and_then(|suffix| tokenize(suffix).into_iter().next())
+        .is_some_and(|word| {
+            matches!(
+                word.as_str(),
+                "button" | "link" | "tab" | "checkbox" | "option" | "field" | "menu"
+            )
+        })
+}
+
+fn clause_heads(goal: &str) -> Vec<String> {
+    let masked_goal = mask_quoted_literals(goal);
+    let mut heads = Vec::new();
+    for clause in instruction_clauses(&masked_goal) {
+        let mut part = Vec::new();
+        for token in clause {
+            if matches!(token.as_str(), "and" | "then") {
+                push_clause_head(&mut part, &mut heads);
+            } else {
+                part.push(token);
+            }
+        }
+        push_clause_head(&mut part, &mut heads);
+    }
+    heads
+}
+
+fn mask_quoted_literals(goal: &str) -> String {
+    let mut masked = String::with_capacity(goal.len());
+    let mut cursor = 0;
+    for (opening_quote, literal) in quoted_literals(goal) {
+        let Some(opening) = goal[opening_quote..].chars().next() else {
+            continue;
+        };
+        let closing = if opening == '"' { '"' } else { '”' };
+        let closing_end = opening_quote + opening.len_utf8() + literal.len() + closing.len_utf8();
+        masked.push_str(&goal[cursor..opening_quote]);
+        masked.push('\0');
+        cursor = closing_end;
+    }
+    masked.push_str(&goal[cursor..]);
+    masked
+}
+
+fn push_clause_head(tokens: &mut Vec<String>, heads: &mut Vec<String>) {
+    if tokens
+        .first()
+        .is_some_and(|token| CONTEXT_PREPOSITIONS.contains(&token.as_str()))
+    {
+        tokens.clear();
+        return;
+    }
+    if tokens
+        .first()
+        .is_some_and(|token| LEADING_VERBS.contains(&token.as_str()))
+    {
+        tokens.remove(0);
+    }
+    if let Some(head) = tokens.iter().find(|token| !is_stopword(token)) {
+        heads.push(head.clone());
+    }
+    tokens.clear();
+}
+
+fn is_stopword(token: &str) -> bool {
+    STOPWORDS.contains(&token)
 }
 
 /// Score an operation kind given the goal and the best target (if any) for that kind.
@@ -173,13 +300,6 @@ pub fn score_operation(
     score
 }
 
-fn lexical_overlap(goal: &str, candidate: &str) -> Result<Confidence, ()> {
-    let cfg = NormalizeConfig::default();
-    let q = normalize(goal, cfg).map_err(|_| ())?;
-    let c = normalize(candidate, cfg).map_err(|_| ())?;
-    overlap(&q, &c).map_err(|_| ())
-}
-
 fn eq_fold(a: &str, b: &str) -> bool {
     fold(a) == fold(b)
 }
@@ -192,7 +312,11 @@ fn fold(s: &str) -> String {
 }
 
 fn instruction_tokens(goal: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
+    instruction_clauses(goal).into_iter().flatten().collect()
+}
+
+fn instruction_clauses(goal: &str) -> Vec<Vec<String>> {
+    let mut clauses = Vec::new();
     for clause in goal.split(['.', ';', '!', '?', ',', '\n']) {
         let clause_tokens = tokenize(clause);
         if matches!(
@@ -201,9 +325,9 @@ fn instruction_tokens(goal: &str) -> Vec<String> {
         ) {
             continue;
         }
-        tokens.extend(clause_tokens);
+        clauses.push(clause_tokens);
     }
-    tokens
+    clauses
 }
 
 fn matches_instruction_tokens(tokens: &[String], keys: &[&[&str]]) -> bool {
@@ -291,6 +415,82 @@ fn done_language(goal: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aui_core::parse_fixture;
+
+    fn action_from_fixture(fixture: &str, action_id: &str) -> ObservedAction {
+        let manifold = parse_fixture(fixture).unwrap();
+        ActionSpace::from_manifold(&manifold)
+            .get_str(action_id)
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn inbox_content_evidence_stays_below_the_selection_threshold() {
+        let action = action_from_fixture(
+            r#"
+            viewport w=800 h=600
+            region id=inbox role=link label="Inbox" x=10 y=10 w=100 h=24 actions=click
+            "#,
+            "CLICK:inbox",
+        );
+        let goal = "Print all messages in the inbox with the \"Print all\" button. The page is already open in the browser. Use only this site. If the task cannot be done on this site, stop and say so (give up) without changing anything.";
+        assert!(score_action(goal, &action).get() <= 600);
+    }
+
+    #[test]
+    fn clause_head_verb_scores_950() {
+        let action = action_from_fixture(
+            r#"
+            viewport w=800 h=600
+            region id=save role=button label="Save" x=10 y=10 w=80 h=24 actions=click
+            "#,
+            "CLICK:save",
+        );
+        assert_eq!(
+            score_action("In Settings, save the signature.", &action).get(),
+            950
+        );
+    }
+
+    #[test]
+    fn quoted_name_scores_800() {
+        let action = action_from_fixture(
+            r#"
+            viewport w=800 h=600
+            region id=q3 role=link label="Q3 launch checklist, from Maya Reyes" x=10 y=10 w=280 h=24 actions=click
+            "#,
+            "CLICK:q3",
+        );
+        assert_eq!(
+            score_action(
+                "Open the email \"Q3 launch checklist\" from Maya Reyes.",
+                &action
+            )
+            .get(),
+            800
+        );
+    }
+
+    #[test]
+    fn content_tier_caps_role_mention_at_600() {
+        let action = action_from_fixture(
+            r#"
+            viewport w=800 h=600
+            region id=settings role=button label="User settings billing" x=10 y=10 w=180 h=24 actions=click
+            "#,
+            "CLICK:settings",
+        );
+        assert_eq!(
+            score_action("Update the user settings billing button.", &action).get(),
+            600
+        );
+    }
+
+    #[test]
+    fn clause_heads_skip_quoted_tokens_and_leading_verbs() {
+        assert_eq!(clause_heads(r#"Type "save" into Notes"#), ["notes"]);
+    }
 
     #[test]
     fn target_phrase_strips_verb_payload_and_connectives() {

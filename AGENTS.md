@@ -33,7 +33,10 @@ crate.
 >    second float confidence gate on the agent path. Abstain is never turned
 >    into "top candidate wins". Habituation (ADR 0008) only lowers the urge of
 >    a repeated no-effect / wrong-effect action; it never adds candidates or
->    bypasses the gate.
+>    bypasses the gate. Target evidence tiers: exact 1000; clause-head verb
+>    label 950; quoted-name label 800; content coverage ≤ 600 (never chosen
+>    alone); unsatisfied goal-named fields fill first (others capped at 800);
+>    a quoted "X" button absent from the page caps targets at 500.
 > 3. **Hard invalidity is guard evidence, not a score.** Disabled, readonly
 >    (TYPE / SELECT), hidden / zero-area, occluded, front-layer, offscreen,
 >    missing target, unsupported action → `aui_guard::gate` refuses. The

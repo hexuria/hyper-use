@@ -61,6 +61,14 @@ fn dense_page() -> PageSpec {
     PageSpec::of(&controls, "http://127.0.0.1/dense", "Dense")
 }
 
+fn compact_observe_calls(page: &PageSpec) -> usize {
+    let mut session = BrowserSession::new(CountingTransport::new(
+        ScriptBuilder::new().observe_compact(page),
+    ));
+    session.observe().unwrap();
+    session.transport().calls
+}
+
 #[test]
 fn observe_small_page_stays_under_call_budget() {
     let mut session = BrowserSession::new(CountingTransport::new(
@@ -68,13 +76,11 @@ fn observe_small_page_stays_under_call_budget() {
     ));
     session.observe().unwrap();
     let calls = session.transport().calls;
-    // Baseline measured 2026-10-06: 25 calls for 5 controls (~4 calls per
-    // node + fixed page calls). The invariant is the budget, not the exact
-    // count: observe must not grow per-node calls beyond this ceiling. Lower
-    // it when observe merges calls.
+    // The scripted legacy path uses 25 calls; the unscripted compact
+    // Runtime.evaluate attempt adds one before falling back.
     assert!(
-        calls <= 40,
-        "observe issued {calls} CDP calls on a 5-control page (budget 40)"
+        calls == 26,
+        "observe issued {calls} CDP calls on a 5-control legacy page (expected 26)"
     );
 }
 
@@ -85,11 +91,26 @@ fn observe_dense_page_stays_under_call_budget() {
     ));
     session.observe().unwrap();
     let calls = session.transport().calls;
-    // Baseline measured 2026-10-06: 205 calls for 50 controls (~4 calls per
-    // node: box model, computed style, AX node, hit test). A call-count
-    // ceiling here is the regression tripwire for the observe-cost work.
+    // The scripted legacy path uses 205 calls; the unscripted compact
+    // Runtime.evaluate attempt adds one before falling back.
     assert!(
-        calls <= 400,
-        "observe issued {calls} CDP calls on a 50-control page (budget 400)"
+        calls == 206,
+        "observe issued {calls} CDP calls on a 50-control legacy page (expected 206)"
     );
+}
+
+#[test]
+fn observe_compact_call_count_is_independent_of_page_size() {
+    let small_calls = compact_observe_calls(&small_page());
+    let dense_calls = compact_observe_calls(&dense_page());
+
+    assert_eq!(
+        small_calls, 5,
+        "compact observe should use five fixed calls"
+    );
+    assert_eq!(
+        dense_calls, 5,
+        "compact observe should use five fixed calls"
+    );
+    assert_eq!(small_calls, dense_calls);
 }

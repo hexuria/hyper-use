@@ -581,13 +581,28 @@ impl ScriptBuilder {
         self
     }
 
-    /// A `Runtime.evaluate` call whose by-value result is the supplied value.
-    pub fn evaluate_value(mut self, value: Value) -> Self {
+    /// Read a by-value autocomplete signature through the bound DOM node.
+    pub fn dom_read_autocomplete_signature(mut self, node_id: i64, value: Value) -> Self {
+        let object = format!("obj-{node_id}");
         self.calls.push(result(
-            "Runtime.evaluate",
+            "DOM.resolveNode",
+            json!({"object": {"type": "object", "objectId": object}}),
+        ));
+        self.calls.push(result(
+            "Runtime.callFunctionOn",
             json!({"result":{"value":value}}),
         ));
         self
+    }
+
+    /// A `BrowserSession::ready_state` result.
+    pub fn ready_state(self, value: &str) -> Self {
+        let mut builder = self;
+        builder.calls.push(result(
+            "Runtime.evaluate",
+            json!({"result":{"value":value}}),
+        ));
+        builder
     }
 
     /// A DOM input by node id that the page refuses (the function throws).

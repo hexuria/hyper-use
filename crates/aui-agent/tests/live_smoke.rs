@@ -122,6 +122,9 @@ fn harder_data_url() -> String {
 
 const AUTOCOMPLETE: &str = r#"<!doctype html><title>HU autocomplete</title>
 <input id=city role=combobox aria-label=City>
+<div role=listbox aria-label=Country>
+  <div role=option aria-label=Canada>Canada</div>
+</div>
 <div id=suggestions role=listbox aria-label=Suggestions></div>
 <p id=out></p>
 <script>
@@ -141,9 +144,17 @@ city.addEventListener('input', () => setTimeout(() => {
 </script>
 "#;
 
-fn autocomplete_data_url() -> String {
+fn autocomplete_data_url(with_controls: bool) -> String {
+    let html = if with_controls {
+        AUTOCOMPLETE.replace(
+            "role=combobox aria-label=City",
+            "role=combobox aria-label=City aria-controls=suggestions",
+        )
+    } else {
+        AUTOCOMPLETE.to_owned()
+    };
     let mut out = String::from("data:text/html,");
-    for b in AUTOCOMPLETE.bytes() {
+    for b in html.bytes() {
         if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
             out.push(b as char);
         } else {
@@ -188,7 +199,7 @@ fn autocomplete_waits_for_delayed_option_on_live_chrome() {
     let endpoint =
         std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
     let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
-    session.navigate(&autocomplete_data_url()).unwrap();
+    session.navigate(&autocomplete_data_url(true)).unwrap();
     session.settle();
 
     let mut agent = AgentBuilder::new(session, InstinctPolicy::default())
@@ -202,4 +213,30 @@ fn autocomplete_waits_for_delayed_option_on_live_chrome() {
     assert_eq!(steps[0].kind, ActionKind::TypeText);
     assert_eq!(steps[1].kind, ActionKind::Click);
     assert_eq!(steps[1].label, "Manila");
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn autocomplete_ignores_unrelated_visible_options_on_live_chrome() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    for with_controls in [true, false] {
+        let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+        session
+            .navigate(&autocomplete_data_url(with_controls))
+            .unwrap();
+        session.settle();
+
+        let mut agent = AgentBuilder::new(session, InstinctPolicy::default())
+            .max_steps(4)
+            .build(r#"Type "man" into City then click Manila"#);
+        let outcome = agent.run();
+        eprintln!("unrelated options with aria-controls={with_controls}: {outcome:?}");
+        assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+        let steps = outcome.steps();
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert_eq!(steps[0].kind, ActionKind::TypeText);
+        assert_eq!(steps[1].kind, ActionKind::Click);
+        assert_eq!(steps[1].label, "Manila");
+    }
 }

@@ -31,7 +31,10 @@ ActionSpace could not offer TYPE on a combobox or CLICK on a suggestion.
    SELECT on an option. Multi-step `then` remains the planner; tickets still
    revalidate on a fresh observe. After ticketed TYPE into a combobox, a
    read-only option signature poll runs at most 10 times at 25 ms intervals,
-   ends early when nonempty results stabilize, and never re-dispatches input.
+   reading the typed combobox's `aria-controls` / `aria-owns` popup when
+   present and otherwise the whole document. It ends early when nonempty
+   options stabilize, and document-wide options must differ from the first
+   poll; it never re-dispatches input.
 5. **Fixtures.** `ScriptBuilder` / `DomSpec` emit `shadowRoots` and
    `contentDocument`; box-model scripting matches kept-only extract order.
 

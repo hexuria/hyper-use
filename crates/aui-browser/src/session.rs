@@ -70,7 +70,7 @@ pub enum ScrollDirection {
 /// Fraction of the viewport height one page scroll moves.
 pub const SCROLL_VIEWPORT_FRACTION: f64 = 0.8;
 
-const AUTOCOMPLETE_OPTIONS_SIGNATURE_JS: &str = r#"(()=>{if(document.readyState!=='complete')return null;const options=Array.from(document.querySelectorAll('[role=option]')).filter(el=>el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden');return options.length+':'+options.slice(0,20).map(el=>(el.textContent||'').trim().slice(0,80)).join('\u001f');})()"#;
+const AUTOCOMPLETE_OPTIONS_SIGNATURE_FUNCTION: &str = r#"function(){if(document.readyState!=='complete')return null;const root=this.getRootNode?this.getRootNode():document;const byId=id=>(root.getElementById?root.getElementById(id):null)||document.getElementById(id);const ids=((this.getAttribute('aria-controls')||'')+' '+(this.getAttribute('aria-owns')||'')).split(/\s+/).filter(Boolean);const owned=ids.map(byId).filter(Boolean);const pool=owned.length?owned.flatMap(el=>[...(el.matches('[role=option]')?[el]:[]),...el.querySelectorAll('[role=option]')]):Array.from(document.querySelectorAll('[role=option]'));const options=pool.filter(el=>el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden');return(owned.length?'o':'d')+options.length+':'+options.slice(0,20).map(el=>(el.textContent||'').trim().slice(0,80)).join('\u001f');}"#;
 
 pub struct BrowserSession<T: CdpTransport> {
     transport: T,
@@ -521,18 +521,43 @@ impl<T: CdpTransport> BrowserSession<T> {
             .map(str::to_owned))
     }
 
-    /// Signature of visible autocomplete options, or `None` if unavailable.
-    pub fn autocomplete_options_signature(&mut self) -> Result<Option<String>, BrowserError> {
-        let params = json!({
-            "expression": AUTOCOMPLETE_OPTIONS_SIGNATURE_JS,
-            "returnByValue": true
-        })
-        .to_string();
-        let body = match self.call("Runtime.evaluate", &params) {
+    /// Signature of visible autocomplete options for `id`, or `None` if unavailable.
+    ///
+    /// The format is `<o|d><count>:<texts joined by U+001F>`; `o` means the
+    /// options came from the combobox's owned popup and `d` means the
+    /// document-wide fallback.
+    pub fn autocomplete_options_signature(
+        &mut self,
+        id: &RegionId,
+    ) -> Result<Option<String>, BrowserError> {
+        let Ok(binding) = self.binding_for(id) else {
+            return Ok(None);
+        };
+        let node = match (binding.dom_node_id, binding.backend_node_id) {
+            (Some(node_id), _) => json!({"nodeId": node_id}),
+            (None, Some(backend_node_id)) => json!({"backendNodeId": backend_node_id}),
+            (None, None) => return Ok(None),
+        };
+        let resolved = match self.call("DOM.resolveNode", &node.to_string()) {
             Ok(body) => body,
             Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(None),
             Err(other) => return Err(other),
         };
+        let object_id = extract::object_id(&resolved)?;
+        let params = json!({
+            "functionDeclaration": AUTOCOMPLETE_OPTIONS_SIGNATURE_FUNCTION,
+            "objectId": object_id,
+            "returnByValue": true
+        })
+        .to_string();
+        let body = match self.call("Runtime.callFunctionOn", &params) {
+            Ok(body) => body,
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(None),
+            Err(other) => return Err(other),
+        };
+        if extract::call_threw(&body)? {
+            return Ok(None);
+        }
         let value: serde_json::Value =
             serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
                 message: err.to_string(),

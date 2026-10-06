@@ -2,7 +2,7 @@
 //!
 //! Same closed remote wire as `TypesafeTransport`: the System One body
 //! (`state` + speculative `operation` / `<kind>_target` questions) built by
-//! [`build_questions`], POSTed to the Workers AI endpoint
+//! `build_questions`, POSTed to the Workers AI endpoint
 //! `…/accounts/{id}/ai/run/@cf/cloudflare/{model}`. `@cf/cloudflare/clef`
 //! (27B) and `@cf/cloudflare/clef-flash` (9B) are Clef decision models in
 //! the Jev family: one forward pass scores every offered option; there is
@@ -96,7 +96,7 @@ fn required_env(name: &str) -> Result<String, String> {
 /// A Clef `choice` question needs at least two criteria (Workers AI rejects
 /// a single-option dictionary with 422). A head with exactly one offered
 /// candidate is already decided, so it never reaches the wire: `auto` maps
-/// head name to its sole candidate and [`reply_from_answers`] answers it
+/// head name to its sole candidate and `reply_from_answers` answers it
 /// locally with probability 1.
 struct ClefBody {
     body: Value,

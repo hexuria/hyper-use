@@ -13,7 +13,15 @@
 //!
 //! Env parity with jev-ultrafast: `TYPESAFE_API_KEY` (required, read by the
 //! SDK), `TYPESAFE_MODEL` (falls back to `TYPESAFE_DEFAULT_MODEL`, default
-//! `jev-latest`), `TYPESAFE_BASE_URL`.
+//! `jev-latest`), `TYPESAFE_BASE_URL`. `TEXT_MODEL_*` is **not** read yet:
+//! TYPE_TEXT / SELECT payloads still come from the deterministic resolver or
+//! `--text-model-cmd` (feature `model-text`), so this is one of the two
+//! jev-ultrafast keys, not both.
+//!
+//! Latency bounds come from the SDK client defaults: 10 s per attempt, at
+//! most 2 retries on 408 / 429 / 5xx / connection / timeout errors, 30 s
+//! total budget. Retrying is safe: the call only asks for a decision and
+//! runs before any ticket is issued, so a retry never repeats page input.
 
 use serde_json::{json, Map, Value};
 use typesafe_sdk::blocking::Client;
@@ -250,24 +258,34 @@ impl RemoteTransport for TypesafeTransport {
             .system_one_opts(built.state, built.questions, opts)
             .map_err(|err| format!("typesafe call: {err}"))?;
 
-        let operation_answer = response
-            .choice("operation")
-            .map_err(|err| format!("typesafe answer: {err}"))?;
-        let operation =
-            validate_choice(operation_answer, keys_for(&criteria_keys, "operation")?)?.to_owned();
-
-        let target = match ELEMENT_HEADS.iter().find(|(kind, _)| kind == &operation) {
-            Some((_, head)) => {
-                let answer = response
-                    .choice(head)
-                    .map_err(|err| format!("typesafe answer {head}: {err}"))?;
-                Some(validate_choice(answer, keys_for(&criteria_keys, head)?)?.to_owned())
-            }
-            None => None,
-        };
-
-        Ok(reply_json(&operation, target.as_deref()))
+        compose_reply(&criteria_keys, |head| {
+            response
+                .choice(head)
+                .map_err(|err| format!("typesafe answer {head}: {err}"))
+        })
     }
+}
+
+/// Map validated answers to the closed reply. `answer_for(head)` returns
+/// that head's answer from the response. The operation must be offered; an
+/// element operation then needs a valid answer on its own `<kind>_target`
+/// head (never another kind's head); a control operation needs none.
+fn compose_reply<'a>(
+    criteria_keys: &[(String, Vec<String>)],
+    answer_for: impl Fn(&str) -> Result<&'a ChoiceAnswer, String>,
+) -> Result<String, String> {
+    let operation = validate_choice(
+        answer_for("operation")?,
+        keys_for(criteria_keys, "operation")?,
+    )?;
+    let target = match ELEMENT_HEADS.iter().find(|(kind, _)| *kind == operation) {
+        Some((_, head)) => Some(validate_choice(
+            answer_for(head)?,
+            keys_for(criteria_keys, head)?,
+        )?),
+        None => None,
+    };
+    Ok(reply_json(operation, target))
 }
 
 /// Compose the closed reply: `{"choice":{"id","kind"}}`, controls id-less.
@@ -370,8 +388,98 @@ mod tests {
         );
     }
 
+    fn answers(list: &[(&str, ChoiceAnswer)]) -> std::collections::BTreeMap<String, ChoiceAnswer> {
+        list.iter()
+            .map(|(h, a)| ((*h).to_owned(), a.clone()))
+            .collect()
+    }
+
+    fn compose(
+        answers: &std::collections::BTreeMap<String, ChoiceAnswer>,
+    ) -> Result<String, String> {
+        let built = build_questions(&request()).unwrap();
+        compose_reply(&built.criteria_keys, |head| {
+            answers.get(head).ok_or_else(|| format!("missing {head}"))
+        })
+    }
+
+    const OPS: [(&str, f64); 4] = [
+        ("CLICK", 0.1),
+        ("TYPE_TEXT", 0.1),
+        ("SCROLL_DOWN", 0.1),
+        ("DONE", 0.1),
+    ];
+
+    fn op(choice: &str) -> ChoiceAnswer {
+        let probs: Vec<(&str, f64)> = OPS
+            .iter()
+            .map(|(k, _)| (*k, if *k == choice { 0.7 } else { 0.1 }))
+            .collect();
+        answer(choice, &probs)
+    }
+
+    #[test]
+    fn click_with_its_target_composes_the_offered_id() {
+        let a = answers(&[
+            ("operation", op("CLICK")),
+            ("click_target", answer("n12", &[("n12", 0.8), ("n30", 0.2)])),
+        ]);
+        assert_eq!(
+            compose(&a).unwrap(),
+            r#"{"choice":{"id":"CLICK:n12","kind":"CLICK"}}"#
+        );
+    }
+
+    #[test]
+    fn type_text_reads_its_own_head() {
+        let a = answers(&[
+            ("operation", op("TYPE_TEXT")),
+            ("type_text_target", answer("n44", &[("n44", 1.0)])),
+            ("click_target", answer("n12", &[("n12", 0.8), ("n30", 0.2)])),
+        ]);
+        assert_eq!(
+            compose(&a).unwrap(),
+            r#"{"choice":{"id":"TYPE_TEXT:n44","kind":"TYPE_TEXT"}}"#
+        );
+    }
+
+    #[test]
+    fn element_operation_without_its_target_answer_is_an_error() {
+        let a = answers(&[("operation", op("CLICK"))]);
+        assert!(compose(&a).unwrap_err().contains("click_target"));
+    }
+
+    #[test]
+    fn target_from_another_heads_menu_is_rejected() {
+        // n44 is a TYPE_TEXT target; it is off-menu for click_target.
+        let a = answers(&[
+            ("operation", op("CLICK")),
+            (
+                "click_target",
+                answer("n44", &[("n12", 0.1), ("n30", 0.1), ("n44", 0.8)]),
+            ),
+        ]);
+        assert!(compose(&a).is_err());
+    }
+
+    #[test]
+    fn control_operation_needs_no_target_head() {
+        let a = answers(&[("operation", op("SCROLL_DOWN"))]);
+        assert_eq!(
+            compose(&a).unwrap(),
+            r#"{"choice":{"id":"SCROLL_DOWN","kind":"SCROLL_DOWN"}}"#
+        );
+    }
+
+    #[test]
+    fn off_menu_operation_is_rejected() {
+        let a = answers(&[("operation", answer("SELECT", &[("SELECT", 1.0)]))]);
+        assert!(compose(&a).is_err());
+    }
+
     /// The transport's reply must satisfy the closed contract it feeds:
-    /// parse_reply accepts only offered ids with matching kinds.
+    /// parse_reply accepts only offered ids with matching kinds, for every
+    /// element head and the controls.
     #[test]
     fn replies_land_inside_the_closed_contract() {
         let space = hyper_use_core::ActionSpace::from_manifold(
@@ -379,15 +487,22 @@ mod tests {
                 r#"
                 viewport w=800 h=600
                 region id=n12 role=button label="Send" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+                region id=n44 role=text_field label="Message" x=10 y=60 w=200 h=24 actions=type,focus sources=dom,accessibility
+                region id=n50 role=combobox label="Plan" x=10 y=110 w=200 h=24 actions=click,select,focus sources=dom,accessibility
                 "#,
             )
             .unwrap(),
         );
-        let outcome =
-            hyper_use_policy::parse_reply(&space, &reply_json("CLICK", Some("n12"))).unwrap();
-        let decision = outcome.as_choice().unwrap();
-        assert_eq!(decision.action_id.as_str(), "CLICK:n12");
-        let done = hyper_use_policy::parse_reply(&space, &reply_json("DONE", None)).unwrap();
-        assert_eq!(done.as_choice().unwrap().action_id.as_str(), "DONE");
+        for (operation, target, id) in [
+            ("CLICK", Some("n12"), "CLICK:n12"),
+            ("TYPE_TEXT", Some("n44"), "TYPE_TEXT:n44"),
+            ("SELECT", Some("n50"), "SELECT:n50"),
+            ("SCROLL_DOWN", None, "SCROLL_DOWN"),
+            ("DONE", None, "DONE"),
+        ] {
+            let outcome = hyper_use_policy::parse_reply(&space, &reply_json(operation, target))
+                .unwrap_or_else(|err| panic!("{id}: {err:?}"));
+            assert_eq!(outcome.as_choice().unwrap().action_id.as_str(), id);
+        }
     }
 }

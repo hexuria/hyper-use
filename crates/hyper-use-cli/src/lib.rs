@@ -48,6 +48,8 @@ pub enum CliError {
     DimsRequireHgra,
     MissingSource,
     Browser(String),
+    /// Missing or invalid environment configuration (e.g. `TYPESAFE_API_KEY`).
+    Config(String),
     UnknownMatcher(String),
     MissingRegion,
     MissingVerb,
@@ -126,6 +128,7 @@ impl std::fmt::Display for CliError {
             Self::DimsRequireHgra => f.write_str("--dims is only valid with --matcher hgra"),
             Self::MissingSource => f.write_str("command requires --fixture <path> or --cdp [url]"),
             Self::Browser(message) => write!(f, "browser: {message}"),
+            Self::Config(message) => write!(f, "config: {message}"),
             Self::UnknownMatcher(name) => write!(f, "unknown matcher `{name}`"),
             Self::MissingRegion => f.write_str("act requires a region id"),
             Self::MissingVerb => f.write_str("act requires a verb (`press`)"),

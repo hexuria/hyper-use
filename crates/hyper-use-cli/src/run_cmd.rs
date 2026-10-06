@@ -19,7 +19,8 @@
 //! speculative fan-out jev-ultrafast uses. JEV can only pick an offered id,
 //! never a selector or script, and the ticket / gate / revalidate chain is
 //! unchanged. Reads `TYPESAFE_API_KEY` (required), `TYPESAFE_MODEL`,
-//! `TYPESAFE_BASE_URL`.
+//! `TYPESAFE_BASE_URL`. It does not read `TEXT_MODEL_*` yet; combine with
+//! `--text-model-cmd` for model-written payloads.
 //!
 //! `--text-model-cmd` (built with `--features model-text`) only changes where
 //! TYPE_TEXT / SELECT *payloads* come from: a user program speaking the
@@ -220,7 +221,7 @@ fn predict_jev(
     args: &RunArgs,
 ) -> Result<String, CliError> {
     let transport = crate::typesafe::TypesafeTransport::from_env()
-        .map_err(|err| CliError::Browser(format!("typesafe: {err}")))?;
+        .map_err(|err| CliError::Config(format!("typesafe: {err}")))?;
     predict_once(
         MockBrowser::new(manifold),
         hyper_use_policy::RemotePolicy::new(transport),
@@ -265,7 +266,7 @@ fn drive_jev<T: CdpTransport>(
     args: &RunArgs,
 ) -> Result<String, CliError> {
     let transport = crate::typesafe::TypesafeTransport::from_env()
-        .map_err(|err| CliError::Browser(format!("typesafe: {err}")))?;
+        .map_err(|err| CliError::Config(format!("typesafe: {err}")))?;
     drive_with(
         session,
         hyper_use_policy::RemotePolicy::new(transport),

@@ -257,36 +257,56 @@ fn offered_kinds(space: &ActionSpace) -> Vec<ActionKind> {
 
 fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a ObservedAction> {
     let mut candidates = Vec::new();
-    for kind in [ActionKind::TypeText, ActionKind::Select] {
-        for action in space.targets_of(kind) {
-            let mut positions = Vec::new();
-            if let Some((position, literal)) = label_literal(goal, action.label(), &[]) {
-                let current = match kind {
-                    ActionKind::TypeText => action.state().value.as_deref(),
-                    ActionKind::Select => action.state().selected.as_deref(),
-                    _ => None,
-                };
-                if !value_matches_literal(current, &literal) {
-                    positions.push(position);
-                }
+    let type_actions: Vec<_> = space.targets_of(ActionKind::TypeText).collect();
+    let select_actions: Vec<_> = space.targets_of(ActionKind::Select).collect();
+
+    for action in type_actions.iter().copied() {
+        let paired_select = select_actions
+            .iter()
+            .copied()
+            .find(|select| select.target() == action.target());
+        if paired_select.is_some_and(|select| !select.state().options.is_empty()) {
+            continue;
+        }
+
+        if let Some((position, literal)) = label_literal(goal, action.label(), &[]) {
+            if !value_matches_literal(action.state().value.as_deref(), &literal) {
+                candidates.push((position, action));
             }
-            if kind == ActionKind::Select && !action.state().options.is_empty() {
-                if let Ok(option) = ground_select(
-                    goal,
-                    None,
-                    &action.state().options,
-                    action.state().selected.as_deref(),
-                ) {
-                    if !value_matches_literal(action.state().selected.as_deref(), &option) {
-                        if let Some(position) = phrase_position(goal, &option) {
-                            positions.push(position);
-                        }
+        }
+    }
+
+    for action in select_actions.iter().copied() {
+        let paired_type = type_actions
+            .iter()
+            .copied()
+            .any(|typed| typed.target() == action.target());
+        if paired_type && action.state().options.is_empty() {
+            continue;
+        }
+
+        let mut positions = Vec::new();
+        if let Some((position, literal)) = label_literal(goal, action.label(), &[]) {
+            if !value_matches_literal(action.state().selected.as_deref(), &literal) {
+                positions.push(position);
+            }
+        }
+        if !action.state().options.is_empty() {
+            if let Ok(option) = ground_select(
+                goal,
+                None,
+                &action.state().options,
+                action.state().selected.as_deref(),
+            ) {
+                if !value_matches_literal(action.state().selected.as_deref(), &option) {
+                    if let Some(position) = phrase_position(goal, &option) {
+                        positions.push(position);
                     }
                 }
             }
-            if let Some(position) = positions.into_iter().min() {
-                candidates.push((position, action));
-            }
+        }
+        if let Some(position) = positions.into_iter().min() {
+            candidates.push((position, action));
         }
     }
 
@@ -657,10 +677,36 @@ mod tests {
     }
 
     #[test]
+    fn clause_head_does_not_choose_an_already_checked_reminder() {
+        let fixture = r#"
+            viewport w=800 h=600
+            region id=email role=checkbox label="Email reminders" x=10 y=10 w=180 h=24 actions=click sources=dom,accessibility
+            region id=sms role=checkbox label="SMS reminders" x=10 y=50 w=180 h=24 actions=click sources=dom,accessibility
+            "#;
+        let space = space_with_state(
+            fixture,
+            "email",
+            ElementState {
+                checked: Some(true),
+                ..ElementState::default()
+            },
+        );
+        let goal = format!("Make sure email reminders are turned on.{BENCH_SUFFIX}");
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        assert!(
+            matches!(outcome, PolicyOutcome::Abstain { .. }),
+            "{outcome:?}"
+        );
+        assert!(outcome.as_choice().is_none());
+    }
+
+    #[test]
     fn named_unsatisfied_timezone_is_selected_before_save() {
         let fixture = r#"
             viewport w=800 h=600
-            region id=timezone role=combobox label="Time zone" x=10 y=10 w=200 h=24 actions=select sources=dom,accessibility
+            region id=timezone role=combobox label="Time zone" x=10 y=10 w=200 h=24 actions=select,type sources=dom,accessibility
             region id=save role=button label="Save" x=10 y=50 w=80 h=24 actions=click sources=dom,accessibility
             region id=settings role=link label="Settings" x=10 y=90 w=100 h=24 actions=click sources=dom,accessibility
             "#;
@@ -670,8 +716,8 @@ mod tests {
             fixture,
             "timezone",
             ElementState {
-                selected: Some("UTC".to_owned()),
-                options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
+                selected: Some("America/Los_Angeles".to_owned()),
+                options: vec!["America/Los_Angeles".to_owned(), "Asia/Manila".to_owned()],
                 ..ElementState::default()
             },
         );
@@ -687,7 +733,7 @@ mod tests {
             "timezone",
             ElementState {
                 selected: Some("Asia/Manila".to_owned()),
-                options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
+                options: vec!["America/Los_Angeles".to_owned(), "Asia/Manila".to_owned()],
                 ..ElementState::default()
             },
         );

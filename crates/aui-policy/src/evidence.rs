@@ -252,14 +252,23 @@ fn push_clause_head(tokens: &mut Vec<String>, heads: &mut Vec<String>) {
         tokens.clear();
         return;
     }
+    if tokens.first().is_some_and(|token| token == "please") {
+        tokens.remove(0);
+    }
     if tokens
         .first()
         .is_some_and(|token| LEADING_VERBS.contains(&token.as_str()))
     {
         tokens.remove(0);
     }
-    if let Some(head) = tokens.iter().find(|token| !is_stopword(token)) {
-        heads.push(head.clone());
+    if tokens
+        .first()
+        .is_some_and(|token| matches!(token.as_str(), "the" | "a" | "an"))
+    {
+        tokens.remove(0);
+    }
+    if tokens.first().is_some_and(|token| !is_stopword(token)) {
+        heads.push(tokens[0].clone());
     }
     tokens.clear();
 }
@@ -488,8 +497,17 @@ mod tests {
     }
 
     #[test]
-    fn clause_heads_skip_quoted_tokens_and_leading_verbs() {
-        assert_eq!(clause_heads(r#"Type "save" into Notes"#), ["notes"]);
+    fn clause_heads_never_use_quoted_tokens_or_skip_past_stopwords() {
+        let heads = clause_heads(r#"Type "save" into Notes"#);
+        assert!(heads.is_empty());
+        assert!(!heads.iter().any(|head| head == "save"));
+    }
+
+    #[test]
+    fn clause_heads_use_only_the_first_remaining_content_token() {
+        assert!(clause_heads("Make sure email reminders are turned on.").is_empty());
+        assert_eq!(clause_heads("Please save the draft"), ["save"]);
+        assert_eq!(clause_heads("Click the Save button"), ["save"]);
     }
 
     #[test]

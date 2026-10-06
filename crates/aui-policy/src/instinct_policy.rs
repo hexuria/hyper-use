@@ -63,7 +63,7 @@ impl BrowserPolicy for InstinctPolicy {
         let form_first = if missing_target {
             None
         } else {
-            named_unsatisfied_field(goal_text, space)
+            named_unsatisfied_field(goal_text, space, history)
         };
 
         // --- Operation head -------------------------------------------------
@@ -224,13 +224,19 @@ fn chosen_kind_is_terminal(kind: ActionKind) -> bool {
 
 /// The last executed step was `id` and verification saw a real effect.
 fn satisfied_by_history(history: &[HistoryEntry], id: &ActionId) -> bool {
-    history.last().is_some_and(|entry| {
-        &entry.action_id == id
-            && matches!(
-                entry.verification.as_str(),
-                "success" | "state-changed" | "navigation"
-            )
-    })
+    history
+        .last()
+        .is_some_and(|entry| &entry.action_id == id && verification_has_effect(&entry.verification))
+}
+
+fn has_verified_action(history: &[HistoryEntry], id: &ActionId) -> bool {
+    history
+        .iter()
+        .any(|entry| &entry.action_id == id && verification_has_effect(&entry.verification))
+}
+
+fn verification_has_effect(verification: &str) -> bool {
+    matches!(verification, "success" | "state-changed" | "navigation")
 }
 
 fn offered_kinds(space: &ActionSpace) -> Vec<ActionKind> {
@@ -255,7 +261,11 @@ fn offered_kinds(space: &ActionSpace) -> Vec<ActionKind> {
     kinds
 }
 
-fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a ObservedAction> {
+fn named_unsatisfied_field<'a>(
+    goal: &str,
+    space: &'a ActionSpace,
+    history: &[HistoryEntry],
+) -> Option<&'a ObservedAction> {
     let mut candidates = Vec::new();
     let type_actions: Vec<_> = space.targets_of(ActionKind::TypeText).collect();
     let select_actions: Vec<_> = space.targets_of(ActionKind::Select).collect();
@@ -275,8 +285,10 @@ fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a
                 positions.push(position);
             }
         }
-        if let Some(position) = explicit_field_position(goal, action.label(), action.kind()) {
-            positions.push(position);
+        if !has_verified_action(history, action.id()) {
+            if let Some(position) = explicit_field_position(goal, action.label(), action.kind()) {
+                positions.push(position);
+            }
         }
         if let Some(position) = positions.into_iter().min() {
             candidates.push((position, action));
@@ -298,8 +310,10 @@ fn named_unsatisfied_field<'a>(goal: &str, space: &'a ActionSpace) -> Option<&'a
                 positions.push(position);
             }
         }
-        if let Some(position) = explicit_field_position(goal, action.label(), action.kind()) {
-            positions.push(position);
+        if !has_verified_action(history, action.id()) {
+            if let Some(position) = explicit_field_position(goal, action.label(), action.kind()) {
+                positions.push(position);
+            }
         }
         if !action.state().options.is_empty() {
             if let Ok(option) = ground_select(
@@ -744,6 +758,35 @@ mod tests {
         let choice = outcome.as_choice().expect("expected choice");
         assert_eq!(choice.kind, ActionKind::TypeText);
         assert_eq!(choice.target_label, "Search");
+    }
+
+    #[test]
+    fn verified_explicit_text_field_reference_yields_to_next_goal_action() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=search role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+            region id=go role=button label="Go" x=320 y=10 w=60 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = AgentGoal::new(format!(
+            "type rust in the Search box and click Go{BENCH_SUFFIX}"
+        ));
+        let mut policy = InstinctPolicy::default();
+        let first = policy.decide(&space, &goal, &[]).unwrap();
+        let first = first.as_choice().expect("expected first choice");
+        assert_eq!(first.kind, ActionKind::TypeText);
+        assert_eq!(first.action_id.as_str(), "TYPE_TEXT:search");
+
+        let history = [history_entry(&first.action_id, first.kind, "success")];
+        let next = policy.decide(&space, &goal, &history).unwrap();
+        match &next {
+            PolicyOutcome::Choice(choice) => {
+                assert_eq!(choice.kind, ActionKind::Click);
+                assert_eq!(choice.target_label, "Go");
+            }
+            _ => panic!("expected Go click, got {next:?}"),
+        }
     }
 
     #[test]

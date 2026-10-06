@@ -1,45 +1,73 @@
 ---
 name: ultra-instinct
-description: Resolve one computer target with ultra-instinct before acting on it.
+description: Drive a live Chrome browser with a plain-language goal using the ultra-instinct CLI. Use when the user asks to click, type, fill, navigate, or automate anything in a browser — e.g. "/ultra-instinct book a flight" or "submit this form for me".
 ---
 
-# ultra-instinct
+# ultra-instinct — run a browser goal in plain language
 
-ultra-instinct is the computer capability under an existing agent loop. It does not
-choose the next capability. JEV does. ultra-instinct does not navigate and it does
-not accept a multi-step goal.
+The user gives a goal in their own words. You never need them to know CLI flags.
+Your job: get the `aui` binary, point it at a Chrome with CDP on, and run ONE
+command with their words verbatim.
 
-Never guess coordinates. Act on a region id from locate or inspect. A tool
-argument named `x`, `y`, or `coordinates` is rejected.
-
-## Tools
-
-The MCP server is `ultra-instinct mcp` (newline-delimited JSON-RPC on stdio). The
-tool names are exactly:
-
-1. `observe` reads a fixture (or an optional live CDP endpoint) into regions.
-2. `locate` ranks one query. The default matcher is `weighted`. `matcher: "hgra"` selects the hyperdimensional ranker. That selection is not a benchmark and not a measured win. The result sets `benchmark` to false.
-3. `inspect` returns one region, including its rectangle. The rectangle is descriptive. Do not click it.
-4. `act` presses one region id. The default executor is the CDP browser press: DOM click comes before coordinates. `executor: "browser-use"` and `executor: "cua"` each hand that region id, role, and label to a replay transport. Neither is a goal, navigation, a fallback, or a fusion benchmark. Omit `confidence` only after inspect. Pass the locate top confidence as `confidence` and `candidates[1]` as `runner_up`. If confidence is below 0.55, the result has `executed: false` and `fallback: "low-confidence"`. If the runner-up is within 0.05, the result has `executed: false` and `fallback: "ambiguous"`. Pass `expect_text` or `expect_absent` to get `state_delta` and `verified` from the same call. That is not a click. Hand control back. Do not retry with a guessed point.
-5. `diff` returns `state_delta` (`added`, `removed`, `changed`) between two observations.
-6. `verify` checks one postcondition: `expect_text` appeared, or `expect_absent` is gone.
-
-There is no `navigate` tool. Pass a CDP fixture path in `fixture`. Live `cdp` is optional. Tests do not need Chrome.
-
-## Confidence escape hatch
-
-High confidence, or a region you already inspected: `act` may press.
-
-Low confidence: do not click. The tool result is the hand-back. JEV decides whether to inspect, ask, or use another capability. ultra-instinct will not make that choice.
-
-## Commands
+## 1. Make sure `aui` exists
 
 ```bash
-ultra-instinct locate --fixture fixtures/sidebar.manifold --text Settings --role button --position left --json
-ultra-instinct locate "Sign in" --fixture fixtures/sign-in.cdp.json
-ultra-instinct act n100 press --fixture fixtures/sign-in-press.cdp.json
-ultra-instinct verify --fixture fixtures/welcome.cdp.json --expect-text Welcome
-ultra-instinct mcp
+command -v aui || bash scripts/install-aui.sh
 ```
 
-The command is `ultra-instinct`. Do not rename it. macOS is not available. `--executor browser-use` and `--executor cua` are semantic replays, not live processes and not a fusion benchmark.
+`scripts/install-aui.sh` is idempotent: it no-ops when `aui` is already on
+PATH, builds from this repo when present, and otherwise clones
+`hexuria/ultra-instinct` into a cache dir and `cargo install`s it
+(features `jev clef model-text` — the full policy surface). If it fails on a
+missing Rust toolchain, tell the user to run rustup.
+
+## 2. Make sure Chrome answers CDP
+
+```bash
+curl -s http://127.0.0.1:9222/json/version >/dev/null
+```
+
+If nothing answers, launch Chrome yourself:
+
+```bash
+google-chrome --remote-debugging-port=9222 &
+```
+
+(Any port works — pass it via `--cdp http://127.0.0.1:<port>`.)
+
+## 3. Run the goal — verbatim
+
+```bash
+aui run --goal "<the user's words, unchanged>" --cdp
+```
+
+- If the goal names a site or URL, add `--url <url>`: the CLI opens an owned
+  tab for the run and closes it after.
+- Multi-step goals go in as ONE `--goal` string ("fill X then click Y") — the
+  CLI splits clauses itself. Do not pre-split into several `aui` calls.
+- Optional bounds: `--max-steps N` (default is already sane), `--wait-secs N`.
+
+### Policy — pick by the keys that exist, don't ask
+
+- `TYPESAFE_API_KEY` set → no flag needed; `jev` is the default.
+- `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` set → `--policy clef-flash`.
+- Neither → `--policy instinct` (fully offline, deterministic, abstains
+  rather than guessing).
+- Optional `--text-model-cmd <program>` makes a model write TYPE_TEXT/SELECT
+  payloads only; the choice of action is never model-written.
+
+## 4. Report back
+
+The last CLI line is the outcome: `done`, `blocked`, or `abstain` with a
+reason, plus step count and wall time. Report that, plus what it did (the
+step log), in one short message. `blocked`/`abstain` are real answers — the
+agent refusing to guess — not crashes; say what it couldn't find instead of
+re-running blindly.
+
+## Hard rules
+
+- Goal text goes to `--goal` verbatim — quote it, don't paraphrase.
+- Never pass selectors, coordinates, or element ids from outside; the agent
+  picks targets itself and can only choose offered regions (closed wire).
+- Never retry a `blocked` outcome by re-running the identical command —
+  change the page state or the goal first.

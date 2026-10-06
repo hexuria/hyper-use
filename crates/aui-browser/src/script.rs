@@ -581,6 +581,15 @@ impl ScriptBuilder {
         self
     }
 
+    /// A `Runtime.evaluate` call whose by-value result is the supplied value.
+    pub fn evaluate_value(mut self, value: Value) -> Self {
+        self.calls.push(result(
+            "Runtime.evaluate",
+            json!({"result":{"value":value}}),
+        ));
+        self
+    }
+
     /// A DOM input by node id that the page refuses (the function throws).
     pub fn dom_input_rejected(mut self, node_id: i64, message: &str) -> Self {
         let object = format!("obj-{node_id}");

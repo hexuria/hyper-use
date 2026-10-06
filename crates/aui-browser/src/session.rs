@@ -70,6 +70,8 @@ pub enum ScrollDirection {
 /// Fraction of the viewport height one page scroll moves.
 pub const SCROLL_VIEWPORT_FRACTION: f64 = 0.8;
 
+const AUTOCOMPLETE_OPTIONS_SIGNATURE_JS: &str = r#"(()=>{if(document.readyState!=='complete')return null;const options=Array.from(document.querySelectorAll('[role=option]')).filter(el=>el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden');return options.length+':'+options.slice(0,20).map(el=>(el.textContent||'').trim().slice(0,80)).join('\u001f');})()"#;
+
 pub struct BrowserSession<T: CdpTransport> {
     transport: T,
     manifold: Option<InteractionManifold>,
@@ -517,6 +519,25 @@ impl<T: CdpTransport> BrowserSession<T> {
             .and_then(|r| r.get("value"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned))
+    }
+
+    /// Signature of visible autocomplete options, or `None` if unavailable.
+    pub fn autocomplete_options_signature(&mut self) -> Result<Option<String>, BrowserError> {
+        let params = json!({
+            "expression": AUTOCOMPLETE_OPTIONS_SIGNATURE_JS,
+            "returnByValue": true
+        })
+        .to_string();
+        let body = match self.call("Runtime.evaluate", &params) {
+            Ok(body) => body,
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(None),
+            Err(other) => return Err(other),
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        Ok(value["result"]["value"].as_str().map(str::to_owned))
     }
 
     /// Read the observed field's `(value, selected option text)` without

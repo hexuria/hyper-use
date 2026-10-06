@@ -71,7 +71,9 @@ crate.
 >    same-origin iframes (`pierce: true`). ComboBox / ListBox / Option are
 >    first-class roles. Virtualized lists are the visible window only (scroll
 >    + re-observe). Autocomplete is TYPE then ticketed option act after
->    re-observe. Do not claim cross-origin iframe or closed-shadow coverage.
+>    re-observe. After combobox TYPE, read-only option settling is limited to
+>    10 polls at 25 ms intervals and never re-dispatches input. Do not claim
+>    cross-origin iframe or closed-shadow coverage.
 > 8. **Remote escalation is explicit and closed.** Feature `remote`;
 >    reply is exactly a choice id + kind from the offered menu or abstain.
 >    Selectors, coordinates, scripts, extra fields → hard error.

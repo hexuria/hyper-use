@@ -34,6 +34,27 @@ fn calls_of(log: &[(String, String)], method: &str) -> Vec<Value> {
         .collect()
 }
 
+fn autocomplete_page(with_option: bool, picked: bool) -> PageSpec {
+    let mut controls = vec![Control::combobox(
+        10,
+        100,
+        "City",
+        (10.0, 10.0, 200.0, 28.0),
+    )];
+    if with_option {
+        controls.push(Control::option(
+            11,
+            110,
+            "Manila",
+            (10.0, 40.0, 200.0, 28.0),
+        ));
+    }
+    if picked {
+        controls.push(Control::button(12, 120, "picked", (10.0, 80.0, 80.0, 24.0)));
+    }
+    PageSpec::of(&controls, "http://127.0.0.1/auto", "Auto")
+}
+
 #[test]
 fn type_text_over_cdp_sends_argument_not_source_and_verifies_value() {
     let page = search_page();
@@ -245,4 +266,110 @@ fn autocomplete_type_then_option_click_over_cdp() {
     assert_eq!(steps[1].label, "Manila");
     let transport = agent.browser_mut().transport();
     assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+}
+
+#[test]
+fn autocomplete_waits_for_stable_delayed_options_over_cdp() {
+    let empty = autocomplete_page(false, false);
+    let open = autocomplete_page(true, false);
+    let picked = autocomplete_page(true, true);
+    let script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10)
+        .evaluate_value(serde_json::json!("complete"))
+        .evaluate_value(serde_json::json!("0:"))
+        .evaluate_value(serde_json::json!("1:Manila"))
+        .evaluate_value(serde_json::json!("1:Manila"))
+        .observe(&open) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&open) // TYPE clause → DONE
+        .observe(&open) // predict CLICK Manila
+        .observe(&open) // executor revalidate CLICK
+        .dom_click(11)
+        .observe(&picked) // after CLICK
+        .observe(&picked); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(6)
+        .build(r#"Type "man" into City then click Manila"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[1].kind, ActionKind::Click);
+    assert_eq!(steps[1].label, "Manila");
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+    let evaluations = calls_of(transport.logged_calls(), "Runtime.evaluate");
+    assert_eq!(evaluations.len(), 4);
+    assert_eq!(evaluations[0]["expression"], "document.readyState");
+    assert!(evaluations[1..]
+        .iter()
+        .all(|call| call["expression"] == evaluations[1]["expression"]));
+}
+
+#[test]
+fn autocomplete_with_no_options_uses_all_bounded_polls_over_cdp() {
+    let empty = autocomplete_page(false, false);
+    let mut script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10)
+        .evaluate_value(serde_json::json!("complete"));
+    for _ in 0..10 {
+        script = script.evaluate_value(serde_json::json!("0:"));
+    }
+    let script = script
+        .observe(&empty) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&empty); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1);
+    assert_eq!(outcome.steps()[0].kind, ActionKind::TypeText);
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "all ten polls were consumed");
+    let evaluations = calls_of(transport.logged_calls(), "Runtime.evaluate");
+    assert_eq!(evaluations.len(), 11);
+    assert_eq!(evaluations[0]["expression"], "document.readyState");
+    assert!(evaluations[1..]
+        .iter()
+        .all(|call| call["expression"] == evaluations[1]["expression"]));
+}
+
+#[test]
+fn autocomplete_polling_stops_when_interrupted_over_cdp() {
+    let empty = autocomplete_page(false, false);
+    let script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10)
+        .evaluate_value(serde_json::json!("complete"))
+        .evaluate_value(serde_json::json!("0:"))
+        .evaluate_value(serde_json::Value::Null)
+        .evaluate_value(serde_json::json!("complete")) // settle after interruption
+        .observe(&empty) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&empty); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1);
+    assert_eq!(outcome.steps()[0].kind, ActionKind::TypeText);
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+    let evaluations = calls_of(transport.logged_calls(), "Runtime.evaluate");
+    assert_eq!(evaluations.len(), 4);
+    assert_eq!(evaluations[0]["expression"], "document.readyState");
+    assert_eq!(evaluations[1]["expression"], evaluations[2]["expression"]);
+    assert_eq!(evaluations[3]["expression"], "document.readyState");
 }

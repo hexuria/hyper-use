@@ -120,6 +120,39 @@ fn harder_data_url() -> String {
     out
 }
 
+const AUTOCOMPLETE: &str = r#"<!doctype html><title>HU autocomplete</title>
+<input id=city role=combobox aria-label=City>
+<div id=suggestions role=listbox aria-label=Suggestions></div>
+<p id=out></p>
+<script>
+const city = document.getElementById('city');
+city.addEventListener('input', () => setTimeout(() => {
+  const option = document.createElement('div');
+  option.setAttribute('role', 'option');
+  option.setAttribute('aria-label', 'Manila');
+  option.textContent = 'Manila';
+  option.addEventListener('click', () => {
+    city.value = 'Manila';
+    option.setAttribute('aria-selected', 'true');
+    document.getElementById('out').textContent = 'picked';
+  });
+  document.getElementById('suggestions').replaceChildren(option);
+}, 80));
+</script>
+"#;
+
+fn autocomplete_data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in AUTOCOMPLETE.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 #[test]
 #[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
 fn harder_page_types_observe_shadow_iframe_combobox_on_live_chrome() {
@@ -147,4 +180,26 @@ fn harder_page_types_observe_shadow_iframe_combobox_on_live_chrome() {
         labels.iter().any(|l| l == "Frame Hi"),
         "same-origin iframe button missing: {labels:?}"
     );
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn autocomplete_waits_for_delayed_option_on_live_chrome() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&autocomplete_data_url()).unwrap();
+    session.settle();
+
+    let mut agent = AgentBuilder::new(session, InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City then click Manila"#);
+    let outcome = agent.run();
+    eprintln!("delayed autocomplete: {outcome:?}");
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[1].kind, ActionKind::Click);
+    assert_eq!(steps[1].label, "Manila");
 }

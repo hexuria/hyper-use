@@ -1,3 +1,13 @@
+<p align="center">
+  <a href="https://hdqwalls.com/wallpaper/3440x1440/goku-jiren-masterd-ultra-instinct">
+    <img
+      src="https://images.hdqwalls.com/download/goku-jiren-masterd-ultra-instinct-2e-3440x1440.jpg"
+      alt="Ultra Instinct Goku"
+      width="100%"
+    >
+  </a>
+</p>
+
 # ultra-instinct
 
 **Ultra-Instinct is a Rust-native browser-agent runtime with a deterministic
@@ -54,6 +64,10 @@ cargo run -p aui-cli -- run --goal "Click Go" \
 cargo run -p aui-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
+
+Each `ultra-instinct run --cdp ... --url ...` opens its own background tab and
+closes it when the run ends, so multiple agents can run against one Chrome.
+`--cdp` without `--url` continues to drive the first existing tab.
 
 Optional model payloads (feature `model-text`, ADR 0006): Instinct still picks the
 target; a model only extracts a TYPE_TEXT / SELECT value that must occur in the

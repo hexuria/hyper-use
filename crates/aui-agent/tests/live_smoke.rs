@@ -5,12 +5,12 @@
 //! ULTRA_INSTINCT_CDP=http://127.0.0.1:9222 cargo test -p aui-agent --test live_smoke -- --ignored --nocapture
 //! ```
 //!
-//! Navigates the first page target to an inline `data:` page (no server) and
+//! Opens an owned background tab, navigates to an inline `data:` page (no server), and
 //! runs TYPE_TEXT → SELECT → CLICK → SCROLL goals through observe → Instinct →
 //! gate → ticket → executor → verify, then checks the page DOM result.
 
 use aui_agent::{AgentBuilder, AgentOutcome, BrowserRuntime, VerificationKind};
-use aui_browser::{BrowserSession, WebSocketTransport};
+use aui_browser::{open_tab, BrowserSession, WebSocketTransport};
 use aui_core::{ActionKind, ActionSpace};
 use aui_policy::{
     AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
@@ -94,7 +94,7 @@ fn step(
 fn owned_loop_drives_type_select_click_scroll_on_live_chrome() {
     let endpoint =
         std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
-    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    let mut session = BrowserSession::new(open_tab(&endpoint).unwrap());
     session.navigate(&data_url()).unwrap();
     session.settle();
 
@@ -205,7 +205,7 @@ fn autocomplete_data_url(with_controls: bool) -> String {
 fn harder_page_types_observe_shadow_iframe_combobox_on_live_chrome() {
     let endpoint =
         std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
-    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    let mut session = BrowserSession::new(open_tab(&endpoint).unwrap());
     session.navigate(&harder_data_url()).unwrap();
     session.settle();
     let m = BrowserRuntime::observe(&mut session).unwrap().clone();

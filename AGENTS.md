@@ -86,8 +86,9 @@ crate.
 >    reply is exactly a choice id + kind from the offered menu or abstain.
 >    Selectors, coordinates, scripts, extra fields → hard error.
 > 9. **HGRA stays frozen.** No matcher tuning on the agent path.
-> 10. **Formal tools stay unjustified** for this path (no `unsafe`, no
->    atomics shared across threads, single-threaded blocking CDP, no recovery
+> 10. **One blocking CDP socket per agent.** Parallelism means separate agents
+>    in separate tabs with no shared state. Formal tools stay unjustified for
+>    this path (no `unsafe`, no atomics shared across threads, no recovery
 >    protocol): Loom / Kani / TLA+ / Miri / Lean are **NOT JUSTIFIED**. The
 >    owners are unit tests, `proptest`, adversarial fixtures, replay fixtures,
 >    cargo-mutants (nightly), and cargo-fuzz on the untrusted-input parsers

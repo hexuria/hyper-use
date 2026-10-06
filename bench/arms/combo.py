@@ -29,7 +29,7 @@ import httpx
 from arms.common import Trace, goal_text, tool_loop
 from arms.mcp_stdio import McpStdio
 
-GATE_TOP = 0.55       # ultra-instinct act gate (crates/aui-executor): top confidence floor
+GATE_TOP = 0.55       # ultra-instinct act gate (crates/hyper-use-executor): top confidence floor
 GATE_MARGIN = 0.05    # and margin over the runner-up
 PLAUSIBLE = 0.5       # a locate text miss is capped at 0.45, so >= 0.5 means some text matched
 MAX_JEV_CANDS = 24

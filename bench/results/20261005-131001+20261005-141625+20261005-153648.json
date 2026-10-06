@@ -11,8 +11,8 @@
    "git": {
     "bench_uniform_head": "456b9c062a068b435e8badec9f17d9ff02e12e89",
     "dirty": false,
-    "aui_merged": "4ae30d3",
-    "aui_merged_full": "4ae30d3b1cc2cdce92211d6b3bcb75f34b65754f",
+    "hyper_use_merged": "4ae30d3",
+    "hyper_use_merged_full": "4ae30d3b1cc2cdce92211d6b3bcb75f34b65754f",
     "jev_ultrafast": "1231850a0bf1a0c0341fe408ef1668dbbfdfac46",
     "cua": "9ccafc981412b02c096fc5a4008d08b16cada8e7"
    },
@@ -188,8 +188,8 @@
    "git": {
     "bench_uniform_head": "984ac2c6a515dc404351f66f4341aa9895be68e9",
     "dirty": false,
-    "aui_merged": "4ae30d3",
-    "aui_merged_full": "4ae30d3b1cc2cdce92211d6b3bcb75f34b65754f",
+    "hyper_use_merged": "4ae30d3",
+    "hyper_use_merged_full": "4ae30d3b1cc2cdce92211d6b3bcb75f34b65754f",
     "jev_ultrafast": "1231850a0bf1a0c0341fe408ef1668dbbfdfac46",
     "cua": "9ccafc981412b02c096fc5a4008d08b16cada8e7"
    },
@@ -296,8 +296,8 @@
    "git": {
     "bench_uniform_head": "570d00f0368fee010ce9e19634967fcade0f7dbc",
     "dirty": true,
-    "aui_merged": "4ae30d3",
-    "aui_merged_full": "4ae30d3b1cc2cdce92211d6b3bcb75f34b65754f",
+    "hyper_use_merged": "4ae30d3",
+    "hyper_use_merged_full": "4ae30d3b1cc2cdce92211d6b3bcb75f34b65754f",
     "jev_ultrafast": "1231850a0bf1a0c0341fe408ef1668dbbfdfac46",
     "cua": "9ccafc981412b02c096fc5a4008d08b16cada8e7"
    },

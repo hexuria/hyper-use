@@ -27,7 +27,7 @@
 //! ancestor stacking-context chain through non-kept nodes; clip-path, mask,
 //! canvas, cross-origin iframes, and closed shadow trees are invisible here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use aui_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId};
 
@@ -155,14 +155,30 @@ pub fn style_from_computed(computed: &[(String, String)]) -> StackingStyle {
 /// Mark clickable regions whose center is covered by a higher-painting kept
 /// region. Ancestors and descendants do not bury one another. Regions already
 /// `occluded` stay occluded. Returns how many newly buried ids were marked.
+#[cfg(test)]
 pub fn apply_stacking_occlusion(
     manifold: &mut InteractionManifold,
     styles: &BTreeMap<RegionId, (StackingStyle, u32)>,
 ) -> usize {
+    apply_stacking_occlusion_except(manifold, styles, &BTreeSet::new())
+}
+
+/// [`apply_stacking_occlusion`], except victims in `hit_owned`: the browser's
+/// own hit test at their center landed on them, which beats this
+/// approximation (an unkept fixed ancestor can lift a static field above
+/// positioned page content).
+pub fn apply_stacking_occlusion_except(
+    manifold: &mut InteractionManifold,
+    styles: &BTreeMap<RegionId, (StackingStyle, u32)>,
+    hit_owned: &BTreeSet<RegionId>,
+) -> usize {
     let regions: Vec<InteractionRegion> = manifold.regions().cloned().collect();
     let mut buried: Vec<RegionId> = Vec::new();
     for victim in &regions {
-        if !victim.actions().contains(&Action::Click) || victim.flags().occluded() {
+        if !victim.actions().contains(&Action::Click)
+            || victim.flags().occluded()
+            || hit_owned.contains(victim.id())
+        {
             continue;
         }
         let Some((victim_style, victim_order)) = styles.get(victim.id()) else {
@@ -270,6 +286,37 @@ mod tests {
         assert_eq!(apply_stacking_occlusion(&mut m, &styles), 1);
         assert!(m.get_str("save").unwrap().flags().occluded());
         assert!(!m.get_str("toast").unwrap().flags().occluded());
+    }
+
+    #[test]
+    fn browser_hit_on_the_victim_beats_the_paint_estimate() {
+        // A static field in a fixed dialog whose wrapper is not a kept
+        // region: the estimate ranks a positioned inbox row above it, but the
+        // browser's hit test at the field's center landed on the field.
+        let mut m = page(vec![
+            button("field", (400.0, 600.0, 340.0, 32.0), None),
+            button("row", (0.0, 580.0, 900.0, 60.0), None),
+        ]);
+        let mut styles = BTreeMap::new();
+        styles.insert(
+            RegionId::try_new("field").unwrap(),
+            (StackingStyle::default(), 9),
+        );
+        let row = StackingStyle {
+            position: PositionKind::Relative,
+            ..Default::default()
+        };
+        styles.insert(RegionId::try_new("row").unwrap(), (row, 1));
+        let hit_owned = BTreeSet::from([RegionId::try_new("field").unwrap()]);
+        assert_eq!(
+            apply_stacking_occlusion_except(&mut m.clone(), &styles, &BTreeSet::new()),
+            1
+        );
+        assert_eq!(
+            apply_stacking_occlusion_except(&mut m, &styles, &hit_owned),
+            0
+        );
+        assert!(!m.get_str("field").unwrap().flags().occluded());
     }
 
     #[test]

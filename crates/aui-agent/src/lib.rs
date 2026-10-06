@@ -13,7 +13,10 @@ mod outcome;
 mod runtime;
 mod verify_map;
 
-pub use agent::{region_action, Agent, AgentBuilder, AgentState, Predicted, TickResult};
+pub use agent::{
+    region_action, Agent, AgentBuilder, AgentState, Predicted, TickResult, DEFAULT_MAX_WAIT,
+    DEFAULT_WAIT_POLLS, WAIT_POLL_MS,
+};
 pub use error::AgentError;
 pub use executor::{execute_ticketed, ExecError, Executed};
 pub use outcome::{AgentOutcome, StepRecord, VerificationKind};

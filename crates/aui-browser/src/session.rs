@@ -29,7 +29,7 @@
 //! Dialog front-layer logic in `aui-guard` still applies on top of that.
 //! Old CDP fixtures without `CSS.enable` skip the stacking pass.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
@@ -290,8 +290,9 @@ impl<T: CdpTransport> BrowserSession<T> {
                 None => pending.push((id, node_id, order)),
             }
         }
+        let hit_owned = compact_hit_owned(manifold, bindings, dom, compact);
         if pending.is_empty() && compact.is_some() {
-            crate::stacking::apply_stacking_occlusion(manifold, &styles);
+            crate::stacking::apply_stacking_occlusion_except(manifold, &styles, &hit_owned);
             return Ok(());
         }
         match self.call("CSS.enable", &json!({}).to_string()) {
@@ -315,7 +316,7 @@ impl<T: CdpTransport> BrowserSession<T> {
             let style = crate::stacking::style_from_computed(&pairs);
             styles.insert(id, (style, order));
         }
-        crate::stacking::apply_stacking_occlusion(manifold, &styles);
+        crate::stacking::apply_stacking_occlusion_except(manifold, &styles, &hit_owned);
         Ok(())
     }
 
@@ -433,6 +434,28 @@ impl<T: CdpTransport> BrowserSession<T> {
                 return Ok(ActMechanism::DomSemantic);
             }
         }
+        self.coordinate_click(binding.center_x, binding.center_y)?;
+        Ok(ActMechanism::Coordinate)
+    }
+
+    /// Click the observed region `id` with a trusted pointer event at its
+    /// center (`Input.dispatchMouseEvent`), skipping the semantic tier.
+    ///
+    /// Some controls ignore script-dispatched clicks (a video player's skip
+    /// button checks `isTrusted`). The agent uses this only after a semantic
+    /// click on the same target verified no effect, and only through the
+    /// executor, after the gate has checked that nothing covers the center.
+    #[doc(hidden)]
+    pub fn pointer_click(&mut self, id: &RegionId) -> Result<ActMechanism, BrowserError> {
+        let binding = self.binding_for(id)?;
+        self.stale = true;
+        let move_params = json!({
+            "type": "mouseMoved",
+            "x": binding.center_x,
+            "y": binding.center_y
+        })
+        .to_string();
+        self.call("Input.dispatchMouseEvent", &move_params)?;
         self.coordinate_click(binding.center_x, binding.center_y)?;
         Ok(ActMechanism::Coordinate)
     }
@@ -713,6 +736,41 @@ fn thrown_message(body: &str) -> String {
         })
         .map(|m| m.lines().next().unwrap_or(m).to_owned())
         .unwrap_or_else(|| "page threw".to_owned())
+}
+
+/// Regions whose compact hit test (no extra CDP calls) landed on the region
+/// or a descendant. Not-collected or unresolvable hits are not evidence.
+fn compact_hit_owned(
+    manifold: &InteractionManifold,
+    bindings: &BTreeMap<RegionId, NodeBinding>,
+    dom: &extract::DomDocument,
+    compact: Option<&compact::CompactSnapshot>,
+) -> BTreeSet<RegionId> {
+    let Some(compact) = compact else {
+        return BTreeSet::new();
+    };
+    manifold
+        .regions()
+        .filter(|region| region.actions().contains(&Action::Click))
+        .filter(|region| {
+            let Some(backend) = bindings.get(region.id()).and_then(|b| b.backend_node_id) else {
+                return false;
+            };
+            let hit = dom
+                .hu_k_of_backend
+                .get(&backend)
+                .and_then(|k| compact.node(*k))
+                .map(|node| node.hit);
+            match hit {
+                Some(compact::Hit::Key(k)) => dom
+                    .backend_of_hu_k
+                    .get(&k)
+                    .is_some_and(|hit| owns_hit(*hit, backend, &dom.parent_of)),
+                _ => false,
+            }
+        })
+        .map(|region| region.id().clone())
+        .collect()
 }
 
 fn owns_hit(hit: i64, target: i64, parent_of: &BTreeMap<i64, i64>) -> bool {

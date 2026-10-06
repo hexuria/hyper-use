@@ -12,6 +12,28 @@ use instinct_text::{normalize, NormalizeConfig};
 /// after them): in `Type "rust" into Search` the verb is operation evidence
 /// and `"rust"` is the TextResolver's payload; only `Search` names a target.
 pub fn score_action(goal: &str, action: &ObservedAction) -> Confidence {
+    let best = score_action_best(goal, action);
+    // Only an exact label can saturate: "Skip navigation" contains the goal
+    // "Skip" but must stay a margin below the button labelled "Skip".
+    if best == Confidence::MAX && !exact_label(goal, action) {
+        return Confidence::saturating(i32::from(NON_EXACT_CAP));
+    }
+    best
+}
+
+/// Ceiling for a label that is not exactly the goal (or its target phrase):
+/// Instinct Standard's margin below `MAX`, still above its min confidence.
+const NON_EXACT_CAP: i16 = 849;
+
+fn exact_label(goal: &str, action: &ObservedAction) -> bool {
+    let label = action.label();
+    eq_fold(goal, label)
+        || target_phrase(goal).is_some_and(|p| eq_fold(&p, label))
+        || (action.kind().is_control()
+            && (eq_fold(goal, action.kind().as_str()) || control_keyword_hit(goal, action.kind())))
+}
+
+fn score_action_best(goal: &str, action: &ObservedAction) -> Confidence {
     let whole = score_action_text(goal, action);
     match target_phrase(goal) {
         Some(phrase) if phrase != goal => {
@@ -102,12 +124,21 @@ fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
     let mut score = Confidence::ZERO;
 
     if let Ok(ov) = lexical_overlap(goal, label) {
+        // Overlap measures how much of the label the goal holds. A short
+        // label that names a sliver of the goal is scaled by goal coverage.
+        let ov = if !sliver_scaled(kind) || covers_most(goal, label) {
+            ov
+        } else {
+            scale_by_coverage(ov, goal, label)
+        };
         score = score.saturating_add(ov);
     }
 
     let g = fold(goal);
     let l = fold(label);
-    if !l.is_empty() && g.contains(&l) {
+    // A label inside the goal is evidence only when it covers most of the
+    // goal: a one-word chip ("kabisado") inside a long title goal is not.
+    if !l.is_empty() && g.contains(&l) && (!sliver_scaled(kind) || covers_most(goal, label)) {
         score = score.saturating_add(Confidence::saturating(250));
     } else if !g.is_empty() && l.contains(&g) {
         score = score.saturating_add(Confidence::saturating(200));
@@ -139,6 +170,60 @@ fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
     }
 
     score
+}
+
+/// Click targets are named by the whole target phrase, so a label that
+/// names a sliver of it is scaled down. TYPE / SELECT goals may carry an
+/// unquoted payload ("type rust ownership in the Search box") whose words
+/// do not name the field, so their labels are not scaled.
+fn sliver_scaled(kind: ActionKind) -> bool {
+    kind == ActionKind::Click
+}
+
+/// `conf` times the fraction of `goal` tokens that occur in `label`.
+fn scale_by_coverage(conf: Confidence, goal: &str, label: &str) -> Confidence {
+    let goal_tokens = tokenize(goal);
+    if goal_tokens.is_empty() {
+        return Confidence::ZERO;
+    }
+    let label_tokens = tokenize(label);
+    let hits = goal_tokens
+        .iter()
+        .filter(|t| label_tokens.contains(t))
+        .count();
+    let scaled = i64::from(conf.get()) * i64::try_from(hits).unwrap_or(0)
+        / i64::try_from(goal_tokens.len()).unwrap_or(1);
+    Confidence::saturating(i32::try_from(scaled).unwrap_or(0))
+}
+
+/// At least two thirds of `goal`'s tokens occur in `label`.
+fn covers_most(goal: &str, label: &str) -> bool {
+    let goal_tokens = tokenize(goal);
+    if goal_tokens.is_empty() {
+        return false;
+    }
+    let label_tokens = tokenize(label);
+    let hits = goal_tokens
+        .iter()
+        .filter(|t| label_tokens.contains(t))
+        .count();
+    hits * 3 >= goal_tokens.len() * 2
+}
+
+/// The executed `label` names what the clause asked for: it covers at least
+/// two thirds of the clause's target phrase (the clause itself when it has none).
+/// The agent uses this before treating a step's effect as the clause done.
+pub fn label_covers_target(clause: &str, label: &str) -> bool {
+    let phrase = target_phrase(clause).unwrap_or_else(|| clause.to_owned());
+    covers_most(&phrase, label)
+}
+
+/// `label` names the clause's target and little else: it covers two thirds
+/// of the target phrase, and the phrase covers two thirds of the label.
+/// "Skip" names "click Skip"; "Skip navigation" does not.
+pub fn label_names_target(clause: &str, label: &str) -> bool {
+    let phrase = target_phrase(clause).unwrap_or_else(|| clause.to_owned());
+    covers_most(&phrase, label) && covers_most(label, &phrase)
 }
 
 /// Score an operation kind given the goal and the best target (if any) for that kind.

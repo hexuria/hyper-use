@@ -36,6 +36,9 @@ pub use transport::CdpTransport;
 pub use verify::{verify, verify_delta, Expectation, VerifyError};
 pub use ws::{WebSocketTransport, DEFAULT_CDP_HTTP};
 
+#[cfg(feature = "fuzz-support")]
+pub use compact::compact_parse_fuzzable;
+
 /// A session can be opened. This is not a claim that a browser is running.
 pub const STATUS: &str = "browser CDP client ready; act requires a session";
 

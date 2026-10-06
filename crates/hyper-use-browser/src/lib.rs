@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+mod compact;
 mod error;
 mod extract;
 mod fusion;
@@ -803,5 +804,490 @@ mod exact_errors {
             session.manifold().unwrap().get_str("n200").unwrap().label(),
             "Welcome"
         );
+    }
+}
+
+#[cfg(test)]
+mod compact_observe {
+    use super::script::{AxSpec, DomSpec, PageSpec, ScriptBuilder};
+    use super::*;
+    use crate::compact;
+
+    fn page() -> PageSpec {
+        PageSpec::new(
+            vec![
+                DomSpec::button(10, 100, "Sign in", (400.0, 300.0, 80.0, 32.0)),
+                DomSpec::button(20, 200, "Email", (400.0, 200.0, 160.0, 32.0)),
+            ],
+            vec![
+                AxSpec::new(100, "button", "Sign in", (400.0, 300.0, 80.0, 32.0)),
+                AxSpec::new(200, "textbox", "Email", (400.0, 200.0, 160.0, 32.0)),
+            ],
+            "https://example.test/sign-in",
+            "Sign in",
+        )
+    }
+
+    #[test]
+    fn compact_observe_uses_five_calls_total() {
+        let script = ScriptBuilder::new().observe_compact(&page()).to_json();
+        let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+        let manifold = session.observe().unwrap();
+        assert!(manifold.get_str("n100").is_some());
+        assert!(manifold.get_str("n200").is_some());
+        assert_eq!(
+            session.transport().logged_methods(),
+            vec![
+                "Runtime.evaluate",
+                "Page.getLayoutMetrics",
+                "DOM.getDocument",
+                "Accessibility.getFullAXTree",
+                "Page.getNavigationHistory",
+            ]
+        );
+    }
+
+    #[test]
+    fn compact_and_per_node_observe_build_the_same_manifold() {
+        let mut legacy = BrowserSession::new(
+            ReplayTransport::parse(&ScriptBuilder::new().observe(&page()).to_json()).unwrap(),
+        );
+        let mut compact = BrowserSession::new(
+            ReplayTransport::parse(&ScriptBuilder::new().observe_compact(&page()).to_json())
+                .unwrap(),
+        );
+        let snapshot = |session: &mut BrowserSession<_>| {
+            session
+                .observe()
+                .unwrap()
+                .regions()
+                .map(|region| {
+                    (
+                        region.id().to_string(),
+                        region.label().to_owned(),
+                        region.rect(),
+                        region.actions().to_vec(),
+                        region.flags(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(snapshot(&mut legacy), snapshot(&mut compact));
+    }
+
+    #[test]
+    fn compact_observe_buries_a_covered_button_via_blob_hit() {
+        // Unkept overlay: it earns a `data-hu-k` tag but no region, so the
+        // blob hit-test (not stacking) is the only mechanism that can bury
+        // n100. Its rect covers n100's center but not n200's.
+        let overlay =
+            DomSpec::container(30, 300, "banner", "Cookies", (350.0, 250.0, 200.0, 130.0));
+        let mut overlay = overlay;
+        overlay.attributes.clear();
+        let page = PageSpec::new(
+            vec![
+                DomSpec::button(10, 100, "Sign in", (400.0, 300.0, 80.0, 32.0)),
+                DomSpec::button(20, 200, "Email", (400.0, 200.0, 160.0, 32.0)),
+                overlay,
+            ],
+            vec![AxSpec::new(
+                100,
+                "button",
+                "Sign in",
+                (400.0, 300.0, 80.0, 32.0),
+            )],
+            "https://example.test/sign-in",
+            "Sign in",
+        )
+        .cover(100, 300);
+        let script = ScriptBuilder::new().observe_compact(&page).to_json();
+        let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+        let manifold = session.observe().unwrap();
+        assert!(manifold.get_str("n100").unwrap().flags().occluded());
+        assert!(!manifold.get_str("n200").unwrap().flags().occluded());
+    }
+
+    #[test]
+    fn compact_eval_throwing_falls_back_to_the_per_node_path() {
+        // A page that breaks the walk (e.g. replaced DOM globals) must not
+        // make observe fail: the eval is dropped, every element is joined
+        // per node, and stale tags from the partial walk are ignored.
+        let mut value: serde_json::Value =
+            serde_json::from_str(&ScriptBuilder::new().observe(&page()).to_json()).unwrap();
+        value["calls"].as_array_mut().unwrap().insert(
+            0,
+            serde_json::json!({
+                "method": "Runtime.evaluate",
+                "result": {
+                    "result": {"type": "object"},
+                    "exceptionDetails": {"text": "TypeError"}
+                }
+            }),
+        );
+        let legacy = ScriptBuilder::new().observe(&page()).to_json();
+        let legacy_calls = serde_json::from_str::<serde_json::Value>(&legacy).unwrap()["calls"]
+            .as_array()
+            .unwrap()
+            .len();
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert!(manifold.get_str("n100").is_some());
+        assert!(manifold.get_str("n200").is_some());
+        assert_eq!(session.transport().logged_methods().len(), legacy_calls + 1);
+    }
+
+    /// The compact script with `data-hu-k` rewritten on the DOM node whose
+    /// backend id is `backend`.
+    fn retag(value: &mut serde_json::Value, backend: i64, k: &str) {
+        fn walk(node: &mut serde_json::Value, backend: i64, k: &str) {
+            if node["backendNodeId"] == backend {
+                let attrs = node["attributes"].as_array_mut().unwrap();
+                let at = attrs.iter().position(|a| a == "data-hu-k").unwrap();
+                attrs[at + 1] = serde_json::json!(k);
+            }
+            if let Some(children) = node["children"].as_array_mut() {
+                for child in children {
+                    walk(child, backend, k);
+                }
+            }
+        }
+        walk(&mut value["calls"][2]["result"]["root"], backend, k);
+    }
+
+    #[test]
+    fn duplicate_hu_k_tags_fall_back_per_node_for_every_holder() {
+        // A page clone (or forged value) gives n200 the same key as n100.
+        // Neither may consume the blob: both must take the per-node path.
+        let mut value: serde_json::Value =
+            serde_json::from_str(&ScriptBuilder::new().observe_compact(&page()).to_json()).unwrap();
+        let k100 = {
+            let root = &value["calls"][2]["result"]["root"];
+            let node = root["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["backendNodeId"] == 100)
+                .unwrap();
+            let attrs = node["attributes"].as_array().unwrap();
+            let at = attrs.iter().position(|a| a == "data-hu-k").unwrap();
+            attrs[at + 1].as_str().unwrap().to_owned()
+        };
+        retag(&mut value, 200, &k100);
+        let dom = extract::dom_document(&value["calls"][2]["result"].to_string()).unwrap();
+        assert!(dom.hu_k_of_backend.is_empty());
+        assert!(dom.backend_of_hu_k.is_empty());
+        assert!(dom.elements.iter().all(|e| e.hu_k.is_none()));
+    }
+
+    #[test]
+    fn compact_hit_naming_an_unknown_key_falls_back_to_get_node_for_location() {
+        // A hit key no element carries (ambiguous and dropped, or never
+        // present) must not read as "nothing here" — that would fail open.
+        let mut value: serde_json::Value =
+            serde_json::from_str(&ScriptBuilder::new().observe_compact(&page()).to_json()).unwrap();
+        let nodes = value["calls"][0]["result"]["result"]["value"]["nodes"]
+            .as_object_mut()
+            .unwrap();
+        for record in nodes.values_mut() {
+            if record["h"].is_u64() {
+                record["h"] = serde_json::json!(4_000_000);
+            }
+        }
+        // n200's fallback lands on n100: only the per-node path can see it.
+        for hit in [100, 100] {
+            value["calls"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({
+                    "method": "DOM.getNodeForLocation",
+                    "result": {"backendNodeId": hit}
+                }));
+        }
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert!(!manifold.get_str("n100").unwrap().flags().occluded());
+        assert!(manifold.get_str("n200").unwrap().flags().occluded());
+        assert_eq!(
+            session
+                .transport()
+                .logged_methods()
+                .iter()
+                .filter(|m| *m == "DOM.getNodeForLocation")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn compact_record_without_style_or_hit_falls_back_per_node() {
+        // Non-candidate elements carry a rect only. If such an element still
+        // becomes a region, its style and hit come from the per-node calls.
+        let mut value: serde_json::Value =
+            serde_json::from_str(&ScriptBuilder::new().observe_compact(&page()).to_json()).unwrap();
+        let nodes = value["calls"][0]["result"]["result"]["value"]["nodes"]
+            .as_object_mut()
+            .unwrap();
+        for record in nodes.values_mut() {
+            let record = record.as_object_mut().unwrap();
+            record.remove("s");
+            record.remove("h");
+        }
+        let calls = value["calls"].as_array_mut().unwrap();
+        calls.push(serde_json::json!({"method": "CSS.enable", "result": {}}));
+        for node_id in [10, 20] {
+            calls.push(serde_json::json!({
+                "method": "CSS.getComputedStyleForNode",
+                "params": {"nodeId": node_id},
+                "result": {"computedStyle": [{"name": "z-index", "value": "auto"}]}
+            }));
+        }
+        for backend in [100, 200] {
+            calls.push(serde_json::json!({
+                "method": "DOM.getNodeForLocation",
+                "result": {"backendNodeId": backend}
+            }));
+        }
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert!(!manifold.get_str("n100").unwrap().flags().occluded());
+        let methods = session.transport().logged_methods();
+        assert_eq!(
+            methods
+                .iter()
+                .filter(|m| *m == "DOM.getNodeForLocation")
+                .count(),
+            2
+        );
+        assert_eq!(
+            methods
+                .iter()
+                .filter(|m| *m == "CSS.getComputedStyleForNode")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn unscripted_compact_eval_falls_through_to_the_per_node_path() {
+        // A fixture that never scripted Runtime.evaluate still works: the
+        // probe misses, every element is untagged, the legacy budget runs.
+        let script = ScriptBuilder::new().observe(&page()).to_json();
+        let mut session = BrowserSession::new(ReplayTransport::parse(&script).unwrap());
+        let manifold = session.observe().unwrap();
+        assert!(manifold.get_str("n100").is_some());
+        assert_eq!(
+            session.transport().logged_methods()[0],
+            "Page.getLayoutMetrics"
+        );
+    }
+
+    #[test]
+    fn compact_partial_coverage_falls_back_for_the_untagged_node() {
+        // Strip data-hu-k from n200: it must take the per-node path while
+        // n100 still consumes blob evidence (only fallback calls scripted).
+        let mut value: serde_json::Value =
+            serde_json::from_str(&ScriptBuilder::new().observe_compact(&page()).to_json()).unwrap();
+        let calls = value["calls"].as_array_mut().unwrap();
+        let children = calls[2]["result"]["root"]["children"]
+            .as_array_mut()
+            .unwrap();
+        children[1]["attributes"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|attr| attr != &serde_json::json!("data-hu-k"));
+        calls.insert(
+            4,
+            serde_json::json!({
+                "method": "DOM.getBoxModel",
+                "params": {"nodeId": 20},
+                "result": {"model": {"content": [400.0, 200.0, 560.0, 200.0, 560.0, 232.0, 400.0, 232.0]}}
+            }),
+        );
+        calls.insert(
+            5,
+            serde_json::json!({
+                "method": "DOM.getBoxModel",
+                "params": {"backendNodeId": 200},
+                "result": {"model": {"content": [400.0, 200.0, 560.0, 200.0, 560.0, 232.0, 400.0, 232.0]}}
+            }),
+        );
+        calls.insert(
+            7,
+            serde_json::json!({"method": "CSS.enable", "params": {}, "result": {}}),
+        );
+        calls.insert(
+            8,
+            serde_json::json!({
+                "method": "CSS.getComputedStyleForNode",
+                "params": {"nodeId": 20},
+                "result": {"computedStyle": [
+                    {"name": "z-index", "value": "auto"},
+                    {"name": "position", "value": "static"},
+                    {"name": "opacity", "value": "1"},
+                    {"name": "transform", "value": "none"},
+                    {"name": "filter", "value": "none"},
+                    {"name": "isolation", "value": "auto"},
+                    {"name": "mix-blend-mode", "value": "normal"},
+                    {"name": "will-change", "value": "auto"},
+                    {"name": "pointer-events", "value": "auto"}
+                ]}
+            }),
+        );
+        calls.insert(
+            9,
+            serde_json::json!({
+                "method": "DOM.getNodeForLocation",
+                "params": {"x": 480, "y": 216},
+                "result": {"backendNodeId": 200}
+            }),
+        );
+        let transport = ReplayTransport::parse(&value.to_string()).unwrap();
+        let mut session = BrowserSession::new(transport);
+        let manifold = session.observe().unwrap();
+        assert!(manifold.get_str("n100").is_some());
+        assert!(manifold.get_str("n200").is_some());
+        let methods = session.transport().logged_methods();
+        assert_eq!(methods.len(), 10);
+        for method in [
+            "DOM.getBoxModel",
+            "CSS.getComputedStyleForNode",
+            "DOM.getNodeForLocation",
+        ] {
+            assert!(methods.iter().any(|m| m == method), "missing {method}");
+        }
+    }
+
+    /// Live transport that refuses the compact eval, forcing the per-node
+    /// path on the same page: the legacy oracle for parity.
+    struct NoCompact<T>(T);
+
+    impl<T: CdpTransport> CdpTransport for NoCompact<T> {
+        fn call(&mut self, method: &str, params_json: &str) -> Result<String, CdpError> {
+            if method == "Runtime.evaluate" && params_json.contains(compact::HU_K_ATTR) {
+                return Err(CdpError::Protocol {
+                    message: "compact eval disabled for parity".into(),
+                });
+            }
+            self.0.call(method, params_json)
+        }
+    }
+
+    fn live_flags<T: CdpTransport>(
+        transport: T,
+    ) -> std::collections::BTreeMap<String, (bool, bool)> {
+        let mut session = BrowserSession::new(transport);
+        session
+            .observe()
+            .expect("observe")
+            .regions()
+            .filter(|region| region.actions().contains(&hyper_use_core::Action::Click))
+            .map(|region| {
+                (
+                    region.label().to_owned(),
+                    (region.flags().occluded(), region.flags().disabled()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    #[ignore = "needs live Chrome on fixtures/live/compact-observe.html (served over HTTP); set HYPER_USE_CDP=http://127.0.0.1:PORT"]
+    fn live_compact_observe_matches_the_per_node_path_on_real_chrome() {
+        let endpoint =
+            std::env::var("HYPER_USE_CDP").unwrap_or_else(|_| DEFAULT_CDP_HTTP.to_owned());
+        let compact_flags = live_flags(WebSocketTransport::connect(&endpoint).expect("connect"));
+        let legacy_flags = live_flags(NoCompact(
+            WebSocketTransport::connect(&endpoint).expect("connect"),
+        ));
+        let occluded = |label: &str| {
+            compact_flags
+                .iter()
+                .find(|(l, _)| l.contains(label))
+                .unwrap_or_else(|| panic!("missing {label}: {compact_flags:?}"))
+                .1
+                 .0
+        };
+        // Open shadow content is reachable (ADR 0007), not the host's hit.
+        assert!(!occluded("Shadow action"), "{compact_flags:?}");
+        assert!(!occluded("Sign in"), "{compact_flags:?}");
+        assert!(!occluded("Frame action"), "{compact_flags:?}");
+        // A parent-document veil over iframe content buries it.
+        assert!(occluded("Frame covered"), "{compact_flags:?}");
+        assert!(occluded("Under banner"), "{compact_flags:?}");
+        // Compact evidence and the per-node calls agree on every clickable.
+        assert_eq!(compact_flags, legacy_flags);
+        // The walk left its tags on the live DOM.
+        let mut probe = WebSocketTransport::connect(&endpoint).expect("probe");
+        let body = probe
+            .call(
+                "Runtime.evaluate",
+                &serde_json::json!({
+                    "expression": "document.querySelectorAll('[data-hu-k]').length",
+                    "returnByValue": true
+                })
+                .to_string(),
+            )
+            .expect("eval");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(value["result"]["value"].as_i64().unwrap_or(0) > 0, "{body}");
+    }
+
+    #[test]
+    fn compact_blob_decodes_rects_styles_and_hits() {
+        let body = serde_json::json!({
+            "result": {"type": "object", "value": {"nodes": {
+                "0": {"r": [400.0, 300.0, 80.0, 32.0], "s": [["z-index", "auto"]], "h": 0},
+                "1": {"r": null},
+                "2": {"r": [0.0, 0.0, 10.0, 10.0], "s": [], "h": null}
+            }}}
+        });
+        let snapshot = compact::parse(&body.to_string()).unwrap();
+        let node = snapshot.node(0).unwrap();
+        assert_eq!(node.rect.unwrap().x(), 400.0);
+        assert_eq!(
+            node.style,
+            Some(vec![("z-index".to_owned(), "auto".to_owned())])
+        );
+        assert_eq!(node.hit, compact::Hit::Key(0));
+        let bare = snapshot.node(1).unwrap();
+        assert!(bare.rect.is_none());
+        assert_eq!(bare.style, None);
+        assert_eq!(bare.hit, compact::Hit::NotCollected);
+        assert_eq!(snapshot.node(2).unwrap().hit, compact::Hit::Nothing);
+        assert!(snapshot.node(9).is_none());
+    }
+
+    #[test]
+    fn compact_hit_above_u32_is_rejected_not_truncated() {
+        let body = serde_json::json!({
+            "result": {"value": {"nodes": {"0": {"r": null, "h": 4_294_967_296_u64}}}}
+        });
+        assert!(matches!(
+            compact::parse(&body.to_string()),
+            Err(BrowserError::Cdp(CdpError::BadJson { .. }))
+        ));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn compact_parse_never_panics_on_arbitrary_text(input in ".{0,256}") {
+            let _ = compact::parse(&input);
+        }
+
+        #[test]
+        fn compact_parse_never_panics_on_arbitrary_records(
+            key in "[0-9a-z-]{0,12}",
+            rect in proptest::collection::vec(proptest::num::f64::ANY, 0..6),
+            hit in proptest::prelude::any::<Option<i64>>(),
+            style in proptest::collection::vec((".{0,8}", ".{0,8}"), 0..4),
+        ) {
+            let body = serde_json::json!({
+                "result": {"value": {"nodes": {key: {"r": rect, "s": style, "h": hit}}}}
+            });
+            let _ = compact::parse(&body.to_string());
+        }
     }
 }

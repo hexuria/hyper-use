@@ -98,7 +98,7 @@ crate.
 | `hyper-use-protocol` | Guard / ticket / verify wire types |
 | `hyper-use-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
 | `hyper-use-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
-| `hyper-use-cli` | `hyper-use run` (agent loop); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio) |
+| `hyper-use-cli` | `hyper-use run` (agent loop, `--policy pua|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
 
 PUA is pinned by git rev in the workspace `Cargo.toml`; bump only with a
 deliberate eval. HGRA lives in `experiments/hgra/` and the resonance `hgra`

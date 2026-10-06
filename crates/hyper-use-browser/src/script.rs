@@ -445,6 +445,100 @@ impl ScriptBuilder {
         self
     }
 
+    /// The calls of one `observe` on the compact path: a single
+    /// `Runtime.evaluate` returning the compact blob, then the constant
+    /// calls. No `DOM.getBoxModel` / `CSS.*` / `DOM.getNodeForLocation`
+    /// steps: tagged elements carry `data-hu-k` inside the document and all
+    /// per-node evidence rides in the blob.
+    ///
+    /// `hit_overrides` must point at elements inside `page.dom` (they get a
+    /// `data-hu-k`); an override whose overlay backend has no tag degrades
+    /// to "no hit" rather than the scripted overlay.
+    pub fn observe_compact(mut self, page: &PageSpec) -> Self {
+        // Tag elements in flatten order (children → shadow → content
+        // document), matching the JS walk's visit order.
+        let mut dom = page.dom.clone();
+        let mut next = 0u32;
+        for node in &mut dom {
+            tag_dom(node, &mut next);
+        }
+        let mut k_of_backend = BTreeMap::new();
+        let mut flat = Vec::new();
+        for node in &dom {
+            flatten(node, &mut flat);
+        }
+        for node in &flat {
+            if let Some((_, value)) = node
+                .attributes
+                .iter()
+                .find(|(name, _)| name == crate::compact::HU_K_ATTR)
+            {
+                if let Ok(k) = value.parse::<u32>() {
+                    k_of_backend.insert(node.backend, k);
+                }
+            }
+        }
+        let mut nodes = serde_json::Map::new();
+        for node in &flat {
+            let Some(k) = k_of_backend.get(&node.backend).copied() else {
+                continue;
+            };
+            let r = node
+                .rect
+                .map(|(x, y, w, h)| json!([x, y, w, h]))
+                .unwrap_or(Value::Null);
+            let s: Vec<Value> = page
+                .style_overrides
+                .get(&node.node_id)
+                .cloned()
+                .unwrap_or_else(default_stacking_style)
+                .iter()
+                .map(|(name, value)| json!([name, value]))
+                .collect();
+            let hit = page
+                .hit_overrides
+                .get(&node.backend)
+                .and_then(|backend| k_of_backend.get(backend).copied())
+                .unwrap_or(k);
+            nodes.insert(
+                k.to_string(),
+                json!({"r": r, "s": s, "h": if node.rect.is_some() { json!(hit) } else { Value::Null }}),
+            );
+        }
+        self.calls.push(result(
+            "Runtime.evaluate",
+            json!({"result": {"type": "object", "value": {"nodes": nodes}}}),
+        ));
+        self.calls.push(result(
+            "Page.getLayoutMetrics",
+            json!({"cssLayoutViewport": {
+                "clientWidth": page.width, "clientHeight": page.height, "pageX": 0, "pageY": 0
+            }}),
+        ));
+        let children: Vec<Value> = dom.iter().map(dom_json).collect();
+        self.calls.push(result(
+            "DOM.getDocument",
+            json!({"root": {
+                "nodeId": 1, "backendNodeId": 1, "nodeType": 9, "nodeName": "#document",
+                "children": children
+            }}),
+        ));
+        let ax_nodes: Vec<Value> = page.ax.iter().enumerate().map(ax_json).collect();
+        self.calls.push(result(
+            "Accessibility.getFullAXTree",
+            json!({"nodes": ax_nodes}),
+        ));
+        self.calls.push(match &page.history {
+            HistorySpec::Entry { url, title } => result(
+                "Page.getNavigationHistory",
+                json!({"currentIndex": 0, "entries": [{"id": 1, "url": url, "title": title}]}),
+            ),
+            HistorySpec::ProtocolError => error("Page.getNavigationHistory", "history failed"),
+            HistorySpec::NoEntries => result("Page.getNavigationHistory", json!({})),
+        });
+        self
+    }
+
     /// A DOM click by node id that succeeds.
     pub fn dom_click(mut self, node_id: i64) -> Self {
         let object = format!("obj-{node_id}");
@@ -567,6 +661,28 @@ fn flatten<'a>(node: &'a DomSpec, out: &mut Vec<&'a DomSpec>) {
     }
     if let Some(doc) = &node.content_document {
         flatten(doc, out);
+    }
+}
+
+/// Assign `data-hu-k` in the same order the compact JS walk visits nodes:
+/// the element itself, then children, then open shadow roots, then a
+/// same-origin `contentDocument`. Document/fragment wrappers are not
+/// elements and get no tag.
+fn tag_dom(node: &mut DomSpec, next: &mut u32) {
+    let is_element = node.tag != "#document" && node.tag != "#document-fragment";
+    if is_element {
+        node.attributes
+            .push((crate::compact::HU_K_ATTR.to_owned(), next.to_string()));
+        *next += 1;
+    }
+    for child in &mut node.children {
+        tag_dom(child, next);
+    }
+    for root in &mut node.shadow_roots {
+        tag_dom(root, next);
+    }
+    if let Some(doc) = &mut node.content_document {
+        tag_dom(doc, next);
     }
 }
 

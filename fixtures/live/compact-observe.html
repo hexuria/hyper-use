@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Live page for `live_compact_observe_*` (hyper-use-browser). Serve this
+     directory over HTTP so the iframe is same-origin, e.g.
+     `python3 -m http.server 8765` then open compact-observe.html. -->
+<html><head><meta charset="utf-8"><title>compact observe</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  .abs { position: absolute; }
+  #frame { left: 20px; top: 260px; width: 400px; height: 120px; border: 0; }
+  #frame-veil { left: 20px; top: 320px; width: 400px; height: 60px; z-index: 10; background: rgba(0,0,0,.3); }
+  #banner { left: 460px; top: 20px; width: 220px; height: 60px; z-index: 10; background: #eee; }
+</style></head>
+<body>
+  <button class="abs" style="left:20px;top:20px">Sign in</button>
+  <input class="abs" style="left:20px;top:70px" aria-label="Email">
+  <select class="abs" style="left:20px;top:120px" aria-label="Plan"><option>Free</option><option>Pro</option></select>
+  <div id="host" class="abs" style="left:20px;top:170px"></div>
+  <button class="abs" style="left:480px;top:40px">Under banner</button>
+  <div id="banner" class="abs"></div>
+  <iframe id="frame" class="abs" src="compact-frame.html"></iframe>
+  <div id="frame-veil" class="abs"></div>
+  <script>
+    document.getElementById('host').attachShadow({mode: 'open'}).innerHTML =
+      '<button>Shadow action</button>';
+  </script>
+</body></html>

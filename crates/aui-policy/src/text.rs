@@ -64,6 +64,81 @@ pub trait TextResolver {
     fn resolve(&mut self, context: &TextContext) -> Result<TextResolution, TextError>;
 }
 
+/// Ground a SELECT payload in the observed enabled options.
+pub fn ground_select(
+    goal: &str,
+    resolved: Option<&str>,
+    options: &[String],
+    selected: Option<&str>,
+) -> Result<String, TextError> {
+    if options.is_empty() {
+        return resolved.map(str::to_owned).ok_or(TextError::Missing);
+    }
+
+    if let Some(resolved) = resolved {
+        let resolved = resolved.trim().to_lowercase();
+        let mut matches = options
+            .iter()
+            .filter(|option| option.to_lowercase() == resolved);
+        if let Some(option) = matches.next() {
+            if matches.next().is_some() {
+                return Err(TextError::Ambiguous);
+            }
+            return Ok(option.clone());
+        }
+    }
+
+    let lower_goal = goal.to_lowercase();
+    let candidates: Vec<_> = options
+        .iter()
+        .filter_map(|option| {
+            if option.trim().is_empty() {
+                return None;
+            }
+            let lower = option.to_lowercase();
+            contains_whole_phrase(&lower_goal, &lower).then_some((option.as_str(), lower))
+        })
+        .collect();
+    let mut candidates: Vec<_> = candidates
+        .iter()
+        .filter(|(_, label)| {
+            !candidates
+                .iter()
+                .any(|(_, other)| other != label && other.contains(label.as_str()))
+        })
+        .map(|(label, _)| *label)
+        .collect();
+
+    if candidates.len() > 1 {
+        if let Some(selected) = selected {
+            let selected = selected.to_lowercase();
+            candidates.retain(|label| label.to_lowercase() != selected);
+        }
+    }
+
+    match candidates.as_slice() {
+        [option] => Ok((*option).to_owned()),
+        [] => Err(TextError::Abstain(
+            "no observed option matches the goal".into(),
+        )),
+        _ => Err(TextError::Ambiguous),
+    }
+}
+
+fn contains_whole_phrase(text: &str, phrase: &str) -> bool {
+    text.match_indices(phrase).any(|(start, found)| {
+        let end = start + found.len();
+        text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !character.is_alphanumeric())
+            && text[end..]
+                .chars()
+                .next()
+                .is_none_or(|character| !character.is_alphanumeric())
+    })
+}
+
 /// Pulls an obvious quoted or `into <field>:` value from the goal. No model.
 #[derive(Clone, Debug, Default)]
 pub struct DeterministicTextResolver;
@@ -208,5 +283,100 @@ mod tests {
             context_fingerprint: 3,
         };
         assert_eq!(r.resolve(&ctx), Err(TextError::Missing));
+    }
+
+    #[test]
+    fn select_without_observed_options_keeps_resolver_fallback() {
+        assert_eq!(
+            ground_select("Set cabin class", Some(" business "), &[], None).unwrap(),
+            " business "
+        );
+        assert_eq!(
+            ground_select("Set cabin class", None, &[], None),
+            Err(TextError::Missing)
+        );
+    }
+
+    #[test]
+    fn select_resolved_value_matches_observed_option_case_insensitively() {
+        let options = vec!["Economy".into(), "Business".into()];
+        assert_eq!(
+            ground_select("Set cabin class", Some("business"), &options, None).unwrap(),
+            "Business"
+        );
+    }
+
+    #[test]
+    fn select_goal_fallback_uses_observed_option() {
+        let options = vec!["Economy".into(), "Business".into()];
+        assert_eq!(
+            ground_select("Set cabin class to Business", Some("First"), &options, None).unwrap(),
+            "Business"
+        );
+    }
+
+    #[test]
+    fn select_goal_prefers_longest_matching_option_label() {
+        let options = vec!["Asia".into(), "Asia/Manila".into()];
+        assert_eq!(
+            ground_select("Set time zone to Asia/Manila", None, &options, None).unwrap(),
+            "Asia/Manila"
+        );
+    }
+
+    #[test]
+    fn select_goal_ignores_current_selection_when_disambiguating() {
+        let options = vec!["UTC".into(), "Asia/Manila".into()];
+        assert_eq!(
+            ground_select(
+                "Change from UTC to Asia/Manila",
+                None,
+                &options,
+                Some("UTC")
+            )
+            .unwrap(),
+            "Asia/Manila"
+        );
+    }
+
+    #[test]
+    fn select_goal_requires_alphanumeric_phrase_boundaries() {
+        let options = vec!["UTC".into()];
+        assert!(matches!(
+            ground_select("Set zone to UTCx", None, &options, None),
+            Err(TextError::Abstain(_))
+        ));
+    }
+
+    #[test]
+    fn select_goal_with_multiple_options_is_ambiguous() {
+        let options = vec!["UTC".into(), "Asia/Manila".into()];
+        assert_eq!(
+            ground_select("Change from UTC to Asia/Manila", None, &options, None),
+            Err(TextError::Ambiguous)
+        );
+    }
+
+    #[test]
+    fn select_goal_with_no_matching_option_abstains() {
+        let options = vec!["Economy".into(), "Business".into()];
+        assert!(matches!(
+            ground_select("Set cabin class to Premium", None, &options, None),
+            Err(TextError::Abstain(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_resolved_option_labels_are_ambiguous() {
+        let options = vec!["Business".into(), "Business".into()];
+        assert_eq!(
+            ground_select(
+                "Set cabin class to Business",
+                Some("business"),
+                &options,
+                None
+            ),
+            Err(TextError::Ambiguous)
+        );
     }
 }

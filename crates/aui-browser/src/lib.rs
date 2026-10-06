@@ -16,25 +16,21 @@ mod extract;
 mod fusion;
 mod identity;
 mod page;
-mod replay;
-pub mod script;
 mod session;
 mod stacking;
-mod transport;
 mod verify;
-mod ws;
 
-pub use error::{ActMechanism, BrowserError, CdpError};
+pub use aui_cdp::{
+    open_tab, script, CdpError, CdpTransport, ReplayTransport, WebSocketTransport, DEFAULT_CDP_HTTP,
+};
+pub use error::{ActMechanism, BrowserError};
 pub use fusion::{MAX_CENTROID_PX, MIN_IOU, MIN_LABEL_JACCARD};
 pub use page::{page_delta, PageDelta, PageState};
-pub use replay::ReplayTransport;
 pub use session::{
     BrowserSession, ScrollDirection, DOM_CLICK_FUNCTION, DOM_READ_VALUE_FUNCTION,
     DOM_SELECT_FUNCTION, DOM_TYPE_FUNCTION, SCROLL_VIEWPORT_FRACTION,
 };
-pub use transport::CdpTransport;
 pub use verify::{verify, verify_delta, Expectation, VerifyError};
-pub use ws::{WebSocketTransport, DEFAULT_CDP_HTTP};
 
 #[cfg(feature = "fuzz-support")]
 pub use compact::compact_parse_fuzzable;

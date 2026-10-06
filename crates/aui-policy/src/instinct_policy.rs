@@ -579,6 +579,27 @@ mod tests {
     }
 
     #[test]
+    fn conditional_give_up_suffix_does_not_choose_done() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=weekly role=button label="Weekly sync moved to 2 PM" x=10 y=10 w=240 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = r#"Star the email "Weekly sync". If the task cannot be done on this site, stop and say so (give up) without changing anything."#;
+        let outcome = InstinctPolicy::default()
+            .decide(&space, &AgentGoal::new(goal), &[])
+            .unwrap();
+        assert!(
+            !matches!(
+                outcome.as_choice(),
+                Some(choice) if choice.kind == ActionKind::Done
+            ),
+            "{outcome:?}"
+        );
+    }
+
+    #[test]
     fn empty_goal_is_error_not_silent_top() {
         let space = space_from(
             r#"

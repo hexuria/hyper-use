@@ -7,10 +7,11 @@
 //! then same-origin `contentDocument` — tags every element with a
 //! `data-hu-k` attribute, and returns, per tag: the content-box rect in
 //! top-viewport coordinates, the computed-style pairs
-//! [`crate::stacking::style_from_computed`] reads, and the hit-test result
+//! [`crate::stacking::style_from_computed`] reads, hit-test result
 //! (`elementFromPoint`, recursing into same-origin iframes the way CDP hit
-//! tests descend). `observe` then runs `DOM.getDocument`, which sees the
-//! injected attributes and joins each record to its `backendNodeId`.
+//! tests descend), and control state. `observe` then runs `DOM.getDocument`,
+//! which sees the injected attributes and joins each record to its
+//! `backendNodeId`.
 //!
 //! Elements the page cannot show to a same-origin walk — cross-origin
 //! iframe content, closed shadow roots — carry no `data-hu-k`; `observe`
@@ -37,20 +38,21 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use aui_core::Rect;
+use aui_core::{ElementState, Rect};
 
-use crate::error::{BrowserError, CdpError};
+use aui_cdp::CdpError;
+pub(crate) use aui_cdp::HU_K_ATTR;
 
-/// Attribute the walk injects. Read back off `DOM.getDocument` nodes.
-pub(crate) const HU_K_ATTR: &str = "data-hu-k";
+use crate::error::BrowserError;
 
 /// The single-eval walk. Returns `{nodes: {"<k>": {r,s?,h?}}}` where `r` is
 /// `[x,y,w,h]` or null, `s` the computed-style name/value pairs
 /// `style_from_computed` consumes, and `h` the `data-hu-k` of the element
-/// under the content center (null when nothing is there). `s` and `h` are
-/// present only on boxed elements that can become regions (the JS mirror of
-/// `extract::keep_element`); an absent field means "not collected" and the
-/// consumer falls back to the per-node call.
+/// under the content center (null when nothing is there). `s`, `h`, and
+/// control state (`v`, `c`, `x`, `sel`, `o`) are collected only for boxed
+/// elements that can become regions (the JS mirror of `extract::keep_element`).
+/// An absent `s` or `h` means "not collected" and the consumer falls back to
+/// the per-node call.
 pub(crate) const COMPACT_JS: &str = r#"(function(){
 var ATTR='data-hu-k';
 var PROPS=['z-index','position','opacity','transform','filter','isolation','mix-blend-mode','will-change','pointer-events'];
@@ -167,6 +169,35 @@ function visit(el,doc,off){
     if(candidate(el)){
       rec.s=stylePairs(el);
       rec.h=hitAt(document,r[0]+r[2]/2,r[1]+r[3]/2);
+      var name=el.nodeName.toUpperCase();
+      var inputType=(el.getAttribute('type')||'text').toLowerCase();
+      if((name==='INPUT'&&inputType!=='password'&&inputType!=='hidden'&&inputType!=='file'&&inputType!=='checkbox'&&inputType!=='radio')||name==='TEXTAREA'){
+        rec.v=Array.from(String(el.value)).slice(0,200).join('');
+      }
+      if(name==='INPUT'&&(inputType==='checkbox'||inputType==='radio')){
+        rec.c=!!el.checked;
+      }else{
+        var checked=el.getAttribute('aria-checked');
+        if(checked==='true'||checked==='false')rec.c=checked==='true';
+      }
+      var expanded=el.getAttribute('aria-expanded');
+      if(expanded==='true'||expanded==='false')rec.x=expanded==='true';
+      if(name==='SELECT'){
+        var selected=[];
+        var options=[];
+        for(var j=0;j<el.options.length;j++){
+          var option=el.options[j];
+          var label=(option.label||option.textContent||'').trim();
+          if(option.selected)selected.push(label);
+          var group=option.parentElement;
+          var disabledGroup=group&&group.nodeName.toUpperCase()==='OPTGROUP'&&group.disabled;
+          if(!option.disabled&&!disabledGroup&&options.length<50){
+            options.push(Array.from(label).slice(0,80).join(''));
+          }
+        }
+        rec.sel=selected.join(', ');
+        rec.o=options;
+      }
     }
   }
   nodes[k]=rec;
@@ -203,6 +234,8 @@ pub(crate) struct CompactNode {
     pub style: Option<Vec<(String, String)>>,
     /// Hit test at the content center.
     pub hit: Hit,
+    /// Control state captured by the compact walk.
+    pub state: ElementState,
 }
 
 /// Compact hit-test evidence for one element.
@@ -292,7 +325,103 @@ pub(crate) fn parse(eval_result_json: &str) -> Result<CompactSnapshot, BrowserEr
                 Hit::Key(key)
             }
         };
-        out.nodes.insert(k, CompactNode { rect, style, hit });
+        let state = parse_element_state(record);
+        out.nodes.insert(
+            k,
+            CompactNode {
+                rect,
+                style,
+                hit,
+                state,
+            },
+        );
     }
     Ok(out)
+}
+
+fn parse_element_state(record: &Value) -> ElementState {
+    let options = record
+        .get("o")
+        .and_then(Value::as_array)
+        .map(|options| {
+            options
+                .iter()
+                .filter_map(Value::as_str)
+                .take(50)
+                .map(|value| truncate_chars(value, 80))
+                .collect()
+        })
+        .unwrap_or_default();
+    ElementState {
+        value: record
+            .get("v")
+            .and_then(Value::as_str)
+            .map(|value| truncate_chars(value, 200)),
+        checked: record.get("c").and_then(Value::as_bool),
+        expanded: record.get("x").and_then(Value::as_bool),
+        selected: record.get("sel").and_then(Value::as_str).map(str::to_owned),
+        options,
+    }
+}
+
+fn truncate_chars(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parse_state(record: Value) -> Result<ElementState, BrowserError> {
+        let input = json!({"result":{"value":{"nodes":{"1":record}}}}).to_string();
+        Ok(parse(&input)?.node(1).unwrap().state.clone())
+    }
+
+    #[test]
+    fn compact_control_state_parses_all_fields() {
+        assert_eq!(
+            parse_state(json!({
+                "v":"Ana",
+                "c":true,
+                "x":false,
+                "sel":"UTC, Asia/Manila",
+                "o":["UTC", "Asia/Manila"]
+            }))
+            .unwrap(),
+            ElementState {
+                value: Some("Ana".to_owned()),
+                checked: Some(true),
+                expanded: Some(false),
+                selected: Some("UTC, Asia/Manila".to_owned()),
+                options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn wrong_typed_control_state_fields_are_ignored() {
+        assert_eq!(
+            parse_state(json!({"v":5,"c":"yes","o":"x","sel":[1]})).unwrap(),
+            ElementState::default()
+        );
+    }
+
+    #[test]
+    fn compact_value_is_truncated_by_characters() {
+        let value = "é".repeat(300);
+        let state = parse_state(json!({"v":value})).unwrap();
+        assert_eq!(state.value.unwrap().chars().count(), 200);
+    }
+
+    #[test]
+    fn compact_options_are_limited_by_characters_and_count() {
+        let options: Vec<_> = (0..55).map(|_| "界".repeat(100)).collect();
+        let state = parse_state(json!({"o":options})).unwrap();
+        assert_eq!(state.options.len(), 50);
+        assert!(state
+            .options
+            .iter()
+            .all(|option| option.chars().count() == 80));
+    }
 }

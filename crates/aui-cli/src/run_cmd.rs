@@ -5,15 +5,17 @@
 //! ultra-instinct run --goal <text> --fixture <replay.cdp.json>   # full loop over a CDP replay
 //! ultra-instinct run --goal <text> --fixture <page.manifold>     # predict only (dry run)
 //! ultra-instinct run ... --text-model-cmd <program>   # feature `model-text`: model TYPE/SELECT payloads
-//! ultra-instinct run ... --policy instinct             # default; `pua` is a deprecated alias
-//! ultra-instinct run ... --policy jev                 # feature `jev`: JEV decides every step
+//! ultra-instinct run ... --policy jev                 # feature `jev`: JEV decides every step (default)
+//! ultra-instinct run ... --policy instinct            # offline; `pua` is a deprecated alias
 //! ```
 //!
-//! Live mode drives the attached Chrome page: observe → policy → gate → ticket →
-//! executor (revalidate + consume) → input → observe → verify, until DONE,
-//! BLOCKED, abstain, or a bound. Default policy is Instinct: no LLM and no MCP are
-//! involved; Instinct abstains rather than guessing. `--policy pua` remains a
-//! deprecated alias for `--policy instinct`.
+//! Live mode with `--url` opens an owned background tab; it closes when the run
+//! ends. Without `--url`, it drives the first existing Chrome page. The loop is
+//! observe → policy → gate → ticket → executor (revalidate + consume) → input →
+//! observe → verify, until DONE, BLOCKED, abstain, or a bound. With the `jev`
+//! feature the default policy is JEV (System One). `--policy instinct` is the
+//! offline policy: no LLM and no MCP are involved; Instinct abstains rather than
+//! guessing. `--policy pua` remains a deprecated alias for `--policy instinct`.
 //!
 //! `--policy jev` (built with `--features jev`) decides through JEV (System
 //! One) instead: the offered ActionSpace becomes one `operation` + one
@@ -31,7 +33,7 @@
 //! resolver, then abstain. The program owns any API keys.
 
 use aui_agent::{Agent, AgentBuilder, AgentOutcome, BrowserRuntime, MockBrowser};
-use aui_browser::{BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
+use aui_browser::{open_tab, BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
 use aui_core::parse_fixture;
 use aui_policy::{BrowserPolicy, InstinctPolicy, TextResolver};
 
@@ -145,6 +147,9 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         fixture,
         max_steps: max_steps.unwrap_or(20),
         text_model_cmd,
+        #[cfg(feature = "jev")]
+        policy: policy.unwrap_or(PolicyKind::Jev),
+        #[cfg(not(feature = "jev"))]
         policy: policy.unwrap_or(PolicyKind::Instinct),
     })
 }
@@ -160,8 +165,12 @@ fn set<T>(slot: &mut Option<T>, flag: &'static str, value: T) -> Result<(), CliE
 pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
     let args = parse(args)?;
     if let Some(endpoint) = &args.cdp {
-        let transport = WebSocketTransport::connect(endpoint)
-            .map_err(|err| CliError::Browser(err.to_string()))?;
+        let transport = if args.url.is_some() {
+            open_tab(endpoint)
+        } else {
+            WebSocketTransport::connect(endpoint)
+        }
+        .map_err(|err| CliError::Browser(err.to_string()))?;
         let mut session = BrowserSession::new(transport);
         if let Some(url) = &args.url {
             session
@@ -380,6 +389,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "jev")]
+    fn jev_policy_is_default_and_pua_is_an_alias() {
+        let default = parse(&a(&["--goal", "Go", "--fixture", "x"])).unwrap();
+        assert_eq!(default.policy, PolicyKind::Jev);
+        for alias in ["instinct", "pua"] {
+            let parsed = parse(&a(&["--goal", "Go", "--fixture", "x", "--policy", alias])).unwrap();
+            assert_eq!(parsed.policy, PolicyKind::Instinct);
+        }
+    }
+
+    #[cfg(not(feature = "jev"))]
+    #[test]
     fn instinct_policy_is_default_and_pua_is_an_alias() {
         let default = parse(&a(&["--goal", "Go", "--fixture", "x"])).unwrap();
         assert_eq!(default.policy, PolicyKind::Instinct);
@@ -416,6 +437,8 @@ mod tests {
         let out = run_command(&a(&[
             "--goal",
             r#"Type "rust" into Search"#,
+            "--policy",
+            "instinct",
             "--fixture",
             path.to_str().unwrap(),
         ]))
@@ -433,6 +456,8 @@ mod tests {
         let err = run_command(&a(&[
             "--goal",
             "type rust in the Search box",
+            "--policy",
+            "instinct",
             "--fixture",
             path.to_str().unwrap(),
             "--text-model-cmd",
@@ -494,6 +519,8 @@ mod tests {
         let out = run_command(&a(&[
             "--goal",
             "type rust in the Search box",
+            "--policy",
+            "instinct",
             "--fixture",
             fixture.to_str().unwrap(),
             "--text-model-cmd",
@@ -522,6 +549,8 @@ mod tests {
         let out = run_command(&a(&[
             "--goal",
             "Continue",
+            "--policy",
+            "instinct",
             "--fixture",
             path.to_str().unwrap(),
         ]))
@@ -554,8 +583,15 @@ mod tests {
                 eprintln!("skip missing fixture {}", path.display());
                 continue;
             }
-            let out = run_command(&a(&["--goal", goal, "--fixture", path.to_str().unwrap()]))
-                .unwrap_or_else(|e| panic!("{file}: {e}"));
+            let out = run_command(&a(&[
+                "--goal",
+                goal,
+                "--policy",
+                "instinct",
+                "--fixture",
+                path.to_str().unwrap(),
+            ]))
+            .unwrap_or_else(|e| panic!("{file}: {e}"));
             assert!(out.contains(needle), "{file}: {out}");
             assert!(
                 out.contains("outcome done")

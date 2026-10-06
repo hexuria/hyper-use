@@ -84,7 +84,7 @@ snapshots (`verify_delta`). See `bench/arms/B01.md` for the interceptor ablation
 ## Matchers / policy (HGRA frozen)
 
 - Interim locate/guard ranking: `WeightedMatcher`.
-- Default policy: **Instinct** (`hexuria/instinct`, pin by rev).
+- Default policy (`jev` feature): **JEV** via `RemotePolicy`; the offline fallback is **Instinct** (`hexuria/instinct`, pin by rev) via `--policy instinct` (no model, no key).
 - **HGRA is frozen** under `experiments/hgra/`. No matcher PRs during the pivot.
 
 ## Acceptance bar

@@ -12,9 +12,12 @@ use std::time::Duration;
 use aui_browser::{
     page_delta, BrowserError, BrowserSession, CdpTransport, PageDelta, PageState, ScrollDirection,
 };
-use aui_core::{Action, InteractionManifold, RegionId};
+use aui_core::{Action, InteractionManifold, RegionId, Role};
 
 use crate::error::AgentError;
+
+const AUTOCOMPLETE_MAX_POLLS: u32 = 10;
+const AUTOCOMPLETE_POLL_MS: u64 = 25;
 
 /// One input the executor may send to an exact observed target.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +80,11 @@ pub trait BrowserRuntime {
 
     /// Let the page settle after an input (navigation, rerender). Default: no-op.
     fn settle(&mut self) {}
+
+    /// Settle after a ticketed region input. Default: `settle()`.
+    fn settle_after_input(&mut self, _target: &RegionId, _input: &Input) {
+        self.settle()
+    }
 
     /// Read a field's current value from the last observation's binding.
     /// `None` when the runtime cannot read it; verification then falls back
@@ -143,9 +151,73 @@ impl<T: CdpTransport> BrowserRuntime for BrowserSession<T> {
         }
     }
 
+    fn settle_after_input(&mut self, target: &RegionId, input: &Input) {
+        self.settle();
+        let role = BrowserSession::manifold(self)
+            .and_then(|manifold| manifold.get(target))
+            .map(|region| region.role());
+        if !wants_autocomplete_settle(role, input) {
+            return;
+        }
+
+        let mut previous = None;
+        let mut first = None;
+        for poll in 0..AUTOCOMPLETE_MAX_POLLS {
+            match BrowserSession::autocomplete_options_signature(self, target) {
+                Ok(Some(signature)) => {
+                    if first.is_none() {
+                        first = Some(signature.clone());
+                    }
+                    if autocomplete_settled(first.as_deref(), previous.as_deref(), &signature) {
+                        return;
+                    }
+                    previous = Some(signature);
+                }
+                Ok(None) => {
+                    self.settle();
+                    return;
+                }
+                Err(_) => return,
+            }
+            if poll + 1 < AUTOCOMPLETE_MAX_POLLS {
+                std::thread::sleep(Duration::from_millis(AUTOCOMPLETE_POLL_MS));
+            }
+        }
+    }
+
     fn read_value(&mut self, target: &RegionId) -> Option<FieldValue> {
         let (value, text) = self.field_value(target).ok()??;
         Some(FieldValue { value, text })
+    }
+}
+
+fn wants_autocomplete_settle(role: Option<Role>, input: &Input) -> bool {
+    role == Some(Role::ComboBox) && matches!(input, Input::Type(_))
+}
+
+fn autocomplete_settled(first: Option<&str>, previous: Option<&str>, current: &str) -> bool {
+    if previous != Some(current) {
+        return false;
+    }
+    let Some((&scope, rest)) = current.as_bytes().split_first() else {
+        return false;
+    };
+    let Ok(rest) = std::str::from_utf8(rest) else {
+        return false;
+    };
+    let Some((count, _)) = rest.split_once(':') else {
+        return false;
+    };
+    let Ok(count) = count.parse::<u32>() else {
+        return false;
+    };
+    if count == 0 {
+        return false;
+    }
+    match scope {
+        b'o' => true,
+        b'd' => Some(current) != first,
+        _ => false,
     }
 }
 
@@ -291,5 +363,56 @@ impl BrowserRuntime for MockBrowser {
 
     fn read_value(&mut self, target: &RegionId) -> Option<FieldValue> {
         self.values.get(target).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autocomplete_settle_is_only_for_combobox_typing() {
+        assert!(wants_autocomplete_settle(
+            Some(Role::ComboBox),
+            &Input::Type("man".into())
+        ));
+        assert!(!wants_autocomplete_settle(
+            Some(Role::TextField),
+            &Input::Type("man".into())
+        ));
+        assert!(!wants_autocomplete_settle(
+            Some(Role::ComboBox),
+            &Input::Click
+        ));
+        assert!(!wants_autocomplete_settle(
+            Some(Role::ComboBox),
+            &Input::Select("Manila".into())
+        ));
+        assert!(!wants_autocomplete_settle(None, &Input::Type("man".into())));
+    }
+
+    #[test]
+    fn autocomplete_settle_requires_stable_scoped_options() {
+        assert!(autocomplete_settled(
+            Some("o1:Manila"),
+            Some("o1:Manila"),
+            "o1:Manila"
+        ));
+        assert!(!autocomplete_settled(Some("o0:"), Some("o0:"), "o0:"));
+        assert!(!autocomplete_settled(
+            Some("d1:Canada"),
+            Some("d1:Canada"),
+            "d1:Canada"
+        ));
+        assert!(autocomplete_settled(
+            Some("d1:Canada"),
+            Some("d2:Canada\u{001f}Manila"),
+            "d2:Canada\u{001f}Manila"
+        ));
+        assert!(!autocomplete_settled(
+            Some("x1:Canada"),
+            Some("x1:Canada"),
+            "x1:Canada"
+        ));
     }
 }

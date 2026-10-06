@@ -473,8 +473,6 @@ mod tests {
         let err = run_command(&a(&[
             "--goal",
             "type rust in the Search box",
-            "--policy",
-            "instinct",
             "--fixture",
             path.to_str().unwrap(),
             "--policy",

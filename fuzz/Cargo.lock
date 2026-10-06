@@ -15,6 +15,96 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "aui-browser"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+ "aui-geometry",
+ "aui-observe",
+ "serde_json",
+ "tungstenite",
+]
+
+[[package]]
+name = "aui-core"
+version = "0.1.0"
+
+[[package]]
+name = "aui-fuzz"
+version = "0.0.0"
+dependencies = [
+ "aui-browser",
+ "aui-core",
+ "aui-mcp",
+ "aui-policy",
+ "libfuzzer-sys",
+ "serde_json",
+]
+
+[[package]]
+name = "aui-geometry"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+]
+
+[[package]]
+name = "aui-guard"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+ "aui-protocol",
+ "aui-resonance",
+]
+
+[[package]]
+name = "aui-mcp"
+version = "0.1.0"
+dependencies = [
+ "aui-browser",
+ "aui-core",
+ "aui-guard",
+ "aui-observe",
+ "aui-protocol",
+ "aui-resonance",
+ "serde_json",
+]
+
+[[package]]
+name = "aui-observe"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+]
+
+[[package]]
+name = "aui-policy"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+ "instinct-core",
+ "instinct-lexicon",
+ "instinct-text",
+ "serde_json",
+]
+
+[[package]]
+name = "aui-protocol"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+]
+
+[[package]]
+name = "aui-resonance"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+ "aui-geometry",
+ "tracing",
+]
+
+[[package]]
 name = "blake3"
 version = "1.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -477,96 +567,6 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
-
-[[package]]
-name = "ultra-instinct-browser"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tungstenite",
- "ultra-instinct-core",
- "ultra-instinct-geometry",
- "ultra-instinct-observe",
-]
-
-[[package]]
-name = "ultra-instinct-core"
-version = "0.1.0"
-
-[[package]]
-name = "ultra-instinct-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "serde_json",
- "ultra-instinct-browser",
- "ultra-instinct-core",
- "ultra-instinct-mcp",
- "ultra-instinct-policy",
-]
-
-[[package]]
-name = "ultra-instinct-geometry"
-version = "0.1.0"
-dependencies = [
- "ultra-instinct-core",
-]
-
-[[package]]
-name = "ultra-instinct-guard"
-version = "0.1.0"
-dependencies = [
- "ultra-instinct-core",
- "ultra-instinct-protocol",
- "ultra-instinct-resonance",
-]
-
-[[package]]
-name = "ultra-instinct-mcp"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "ultra-instinct-browser",
- "ultra-instinct-core",
- "ultra-instinct-guard",
- "ultra-instinct-observe",
- "ultra-instinct-protocol",
- "ultra-instinct-resonance",
-]
-
-[[package]]
-name = "ultra-instinct-observe"
-version = "0.1.0"
-dependencies = [
- "ultra-instinct-core",
-]
-
-[[package]]
-name = "ultra-instinct-policy"
-version = "0.1.0"
-dependencies = [
- "instinct-core",
- "instinct-lexicon",
- "instinct-text",
- "serde_json",
- "ultra-instinct-core",
-]
-
-[[package]]
-name = "ultra-instinct-protocol"
-version = "0.1.0"
-dependencies = [
- "ultra-instinct-core",
-]
-
-[[package]]
-name = "ultra-instinct-resonance"
-version = "0.1.0"
-dependencies = [
- "tracing",
- "ultra-instinct-core",
- "ultra-instinct-geometry",
-]
 
 [[package]]
 name = "unicode-ident"

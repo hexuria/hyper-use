@@ -67,8 +67,8 @@ def manifest(cfg: dict, seed: int, chrome_version: str, run_id: str, order: list
         "git": {
             "bench_uniform_head": sh(["git", "rev-parse", "HEAD"]),
             "dirty": bool(sh(["git", "status", "--porcelain", "--untracked-files=no"])),
-            "ultra_instinct_merged": ULTRA_INSTINCT_PIN,
-            "ultra_instinct_merged_full": sh(["git", "rev-parse", ULTRA_INSTINCT_PIN]),
+            "aui_merged": ULTRA_INSTINCT_PIN,
+            "aui_merged_full": sh(["git", "rev-parse", ULTRA_INSTINCT_PIN]),
             "jev_ultrafast": sh(["git", "rev-parse", "HEAD"], vendor / "jev-ultrafast"),
             "cua": sh(["git", "rev-parse", "HEAD"], vendor / "cua"),
         },

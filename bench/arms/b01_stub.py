@@ -22,14 +22,14 @@ from arms.mcp_stdio import McpStdio  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def ultra_instinct_bin() -> Path:
+def aui_bin() -> Path:
     release = ROOT / "target" / "release" / "ultra-instinct"
     debug = ROOT / "target" / "debug" / "ultra-instinct"
     if release.exists():
         return release
     if debug.exists():
         return debug
-    raise SystemExit("build ultra-instinct first: cargo build -p ultra-instinct-cli")
+    raise SystemExit("build ultra-instinct first: cargo build -p aui-cli")
 
 
 def tool_json(mcp: McpStdio, name: str, arguments: dict) -> dict:
@@ -55,7 +55,7 @@ def run_b0() -> int:
 
 def run_b1_smoke(cdp: str, server: str, target: str, role: str | None) -> int:
     env = os.environ.copy()
-    mcp = McpStdio([str(ultra_instinct_bin()), "mcp"], env=env)
+    mcp = McpStdio([str(aui_bin()), "mcp"], env=env)
     try:
         obs = tool_json(mcp, "observe", {"cdp": cdp})
         snap = obs.get("snapshot")

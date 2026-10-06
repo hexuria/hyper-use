@@ -1,7 +1,7 @@
 # cargo-fuzz targets (nightly, dated: see $NIGHTLY in .github/workflows/nightly.yml).
 # Not a workspace member: it needs nightly and libfuzzer-sys. Run: scripts/fuzz-smoke.sh 60
 [package]
-name = "ultra-instinct-fuzz"
+name = "aui-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -16,10 +16,10 @@ members = ["."]
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
-ultra-instinct-core = { path = "../crates/ultra-instinct-core" }
-ultra-instinct-browser = { path = "../crates/ultra-instinct-browser", features = ["fuzz-support"] }
-ultra-instinct-mcp = { path = "../crates/ultra-instinct-mcp" }
-ultra-instinct-policy = { path = "../crates/ultra-instinct-policy", features = ["remote", "model-text"] }
+aui-core = { path = "../crates/aui-core" }
+aui-browser = { path = "../crates/aui-browser", features = ["fuzz-support"] }
+aui-mcp = { path = "../crates/aui-mcp" }
+aui-policy = { path = "../crates/aui-policy", features = ["remote", "model-text"] }
 
 [[bin]]
 name = "fixture"

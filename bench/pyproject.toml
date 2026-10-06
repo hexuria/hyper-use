@@ -1,5 +1,5 @@
 [project]
-name = "ultra-instinct-bench"
+name = "aui-bench"
 version = "0.1.0"
 description = "Uniform side-by-side benchmark: ultra-instinct vs Browser Use vs CUA, with JEV and GPT 6 Luna"
 requires-python = ">=3.12,<3.13"

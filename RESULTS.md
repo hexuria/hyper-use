@@ -16,9 +16,9 @@
 > merge commit that lands PR gaps (readonly observe, target-scoped world,
 > multi-step `then`, MCP hard-gate alignment, `ultra-instinct run` fixtures).
 
-Date: 2026-10-06 (Asia/Manila). Harness: `cargo test -p ultra-instinct-agent` (mock
-loop, adversarial, CDP replay, props) + `cargo test -p ultra-instinct-guard --lib`
-+ `cargo test -p ultra-instinct-policy --lib` + checked-in
+Date: 2026-10-06 (Asia/Manila). Harness: `cargo test -p aui-agent` (mock
+loop, adversarial, CDP replay, props) + `cargo test -p aui-guard --lib`
++ `cargo test -p aui-policy --lib` + checked-in
 `fixtures/agent-*.cdp.json` via `ultra-instinct run --fixture`.
 
 **n = 3** consecutive offline runs (same machine, no Chrome, no network, no

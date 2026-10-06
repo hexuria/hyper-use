@@ -1,0 +1,59 @@
+[package]
+name = "aui-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "ultra-instinct command line"
+
+[dependencies]
+aui-core = { path = "../aui-core" }
+aui-resonance = { path = "../aui-resonance" }
+aui-browser = { path = "../aui-browser" }
+aui-guard = { path = "../aui-guard" }
+aui-observe = { path = "../aui-observe" }
+aui-mcp = { path = "../aui-mcp" }
+aui-protocol = { path = "../aui-protocol" }
+aui-agent = { path = "../aui-agent" }
+aui-policy = { path = "../aui-policy" }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lib]
+name = "aui_cli"
+path = "src/lib.rs"
+
+[[example]]
+# Manual, opt-in live drive with JEV. Historical; product path is observe/guard/verify.
+name = "live_drive"
+required-features = ["jev"]
+
+[[bin]]
+name = "ultra-instinct"
+path = "src/main.rs"
+
+[[bin]]
+# Short alias for the same CLI (AUI = Autonomous Ultra Instinct).
+name = "aui"
+path = "src/bin/aui.rs"
+
+[features]
+default = []
+# Optional System One client. Not part of `cargo build` or `cargo test`.
+jev = ["dep:typesafe-sdk", "dep:serde_json", "aui-policy/remote"]
+# Experimental HGRA matcher (wires into aui-mcp / mcp locate+guard).
+hgra = ["aui-mcp/hgra"]
+# Model-backed TYPE_TEXT / SELECT payloads via `run --text-model-cmd <program>`.
+model-text = ["aui-agent/model-text", "aui-policy/model-text"]
+
+[dependencies.typesafe-sdk]
+version = "0.2.0"
+optional = true
+default-features = false
+features = ["blocking"]
+
+[dependencies.serde_json]
+version = "1"
+optional = true

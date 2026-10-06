@@ -1,8 +1,9 @@
 # ultra-instinct
 
-The product, crates, and binary are `ultra-instinct`. HGRA is an experimental
-matcher frozen under `experiments/hgra/`. A crate or binary named `hgra` on
-the product path is a bug.
+The product is `ultra-instinct`; crates are `aui-*` (Autonomous Ultra
+Instinct) and binaries are `ultra-instinct` plus its short alias `aui`.
+HGRA is an experimental matcher frozen under `experiments/hgra/`. A crate
+or binary named `hgra` on the product path is a bug.
 
 **Product:** Ultra-Instinct is a **Rust-native browser-agent runtime**
 ([`docs/PRD.md`](docs/PRD.md), [ADR 0001](docs/adr/0001-agent-runtime-pivot.md)).
@@ -35,7 +36,7 @@ crate.
 >    bypasses the gate.
 > 3. **Hard invalidity is guard evidence, not a score.** Disabled, readonly
 >    (TYPE / SELECT), hidden / zero-area, occluded, front-layer, offscreen,
->    missing target, unsupported action → `ultra_instinct_guard::gate` refuses. The
+>    missing target, unsupported action → `aui_guard::gate` refuses. The
 >    ranked `guard()` + `0.55` / `0.05` float gate exists only for the MCP / CLI
 >    preflight surface (historical A5 / A6 arms).
 > 4. **One executor boundary, one staleness barrier.** `execute_ticketed` is
@@ -90,17 +91,17 @@ crate.
 
 | Crate | Owns |
 |---|---|
-| `ultra-instinct-core` | `InteractionManifold`, regions, `ActionSpace`, fixture grammar |
-| `ultra-instinct-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
-| `ultra-instinct-observe` | Observation history and id diff |
-| `ultra-instinct-geometry` | Geometry helpers |
-| `ultra-instinct-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
-| `ultra-instinct-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
-| `ultra-instinct-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
-| `ultra-instinct-protocol` | Guard / ticket / verify wire types |
-| `ultra-instinct-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
-| `ultra-instinct-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
-| `ultra-instinct-cli` | `ultra-instinct run` (agent loop, `--policy instinct|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
+| `aui-core` | `InteractionManifold`, regions, `ActionSpace`, fixture grammar |
+| `aui-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
+| `aui-observe` | Observation history and id diff |
+| `aui-geometry` | Geometry helpers |
+| `aui-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
+| `aui-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
+| `aui-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
+| `aui-protocol` | Guard / ticket / verify wire types |
+| `aui-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
+| `aui-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
+| `aui-cli` | `ultra-instinct run` (agent loop, `--policy instinct|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
 
 Instinct is pinned by git rev in the workspace `Cargo.toml`; bump only with a
 deliberate eval. HGRA lives in `experiments/hgra/` and the resonance `hgra`
@@ -108,14 +109,14 @@ feature, not the default product path.
 
 ## Verification owners
 
-- Agent loop, stale discards, multi-step clauses: `ultra-instinct-agent` unit tests,
+- Agent loop, stale discards, multi-step clauses: `aui-agent` unit tests,
   `tests/mock_loop.rs`, `tests/adversarial.rs`, `tests/replay_cdp.rs`.
 - Executor boundary: `executor.rs` unit tests, `tests/props.rs`
   (substitution, staleness, consumed-beats-stale, `is_stale` classification).
-- Gate / ticket / world: `ultra-instinct-guard` unit tests,
+- Gate / ticket / world: `aui-guard` unit tests,
   `tests/ticket_props.rs` (radius boundary 159 / 160 / 161, focus-only change,
   consumed never stale), `tests/world_context.rs`.
-- Instinct evidence: `ultra-instinct-policy` unit tests. Do not add a second model of
+- Instinct evidence: `aui-policy` unit tests. Do not add a second model of
   Instinct scoring or of `WeightedMatcher::rank`.
 - `write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP
   replay is a different grammar. Fusion is the only DOM/accessibility merge.
@@ -124,11 +125,11 @@ feature, not the default product path.
   remote-model replies, model-text replies): `fuzz/` cargo-fuzz targets on a
   dated nightly (`scripts/fuzz-smoke.sh`, `.github/workflows/nightly.yml`),
   backed by the structured/garbage proptests at small case counts.
-- Observe protocol cost: `crates/ultra-instinct-browser/tests/call_budget.rs`
+- Observe protocol cost: `crates/aui-browser/tests/call_budget.rs`
   pins the CDP call count per observe as a regression tripwire.
 - Repo rules (toolchain pin, `forbid(unsafe_code)`, crate ceilings, pinned
   nightlies): `scripts/check_repo_rules.sh`. Dependency direction and the
-  no-async/no-model-SDK ban below `ultra-instinct-cli`:
+  no-async/no-model-SDK ban below `aui-cli`:
   `scripts/architecture.txt` + `scripts/check_architecture.py`. Both run in
   `ci.yml`'s `repo-rules` job.
 - Workflow integrity: `zizmor --persona=auditor` in `ci.yml`. Dependency

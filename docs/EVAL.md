@@ -21,27 +21,27 @@ general performance evidence (n is tiny and the tasks are single-intent).
 cargo test --workspace
 
 # Just the owned loop
-cargo test -p ultra-instinct-agent                    # all agent tests
-cargo test -p ultra-instinct-agent --test adversarial # mock adversarial e2e (20)
-cargo test -p ultra-instinct-agent --test replay_cdp  # real BrowserSession over a CDP replay (7)
-cargo test -p ultra-instinct-agent --test props       # property tests (ticket substitution, stale, abstain)
-cargo test -p ultra-instinct-agent --test mock_loop   # original ADR 0002 loop tests
-cargo test -p ultra-instinct-guard gate               # hard gate unit tests
-cargo test -p ultra-instinct-policy                   # Instinct policy, evidence, resolver
+cargo test -p aui-agent                    # all agent tests
+cargo test -p aui-agent --test adversarial # mock adversarial e2e (20)
+cargo test -p aui-agent --test replay_cdp  # real BrowserSession over a CDP replay (7)
+cargo test -p aui-agent --test props       # property tests (ticket substitution, stale, abstain)
+cargo test -p aui-agent --test mock_loop   # original ADR 0002 loop tests
+cargo test -p aui-guard gate               # hard gate unit tests
+cargo test -p aui-policy                   # Instinct policy, evidence, resolver
 ```
 
 From the CLI, a CDP replay script runs the full loop offline:
 
 ```bash
-cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p aui-cli -- run --goal 'Type "rust" into Search' \
   --fixture path/to/script.cdp.json            # ScriptBuilder JSON
-cargo run -p ultra-instinct-cli -- run --goal "Delete" \
+cargo run -p aui-cli -- run --goal "Delete" \
   --fixture fixtures/modal-confirm.manifold    # static manifold: predict-only dry run
-cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p aui-cli -- run --goal 'Type "rust" into Search' \
   --fixture fixtures/agent-type-search.cdp.json
-cargo run -p ultra-instinct-cli -- run --goal 'Click Go' \
+cargo run -p aui-cli -- run --goal 'Click Go' \
   --fixture fixtures/agent-click-go.cdp.json
-cargo run -p ultra-instinct-cli -- run --goal 'Select "Business" in Cabin class' \
+cargo run -p aui-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
@@ -51,8 +51,8 @@ background `Delete project` is behind the modal and is not offered.
 ## Arm D offline (Instinct → remote)
 
 ```bash
-cargo test -p ultra-instinct-policy -p ultra-instinct-agent \
-  --features ultra-instinct-agent/remote,ultra-instinct-policy/remote
+cargo test -p aui-policy -p aui-agent \
+  --features aui-agent/remote,aui-policy/remote
 ```
 
 `remote_e2e.rs`: twins make Instinct abstain → scripted remote picks `CLICK:b` →
@@ -67,7 +67,7 @@ abstain.
   --remote-debugging-port=9333 '--remote-allow-origins=*' \
   --user-data-dir=/tmp/hu-smoke about:blank &
 ULTRA_INSTINCT_CDP=http://127.0.0.1:9333 \
-  cargo test -p ultra-instinct-agent --test live_smoke -- --ignored --nocapture
+  cargo test -p aui-agent --test live_smoke -- --ignored --nocapture
 ```
 
 Or by hand: `ultra-instinct run --cdp http://127.0.0.1:9333 --url <page> --goal …`.
@@ -142,11 +142,11 @@ and execution on a live page.
 
 ```bash
 # Offline tests (what CI runs; scripted models, no network, no keys)
-cargo test -p ultra-instinct-policy -p ultra-instinct-agent -p ultra-instinct-cli \
-  --features ultra-instinct-policy/model-text,ultra-instinct-agent/model-text,ultra-instinct-cli/model-text
+cargo test -p aui-policy -p aui-agent -p aui-cli \
+  --features aui-policy/model-text,aui-agent/model-text,aui-cli/model-text
 
 # Live: plug any model in via a program you own (it holds its own API key)
-cargo run -p ultra-instinct-cli --features model-text -- run \
+cargo run -p aui-cli --features model-text -- run \
   --cdp http://127.0.0.1:9222 --goal "type rust ownership in the Search box" \
   --text-model-cmd ./my-text-model.sh
 ```
@@ -167,7 +167,7 @@ to abstain instead of falling back.
 
 ## Offline arm C repeats (n = 3)
 
-Scripted: `cargo test -p ultra-instinct-agent` three times on this tip. All three
+Scripted: `cargo test -p aui-agent` three times on this tip. All three
 runs green (same deterministic offline suite). See RESULTS.md § "Agent + Instinct
 pivot (offline arm C)".
 

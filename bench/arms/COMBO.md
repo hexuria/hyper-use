@@ -70,8 +70,8 @@ goal text, seed, viewport, and scoring as A1 to A6 (`../README.md`).
 - **Luna picks region ids itself (as in A6).** A6 failed look-alike rows (`am-star`, `hd-star`,
   `shop-add-qty`) because labels alone could not separate them. The combo routes those to JEV with row
   context instead.
-- **ultra-instinct's built-in `browser-use` / `cua` executors.** `crates/ultra-instinct-browser-use` and
-  `crates/ultra-instinct-cua` are replay transports with no live process, so the executor sits in the
+- **ultra-instinct's built-in `browser-use` / `cua` executors.** `crates/hyper-use-browser-use` and
+  `crates/hyper-use-cua` are replay transports with no live process, so the executor sits in the
   orchestrator.
 - **A Browser Use sub-agent for typing.** It would add Luna calls per field. Direct `Tools`
   actions by index are deterministic and cost no model call.

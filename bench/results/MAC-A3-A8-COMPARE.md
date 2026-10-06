@@ -5,8 +5,8 @@
 - **Raw:** `bench/runs/20261006-081905/results.jsonl` (local/gitignored; not in this commit)
 - **Arms:**
   - **A3** = jev-ultrafast (JEV decider + Luna-for-text via monkeypatch) + browser_harness
-  - **A8** = Luna planner + JEV tie-break + ultra-instinct (`mcp` observe/locate/guard) + Browser Use tools (type/select/scroll/fallback)
-- **Why not A5:** A5 is JEV+ultra-instinct presses only (no Luna). Not parity.
+  - **A8** = Luna planner + JEV tie-break + hyper-use (`mcp` observe/locate/guard) + Browser Use tools (type/select/scroll/fallback)
+- **Why not A5:** A5 is JEV+hyper-use presses only (no Luna). Not parity.
 - **Seed / tries:** 42 / max-tries 1; caps steps=20 model_calls=40 wall_s=180
 - **Vendor:** `bench/vendor/jev-ultrafast` @ `1231850a0bf1a0c0341fe408ef1668dbbfdfac46`
 - **Harness note:** Mac `browser_harness.admin.restart_daemon` hung (20s TimeoutExpired) after early A3 attempts and dropped results. Resilience patches (this PR): `bench/run.py` restart_daemon best-effort timeout 60s; `bench/arms/a3_jev_ultrafast.py` finally restart bounded to 15s. Several A3 outcomes still show `crashed` with `_IPCResponseTimeout` on the daemon even when the page journal scored PASS.
@@ -28,13 +28,13 @@
 | Arm | Full | Press-only | Pass wall mean (all PASS) | Finished-only pass wall mean |
 |---|---|---|---|---|
 | **A3** jev-ultrafast | **5/7** | **5/5** | 26.21s | full 17.54s [18.3, 16.78] / press 17.54s [18.3, 16.78] |
-| **A8** Luna+JEV+ultra-instinct+BU | **7/7** | **5/5** | 33.55s | full 33.55s [9.55, 56.77, 11.61, 26.42, 14.48, 102.59, 13.4] / press 30.33s [9.55, 11.61, 14.48, 102.59, 13.4] |
+| **A8** Luna+JEV+hyper-use+BU | **7/7** | **5/5** | 33.55s | full 33.55s [9.55, 56.77, 11.61, 26.42, 14.48, 102.59, 13.4] / press 30.33s [9.55, 11.61, 14.48, 102.59, 13.4] |
 
 ## Winners
 
 - **Accuracy:** **A8** (7/7 vs A3 5/7). A3 failed both type tasks (`am-compose-send`, `am-reply`) with `_IPCResponseTimeout: Input.dispatchMouseEvent timed out after 5s waiting for the daemon` — harness daemon flakiness, not a Luna HTTP 400 this time (Luna stayed 200).
 - **Speed:** Mixed. On finished-only press tasks A3 mean ~17.5s (n=2: star, tm-print) vs A8 press finished mean ~30.3s (skewed by `am-tm-print` 102.59s safe-refusal). Excluding that outlier, A8 press finished walls are ~9.6–14.5s — competitive or faster than A3. A8 also completed both type tasks (compose 56.8s, reply 26.4s); A3 did not.
-- **Parity takeaway:** With Luna+JEV on both sides, **ultra-instinct stack (A8) matches or beats jev-ultrafast on accuracy** on this Acme set; A3’s remaining misses look like browser_harness IPC hangs more than decision quality.
+- **Parity takeaway:** With Luna+JEV on both sides, **hyper-use stack (A8) matches or beats jev-ultrafast on accuracy** on this Acme set; A3’s remaining misses look like browser_harness IPC hangs more than decision quality.
 
 ## Fail / crash notes
 

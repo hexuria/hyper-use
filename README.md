@@ -32,22 +32,26 @@ Toolchain: Rust 1.99.0. Versions are 0.1.0 and `publish = false`. Public API
 is unstable until 1.0. HGRA is an experiment under `experiments/hgra/` and is
 not on any default path.
 
+Crates are `aui-*` (Autonomous Ultra Instinct, e.g. `aui-agent`,
+`aui-browser`). The binary is `ultra-instinct`, with `aui` as a short
+alias for the same CLI.
+
 ## Run the agent
 
 ```bash
 # Live: attach to a Chrome started with --remote-debugging-port
-cargo run -p ultra-instinct-cli -- run --cdp http://127.0.0.1:9222 \
+cargo run -p aui-cli -- run --cdp http://127.0.0.1:9222 \
   --url https://example.com --goal 'Type "rust" into Search'
 
 # Offline: predict-only dry run on a manifold (a --fixture *.cdp.json replay
 # runs the full loop, but must script every observe/input/observe CDP call)
-cargo run -p ultra-instinct-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
+cargo run -p aui-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
 # Full offline agent loop (type / click / select CDP replays)
-cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p aui-cli -- run --goal 'Type "rust" into Search' \
   --fixture fixtures/agent-type-search.cdp.json
-cargo run -p ultra-instinct-cli -- run --goal "Click Go" \
+cargo run -p aui-cli -- run --goal "Click Go" \
   --fixture fixtures/agent-click-go.cdp.json
-cargo run -p ultra-instinct-cli -- run --goal 'Select "Business" in Cabin class' \
+cargo run -p aui-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
 ```
 
@@ -56,7 +60,7 @@ target; a model only extracts a TYPE_TEXT / SELECT value that must occur in the
 goal, else deterministic fallback, else abstain. Tests use scripted models.
 
 ```bash
-cargo run -p ultra-instinct-cli --features model-text -- run --cdp http://127.0.0.1:9222 \
+cargo run -p aui-cli --features model-text -- run --cdp http://127.0.0.1:9222 \
   --goal "type rust ownership in the Search box" --text-model-cmd ./my-text-model.sh
 ```
 
@@ -77,19 +81,19 @@ debug helpers.
 
 ```bash
 cargo test --workspace
-cargo run -p ultra-instinct-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
+cargo run -p aui-cli -- run --goal "Delete" --fixture fixtures/modal-confirm.manifold
 # Full offline agent loop (type / click / select CDP replays)
-cargo run -p ultra-instinct-cli -- run --goal 'Type "rust" into Search' \
+cargo run -p aui-cli -- run --goal 'Type "rust" into Search' \
   --fixture fixtures/agent-type-search.cdp.json
-cargo run -p ultra-instinct-cli -- run --goal "Click Go" \
+cargo run -p aui-cli -- run --goal "Click Go" \
   --fixture fixtures/agent-click-go.cdp.json
-cargo run -p ultra-instinct-cli -- run --goal 'Select "Business" in Cabin class' \
+cargo run -p aui-cli -- run --goal 'Select "Business" in Cabin class' \
   --fixture fixtures/agent-select-cabin.cdp.json
-cargo run -p ultra-instinct-cli -- observe --fixture fixtures/sign-in.cdp.json
-cargo run -p ultra-instinct-cli -- guard \
+cargo run -p aui-cli -- observe --fixture fixtures/sign-in.cdp.json
+cargo run -p aui-cli -- guard \
   --fixture fixtures/sign-in.cdp.json \
   --action click --target "Sign in" --role button --json
-cargo run -p ultra-instinct-cli -- verify \
+cargo run -p aui-cli -- verify \
   --fixture fixtures/welcome.cdp.json --expect-text Welcome
 ```
 

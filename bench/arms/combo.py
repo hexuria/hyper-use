@@ -29,7 +29,7 @@ import httpx
 from arms.common import Trace, goal_text, tool_loop
 from arms.mcp_stdio import McpStdio
 
-GATE_TOP = 0.55       # ultra-instinct act gate (crates/ultra-instinct-executor): top confidence floor
+GATE_TOP = 0.55       # ultra-instinct act gate (crates/hyper-use-executor): top confidence floor
 GATE_MARGIN = 0.05    # and margin over the runner-up
 PLAUSIBLE = 0.5       # a locate text miss is capped at 0.45, so >= 0.5 means some text matched
 MAX_JEV_CANDS = 24
@@ -48,7 +48,7 @@ SYSTEM = (
     "done. If it cannot be done on this site, call give_up and change nothing."
 )
 
-# ultra-instinct's role vocabulary (crates/ultra-instinct-core/src/vocab.rs); any other role is an UnknownRole error.
+# ultra-instinct's role vocabulary (crates/aui-core/src/vocab.rs); any other role is an UnknownRole error.
 ROLE_ENUM = ["button", "link", "checkbox", "menuitem", "tab", "text_field", "slider", "generic", "image", "heading", "navigation", "text"]
 TOOLS = [
     {"type": "function", "function": {

@@ -56,7 +56,7 @@ class Chrome:
         self.width = width
         self.height = height
         self.headless = headless
-        self.profile = tempfile.mkdtemp(prefix="ultra-instinct-bench-chrome-")
+        self.profile = tempfile.mkdtemp(prefix="aui-bench-chrome-")
         self.proc: subprocess.Popen | None = None
 
     @property

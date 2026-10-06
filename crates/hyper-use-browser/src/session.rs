@@ -35,6 +35,7 @@ use serde_json::json;
 
 use hyper_use_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId};
 
+use crate::compact;
 use crate::error::{ActMechanism, BrowserError, CdpError};
 use crate::extract::{self, content_rect, AxElement};
 use crate::fusion::{self, NodeBinding, RawNode};
@@ -124,7 +125,48 @@ impl<T: CdpTransport> BrowserSession<T> {
         self.stale
     }
 
+    /// One `Runtime.evaluate` running the compact walk (`compact.rs`):
+    /// tags every reachable element `data-hu-k` and returns its rect,
+    /// computed style, and hit-test result in one reply. `None` when the
+    /// transport cannot run it (a replay script that never scripted the
+    /// step, or a protocol error), which leaves the per-node fallback.
+    /// A thrown expression is a bug in the walk and aborts.
+    fn compact_eval(&mut self) -> Result<Option<compact::CompactSnapshot>, BrowserError> {
+        let params = json!({
+            "expression": compact::COMPACT_JS,
+            "returnByValue": true
+        })
+        .to_string();
+        match self.call("Runtime.evaluate", &params) {
+            Ok(body) => {
+                if extract::call_threw(&body)? {
+                    return Err(BrowserError::Cdp(CdpError::Protocol {
+                        message: "compact snapshot eval threw".into(),
+                    }));
+                }
+                Ok(Some(compact::parse(&body)?))
+            }
+            Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. }))
+            | Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Fuse DOM + accessibility into a fresh manifold.
+    ///
+    /// Cost: one `Runtime.evaluate` running the compact walk plus four
+    /// constant calls (`Page.getLayoutMetrics`, `DOM.getDocument`,
+    /// `Accessibility.getFullAXTree`, `Page.getNavigationHistory`),
+    /// independent of page size. Elements the walk could not tag —
+    /// cross-origin iframe content, closed shadow roots, or every element
+    /// when the eval is unavailable — keep the per-node fallback
+    /// (`DOM.getBoxModel`, `CSS.getComputedStyleForNode`,
+    /// `DOM.getNodeForLocation`). Replay fixtures that never scripted the
+    /// eval take the per-node path throughout.
     pub fn observe(&mut self) -> Result<&InteractionManifold, BrowserError> {
+        // The compact eval must run before `DOM.getDocument` so the injected
+        // `data-hu-k` attributes arrive inside the document tree.
+        let compact = self.compact_eval()?;
         let layout = self.call("Page.getLayoutMetrics", &json!({}).to_string())?;
         let viewport = extract::parse_viewport(&layout)?;
         let document = self.call(
@@ -137,8 +179,21 @@ impl<T: CdpTransport> BrowserSession<T> {
 
         let mut dom_raw = Vec::new();
         for element in &dom.elements {
-            let params = json!({"nodeId": element.node_id}).to_string();
-            if let Some(rect) = self.box_rect(&params)? {
+            let rect = match element
+                .hu_k
+                .and_then(|k| compact.as_ref().and_then(|c| c.node(k)))
+            {
+                // Tagged: the blob is authoritative (`None` = omit, like a
+                // getBoxModel protocol error).
+                Some(node) => node.rect,
+                // Untagged (cross-origin iframe content, closed shadow,
+                // or no compact eval): per-node fallback.
+                None => {
+                    let params = json!({"nodeId": element.node_id}).to_string();
+                    self.box_rect(&params)?
+                }
+            };
+            if let Some(rect) = rect {
                 dom_raw.push(RawNode::from_dom(element, rect));
             }
         }
@@ -147,8 +202,18 @@ impl<T: CdpTransport> BrowserSession<T> {
             let Some(backend) = element.backend_dom_node_id else {
                 continue;
             };
-            let params = json!({"backendNodeId": backend}).to_string();
-            if let Some(rect) = self.box_rect(&params)? {
+            let rect = match dom
+                .hu_k_of_backend
+                .get(&backend)
+                .and_then(|k| compact.as_ref().and_then(|c| c.node(*k)))
+            {
+                Some(node) => node.rect,
+                None => {
+                    let params = json!({"backendNodeId": backend}).to_string();
+                    self.box_rect(&params)?
+                }
+            };
+            if let Some(rect) = rect {
                 ax_raw.push(RawNode::from_ax(element, rect));
             }
         }
@@ -166,10 +231,16 @@ impl<T: CdpTransport> BrowserSession<T> {
         }
         // Stacking runs before hit-test. Fixtures that never scripted CSS
         // skip it (`NoScriptedResponse` on CSS.enable) and keep hit-test only.
-        self.apply_stacking_occlusion(&mut manifold, &bindings, &dom_order)?;
+        self.apply_stacking_occlusion(
+            &mut manifold,
+            &bindings,
+            &dom_order,
+            compact.as_ref(),
+            &dom,
+        )?;
         // Hit-tests run after history so scripted CDP fixtures can append
         // `DOM.getNodeForLocation` after `Page.getNavigationHistory`.
-        self.apply_hit_test_occlusion(&mut manifold, &bindings, &dom.parent_of)?;
+        self.apply_hit_test_occlusion(&mut manifold, &bindings, &dom, compact.as_ref())?;
         self.bindings = bindings;
         self.page = Some(page);
         self.manifold = Some(manifold);
@@ -187,13 +258,9 @@ impl<T: CdpTransport> BrowserSession<T> {
         manifold: &mut InteractionManifold,
         bindings: &BTreeMap<RegionId, NodeBinding>,
         dom_order: &BTreeMap<i64, u32>,
+        compact: Option<&compact::CompactSnapshot>,
+        dom: &extract::DomDocument,
     ) -> Result<(), BrowserError> {
-        match self.call("CSS.enable", &json!({}).to_string()) {
-            Ok(_) => {}
-            Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. })) => return Ok(()),
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(()),
-            Err(other) => return Err(other),
-        }
         let mut styles = BTreeMap::new();
         // Stable RegionId order so ScriptBuilder can emit matching CSS calls.
         let targets: Vec<(RegionId, i64, Option<i64>)> = manifold
@@ -204,7 +271,37 @@ impl<T: CdpTransport> BrowserSession<T> {
                 Some((region.id().clone(), node_id, binding.backend_node_id))
             })
             .collect();
+        // Compact evidence covers the tagged nodes; only untagged targets
+        // still need `CSS.getComputedStyleForNode`.
+        let mut pending = Vec::new();
         for (id, node_id, backend) in targets {
+            let order = backend
+                .and_then(|b| dom_order.get(&b).copied())
+                .unwrap_or(u32::MAX);
+            let covered = backend
+                .and_then(|b| dom.hu_k_of_backend.get(&b))
+                .and_then(|k| compact.and_then(|c| c.node(*k)));
+            match covered {
+                Some(node) => {
+                    styles.insert(
+                        id,
+                        (crate::stacking::style_from_computed(&node.style), order),
+                    );
+                }
+                None => pending.push((id, node_id, order)),
+            }
+        }
+        if pending.is_empty() && compact.is_some() {
+            crate::stacking::apply_stacking_occlusion(manifold, &styles);
+            return Ok(());
+        }
+        match self.call("CSS.enable", &json!({}).to_string()) {
+            Ok(_) => {}
+            Err(BrowserError::Cdp(CdpError::NoScriptedResponse { .. })) => return Ok(()),
+            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(()),
+            Err(other) => return Err(other),
+        }
+        for (id, node_id, order) in pending {
             let params = json!({"nodeId": node_id}).to_string();
             let body = match self.call("CSS.getComputedStyleForNode", &params) {
                 Ok(body) => body,
@@ -217,9 +314,6 @@ impl<T: CdpTransport> BrowserSession<T> {
             };
             let pairs = extract::computed_style_pairs(&body)?;
             let style = crate::stacking::style_from_computed(&pairs);
-            let order = backend
-                .and_then(|b| dom_order.get(&b).copied())
-                .unwrap_or(u32::MAX);
             styles.insert(id, (style, order));
         }
         crate::stacking::apply_stacking_occlusion(manifold, &styles);
@@ -235,8 +329,10 @@ impl<T: CdpTransport> BrowserSession<T> {
         &mut self,
         manifold: &mut InteractionManifold,
         bindings: &BTreeMap<RegionId, NodeBinding>,
-        parent_of: &BTreeMap<i64, i64>,
+        dom: &extract::DomDocument,
+        compact: Option<&compact::CompactSnapshot>,
     ) -> Result<(), BrowserError> {
+        let parent_of = &dom.parent_of;
         let targets: Vec<(RegionId, i64, f64, f64)> = manifold
             .regions()
             .filter(|region| region.actions().contains(&Action::Click))
@@ -253,13 +349,26 @@ impl<T: CdpTransport> BrowserSession<T> {
             .collect();
         let mut buried = Vec::new();
         for (id, backend, x, y) in targets {
-            let params = json!({"x": x.round() as i64, "y": y.round() as i64}).to_string();
-            let body = match self.call("DOM.getNodeForLocation", &params) {
-                Ok(body) => body,
-                Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
-                Err(other) => return Err(other),
+            let hit = match dom
+                .hu_k_of_backend
+                .get(&backend)
+                .and_then(|k| compact.and_then(|c| c.node(*k)))
+            {
+                // Tagged: the blob's hit k resolves to a backend id through
+                // the same document's `data-hu-k` attributes.
+                Some(node) => node.hit.and_then(|k| dom.backend_of_hu_k.get(&k).copied()),
+                // Untagged: per-node fallback.
+                None => {
+                    let params = json!({"x": x.round() as i64, "y": y.round() as i64}).to_string();
+                    let body = match self.call("DOM.getNodeForLocation", &params) {
+                        Ok(body) => body,
+                        Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
+                        Err(other) => return Err(other),
+                    };
+                    extract::location_backend(&body)?
+                }
             };
-            let Some(hit) = extract::location_backend(&body)? else {
+            let Some(hit) = hit else {
                 continue;
             };
             if !owns_hit(hit, backend, parent_of) {

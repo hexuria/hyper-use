@@ -26,6 +26,8 @@ pub(crate) struct DomElement {
     pub modal: bool,
     /// Backend ids of kept ancestors, nearest first.
     pub ancestors: Vec<i64>,
+    /// `data-hu-k` injected by the compact walk, when observe ran it first.
+    pub hu_k: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +65,11 @@ pub(crate) struct DomDocument {
     /// Used by hit-test to decide whether the node under a region's center is
     /// inside that region (the region owns the hit) or something else covers it.
     pub parent_of: std::collections::BTreeMap<i64, i64>,
+    /// Element backend id → `data-hu-k`, for every element the compact walk
+    /// tagged (present only when a compact eval ran before `DOM.getDocument`).
+    pub hu_k_of_backend: std::collections::BTreeMap<i64, u32>,
+    /// `data-hu-k` → element backend id, the reverse map for hit resolution.
+    pub backend_of_hu_k: std::collections::BTreeMap<u32, i64>,
 }
 
 #[allow(dead_code)]
@@ -240,6 +247,13 @@ fn walk_dom(
                 out.parent_of.insert(backend, parent);
             }
             next_parent = Some(backend);
+            if let Some(k) = attr_map(node)
+                .get(crate::compact::HU_K_ATTR)
+                .and_then(|raw| raw.parse::<u32>().ok())
+            {
+                out.hu_k_of_backend.insert(backend, k);
+                out.backend_of_hu_k.insert(k, backend);
+            }
         }
         if let Some(mut element) = element_from(node) {
             element.ancestors = kept_ancestors.iter().rev().copied().collect();
@@ -304,6 +318,9 @@ fn element_from(node: &Value) -> Option<DomElement> {
     let readonly = attributes.contains_key("readonly")
         || attributes.get("aria-readonly").map(String::as_str) == Some("true");
     let modal = attributes.get("aria-modal").map(String::as_str) == Some("true");
+    let hu_k = attributes
+        .get(crate::compact::HU_K_ATTR)
+        .and_then(|raw| raw.parse::<u32>().ok());
     Some(DomElement {
         node_id,
         backend_node_id,
@@ -315,6 +332,7 @@ fn element_from(node: &Value) -> Option<DomElement> {
         readonly,
         modal,
         ancestors: Vec::new(),
+        hu_k,
     })
 }
 

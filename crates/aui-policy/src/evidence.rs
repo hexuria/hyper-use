@@ -126,7 +126,7 @@ fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
     if let Ok(ov) = lexical_overlap(goal, label) {
         // Overlap measures how much of the label the goal holds. A short
         // label that names a sliver of the goal is scaled by goal coverage.
-        let ov = if covers_most(goal, label) {
+        let ov = if !sliver_scaled(kind) || covers_most(goal, label) {
             ov
         } else {
             scale_by_coverage(ov, goal, label)
@@ -138,7 +138,7 @@ fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
     let l = fold(label);
     // A label inside the goal is evidence only when it covers most of the
     // goal: a one-word chip ("kabisado") inside a long title goal is not.
-    if !l.is_empty() && g.contains(&l) && covers_most(goal, label) {
+    if !l.is_empty() && g.contains(&l) && (!sliver_scaled(kind) || covers_most(goal, label)) {
         score = score.saturating_add(Confidence::saturating(250));
     } else if !g.is_empty() && l.contains(&g) {
         score = score.saturating_add(Confidence::saturating(200));
@@ -170,6 +170,14 @@ fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
     }
 
     score
+}
+
+/// Click targets are named by the whole target phrase, so a label that
+/// names a sliver of it is scaled down. TYPE / SELECT goals may carry an
+/// unquoted payload ("type rust ownership in the Search box") whose words
+/// do not name the field, so their labels are not scaled.
+fn sliver_scaled(kind: ActionKind) -> bool {
+    kind == ActionKind::Click
 }
 
 /// `conf` times the fraction of `goal` tokens that occur in `label`.

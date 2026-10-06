@@ -10,6 +10,8 @@ pub struct TextContext {
     pub goal: AgentGoal,
     pub field_label: String,
     pub field_role: String,
+    /// Payloads successfully typed earlier in this run; not fingerprinted.
+    pub typed: Vec<String>,
     /// Observation / action-space fingerprint bits the resolve was based on.
     pub context_fingerprint: u64,
 }
@@ -139,13 +141,48 @@ fn contains_whole_phrase(text: &str, phrase: &str) -> bool {
     })
 }
 
-/// Pulls an obvious quoted or `into <field>:` value from the goal. No model.
+/// Deterministically extracts a field's text payload from the goal. No model.
 #[derive(Clone, Debug, Default)]
 pub struct DeterministicTextResolver;
 
 impl TextResolver for DeterministicTextResolver {
     fn resolve(&mut self, context: &TextContext) -> Result<TextResolution, TextError> {
         let goal = context.goal.as_str();
+        let literals = quoted_literals(goal);
+        if !literals.is_empty() {
+            let untyped: Vec<_> = literals
+                .into_iter()
+                .filter(|(_, literal)| !context.typed.contains(literal))
+                .collect();
+            if untyped.is_empty() {
+                return Err(TextError::Abstain(
+                    "no quoted literal left for this field".into(),
+                ));
+            }
+
+            let label_words = ascii_words(&context.field_label);
+            let selected = untyped
+                .iter()
+                .find(|(opening_quote, _)| {
+                    let before = &goal[..*opening_quote];
+                    let start = before
+                        .char_indices()
+                        .rev()
+                        .nth(31)
+                        .map_or(0, |(index, _)| index);
+                    ascii_words(&before[start..])
+                        .iter()
+                        .rev()
+                        .take(3)
+                        .any(|word| label_words.contains(word))
+                })
+                .unwrap_or(&untyped[0]);
+            return Ok(TextResolution {
+                text: selected.1.clone(),
+                context_fingerprint: context.fingerprint(),
+            });
+        }
+
         if let Some(quoted) = first_quoted(goal) {
             if quoted.is_empty() {
                 return Err(TextError::Missing);
@@ -171,6 +208,47 @@ impl TextResolver for DeterministicTextResolver {
         }
         Err(TextError::Missing)
     }
+}
+
+fn quoted_literals(goal: &str) -> Vec<(usize, String)> {
+    let mut literals = Vec::new();
+    let mut cursor = 0;
+    while cursor < goal.len() {
+        let Some((offset, opening)) = goal[cursor..]
+            .char_indices()
+            .find(|(_, character)| matches!(*character, '"' | '“'))
+        else {
+            break;
+        };
+        let opening_quote = cursor + offset;
+        let (closing, content_start) = match opening {
+            '"' => ('"', opening_quote + 1),
+            '“' => ('”', opening_quote + opening.len_utf8()),
+            _ => unreachable!(),
+        };
+        let Some((offset, _)) = goal[content_start..]
+            .char_indices()
+            .find(|(_, character)| *character == closing)
+        else {
+            cursor = content_start;
+            continue;
+        };
+        let content_end = content_start + offset;
+        if content_end == content_start {
+            cursor = content_end + closing.len_utf8();
+            continue;
+        }
+        literals.push((opening_quote, goal[content_start..content_end].to_owned()));
+        cursor = content_end + closing.len_utf8();
+    }
+    literals
+}
+
+fn ascii_words(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
 }
 
 fn first_quoted(s: &str) -> Option<String> {
@@ -243,6 +321,7 @@ mod tests {
             goal: AgentGoal::new(r#"Type "Zürich" into City"#),
             field_label: "City".into(),
             field_role: "text_field".into(),
+            typed: Vec::new(),
             context_fingerprint: 1,
         };
         let res = r.resolve(&ctx).unwrap();
@@ -256,6 +335,7 @@ mod tests {
             goal: AgentGoal::new("type hello world into Search"),
             field_label: "Search".into(),
             field_role: "text_field".into(),
+            typed: Vec::new(),
             context_fingerprint: 2,
         };
         assert_eq!(r.resolve(&ctx).unwrap().text, "hello world");
@@ -268,6 +348,7 @@ mod tests {
             goal: AgentGoal::new("type into Search"),
             field_label: "Search".into(),
             field_role: "text_field".into(),
+            typed: Vec::new(),
             context_fingerprint: 4,
         };
         assert_eq!(r.resolve(&ctx), Err(TextError::Missing));
@@ -280,9 +361,113 @@ mod tests {
             goal: AgentGoal::new("click Submit"),
             field_label: "Email".into(),
             field_role: "text_field".into(),
+            typed: Vec::new(),
             context_fingerprint: 3,
         };
         assert_eq!(r.resolve(&ctx), Err(TextError::Missing));
+    }
+
+    fn resolve(goal: &str, field_label: &str, typed: &[&str]) -> Result<String, TextError> {
+        let context = TextContext {
+            goal: AgentGoal::new(goal),
+            field_label: field_label.into(),
+            field_role: "text_field".into(),
+            typed: typed.iter().map(|text| (*text).to_owned()).collect(),
+            context_fingerprint: 5,
+        };
+        DeterministicTextResolver
+            .resolve(&context)
+            .map(|resolution| resolution.text)
+    }
+
+    #[test]
+    fn compose_literals_follow_field_context_and_typed_history() {
+        let goal = r#"Write a new email to "dana@acme.test" with the subject "Offsite budget" and the body "Draft numbers attached." and send it."#;
+        assert_eq!(
+            resolve(goal, "To recipients", &[]).unwrap(),
+            "dana@acme.test"
+        );
+        assert_eq!(
+            resolve(goal, "Subject", &["dana@acme.test"]).unwrap(),
+            "Offsite budget"
+        );
+        assert_eq!(resolve(goal, "Subject", &[]).unwrap(), "Offsite budget");
+        assert_eq!(
+            resolve(goal, "Message", &["dana@acme.test", "Offsite budget"]).unwrap(),
+            "Draft numbers attached."
+        );
+    }
+
+    #[test]
+    fn checkout_literals_follow_field_context_and_typed_history() {
+        let goal = r#"Place the order in checkout. Ship to "Ana Santos", street "12 Mabini St", city "Quezon City", ZIP code "1100", with standard shipping, and accept the terms."#;
+        assert_eq!(resolve(goal, "Full name", &[]).unwrap(), "Ana Santos");
+        assert_eq!(
+            resolve(goal, "Street address", &["Ana Santos"]).unwrap(),
+            "12 Mabini St"
+        );
+        assert_eq!(
+            resolve(goal, "City", &["Ana Santos", "12 Mabini St"]).unwrap(),
+            "Quezon City"
+        );
+        assert_eq!(
+            resolve(
+                goal,
+                "ZIP code",
+                &["Ana Santos", "12 Mabini St", "Quezon City"]
+            )
+            .unwrap(),
+            "1100"
+        );
+    }
+
+    #[test]
+    fn resolver_abstains_when_every_quoted_literal_was_typed() {
+        let goal = r#"Set "first" then "second"."#;
+        assert_eq!(
+            resolve(goal, "Field", &["first", "second"]),
+            Err(TextError::Abstain(
+                "no quoted literal left for this field".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn resolver_supports_curly_quotes_and_multibyte_context() {
+        assert_eq!(
+            resolve("Type “Zürich” into City", "City", &[]).unwrap(),
+            "Zürich"
+        );
+        assert_eq!(
+            resolve("Ünïcödé façade naïve field \"x\"", "field", &[]).unwrap(),
+            "x"
+        );
+    }
+
+    #[test]
+    fn empty_double_quotes_are_skipped_and_single_quotes_keep_the_old_path() {
+        assert_eq!(
+            resolve(r#"Type "" then "hello" into Search"#, "Search", &[]).unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            resolve("Type 'hello' into Search", "Search", &[]).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn typed_history_does_not_change_the_context_fingerprint() {
+        let mut context = TextContext {
+            goal: AgentGoal::new(r#"Type "hello" into Search"#),
+            field_label: "Search".into(),
+            field_role: "text_field".into(),
+            typed: Vec::new(),
+            context_fingerprint: 9,
+        };
+        let fingerprint = context.fingerprint();
+        context.typed.push("already typed".into());
+        assert_eq!(context.fingerprint(), fingerprint);
     }
 
     #[test]

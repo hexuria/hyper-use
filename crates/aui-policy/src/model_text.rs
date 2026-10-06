@@ -473,6 +473,7 @@ mod tests {
             goal: AgentGoal::new(goal),
             field_label: label.into(),
             field_role: role.into(),
+            typed: Vec::new(),
             context_fingerprint: 7,
         }
     }

@@ -214,6 +214,17 @@ where
         &self.history
     }
 
+    fn typed_text_history(&self) -> Vec<String> {
+        self.history
+            .iter()
+            .filter(|record| {
+                record.kind == ActionKind::TypeText
+                    && record.verification == VerificationKind::Success
+            })
+            .filter_map(|record| record.payload.clone())
+            .collect()
+    }
+
     pub fn goal(&self) -> &AgentGoal {
         &self.goal
     }
@@ -330,6 +341,7 @@ where
                 goal: self.goal.clone(),
                 field_label: offered.label().to_owned(),
                 field_role: "select".to_owned(),
+                typed: self.typed_text_history(),
                 context_fingerprint: offered.target_fingerprint(),
             };
             let resolved = match self.text.resolve(&ctx) {
@@ -367,6 +379,7 @@ where
                         .map(|r| r.as_str().to_owned())
                         .unwrap_or_default()
                 },
+                typed: self.typed_text_history(),
                 context_fingerprint: offered.target_fingerprint(),
             };
             let resolution = self.text.resolve(&ctx).map_err(|e| match e {
@@ -457,6 +470,7 @@ where
             action_id: predicted.decision.action_id.clone(),
             kind,
             label: predicted.decision.target_label.clone(),
+            payload: predicted.payload.clone(),
             verification,
             stale_retries,
         };

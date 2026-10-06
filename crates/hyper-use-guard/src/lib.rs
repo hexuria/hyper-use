@@ -56,7 +56,7 @@ pub use world::{
 
 /// Raw confidence below this never allows. Not a probability.
 /// Host / MCP preflight allow floor. The owned agent path does **not** use
-/// this: PUA chooses among a finite action space, then [`gate()`](fn@crate::gate) applies
+/// this: Instinct chooses among a finite action space, then [`gate()`](fn@crate::gate) applies
 /// hard refuses only. Keep 0.55 so historical A5/A6 / combo benches stay
 /// comparable; do not raise or remove without updating those arms.
 pub const MIN_ALLOW_CONFIDENCE: f64 = 0.55;

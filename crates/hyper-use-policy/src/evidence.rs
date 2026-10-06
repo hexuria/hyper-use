@@ -1,11 +1,11 @@
 //! Integer evidence for browser candidates. No float thresholds.
 
 use hyper_use_core::{tokenize, ActionKind, ObservedAction, Role};
-use pua_core::Confidence;
-use pua_lexicon::overlap;
-use pua_text::{normalize, NormalizeConfig};
+use instinct_core::Confidence;
+use instinct_lexicon::overlap;
+use instinct_text::{normalize, NormalizeConfig};
 
-/// Score how well `action` matches `goal`. Returns PUA confidence millis 0..=1000.
+/// Score how well `action` matches `goal`. Returns Instinct confidence millis 0..=1000.
 ///
 /// Label evidence is the better of the whole goal and its *target phrase*
 /// (goal minus quoted payload, leading operation verb, and the preposition
@@ -208,7 +208,7 @@ fn control_keyword_hit(goal: &str, kind: ActionKind) -> bool {
 }
 
 /// Score ceiling for a target-bound operation the goal did not name when it
-/// named another one. Below PUA Standard's min confidence.
+/// named another one. Below Instinct Standard's min confidence.
 const UNNAMED_OPERATION_CAP: i16 = 500;
 
 /// Target-bound operations whose verb appears in the goal.

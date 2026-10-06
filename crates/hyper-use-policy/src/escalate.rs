@@ -1,4 +1,4 @@
-//! Optional escalation after PUA abstains. Fallback is feature-shaped, not required.
+//! Optional escalation after Instinct abstains. Fallback is feature-shaped, not required.
 
 use crate::goal::AgentGoal;
 use crate::types::{BrowserPolicy, HistoryEntry, PolicyError, PolicyOutcome};
@@ -53,7 +53,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pua_policy::PuaPolicy;
+    use crate::instinct_policy::InstinctPolicy;
     use crate::types::{PolicyDecision, RankedAction};
     use hyper_use_core::{parse_fixture, ActionId, ActionKind, ActionSpace};
 
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn pua_choice_skips_fallback() {
+    fn instinct_choice_skips_fallback() {
         let m = parse_fixture(
             r#"
             viewport w=800 h=600
@@ -137,7 +137,7 @@ mod tests {
         )
         .unwrap();
         let space = ActionSpace::from_manifold(&m);
-        let mut policy = EscalatingPolicy::new(PuaPolicy::default(), Some(AlwaysChooseDone));
+        let mut policy = EscalatingPolicy::new(InstinctPolicy::default(), Some(AlwaysChooseDone));
         let out = policy
             .decide(&space, &AgentGoal::new("Continue"), &[])
             .unwrap();

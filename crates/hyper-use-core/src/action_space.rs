@@ -1,7 +1,7 @@
 //! Finite action space derived from an [`InteractionManifold`].
 //!
 //! Phase 1 of the agent-runtime pivot: build the set of operations and targets
-//! a policy may choose from. No ranking, no PUA, no executor.
+//! a policy may choose from. No ranking, no Instinct, no executor.
 //!
 //! Architectural invariants (from `browser-use/jev-ultrafast`, MIT):
 //! - Every observation yields a dynamic finite action space.

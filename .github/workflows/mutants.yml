@@ -1,5 +1,5 @@
 name: mutants
-# Mutation testing for the Agent + PUA + ticket safety boundary
+# Mutation testing for the Agent + Instinct + ticket safety boundary
 # (impeccable audit R6, baseline 87ffc2d). Not on PRs: it rebuilds per mutant.
 # Run locally: see docs/IMPECCABLE-AUDIT.md#mutation-testing.
 on:

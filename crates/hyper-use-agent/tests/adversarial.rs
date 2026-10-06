@@ -1,6 +1,6 @@
 //! Offline adversarial e2e for the owned loop (MockBrowser).
 //!
-//! Every test runs goal → observe → PUA → gate → ticket → executor → verify
+//! Every test runs goal → observe → Instinct → gate → ticket → executor → verify
 //! and asserts what was (not) dispatched to the page.
 
 use hyper_use_agent::{
@@ -12,7 +12,8 @@ use hyper_use_core::{
     parse_fixture, ActionId, ActionKind, ActionSpace, InteractionManifold, RegionId,
 };
 use hyper_use_policy::{
-    AgentGoal, BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, PuaPolicy,
+    AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
+    PolicyOutcome,
 };
 
 fn m(src: &str) -> InteractionManifold {
@@ -37,7 +38,7 @@ const CABIN: &str = r#"
 
 #[test]
 fn type_text_executes_resolved_text_verifies_then_done() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(5)
         .build(r#"Type "rust ownership" into Search"#);
     let outcome = agent.run();
@@ -54,7 +55,7 @@ fn type_text_executes_resolved_text_verifies_then_done() {
 
 #[test]
 fn select_option_executes_and_verifies() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(CABIN)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(CABIN)), InstinctPolicy::default())
         .max_steps(5)
         .build(r#"Select "Business" in Cabin class"#);
     let outcome = agent.run();
@@ -69,7 +70,7 @@ fn select_option_executes_and_verifies() {
 
 #[test]
 fn type_text_without_resolvable_value_never_types() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(3)
         .build("type into Search");
     let outcome = agent.run();
@@ -84,25 +85,28 @@ fn type_text_without_resolvable_value_never_types() {
 fn wrong_effect_is_detected_and_bounded() {
     let mut browser = MockBrowser::new(m(SEARCH));
     browser.override_value("rus"); // page mangles input (e.g. maxlength)
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(10)
         .build(r#"Type "rust" into Search"#);
     let outcome = agent.run();
     match &outcome {
-        AgentOutcome::Blocked { steps, reason } => {
-            assert_eq!(steps.len(), 3, "{reason}");
+        // Habituation (ADR 0008) freezes the repeated wrong-effect TYPE_TEXT
+        // after 2 trailing failures (urge 500 < standard min 750): Abstained,
+        // not the old 3-strike Blocked. Still bounded, nothing else typed.
+        AgentOutcome::Abstained { steps, .. } => {
+            assert_eq!(steps.len(), 2, "{steps:?}");
             assert!(steps
                 .iter()
                 .all(|s| s.verification == VerificationKind::WrongEffect));
         }
-        other => panic!("expected bounded Blocked, got {other:?}"),
+        other => panic!("expected bounded Abstained, got {other:?}"),
     }
-    assert_eq!(agent.browser_mut().input_log().len(), 3);
+    assert_eq!(agent.browser_mut().input_log().len(), 2);
 }
 
 #[test]
 fn page_change_during_text_resolution_is_stale_and_types_nothing() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(3)
         .build(r#"Type "rust" into Search"#);
     let predicted = agent.predict().unwrap().expect("type prediction").clone();
@@ -135,7 +139,7 @@ const PROJECT_MODAL: &str = r#"
 
 #[test]
 fn modal_appearing_after_prediction_discards_and_never_clicks_background() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(PROJECT)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(PROJECT)), InstinctPolicy::default())
         .max_steps(3)
         .build("Delete project");
     let p = agent.predict().unwrap().expect("prediction").clone();
@@ -154,7 +158,8 @@ fn modal_appearing_after_prediction_discards_and_never_clicks_background() {
 
 #[test]
 fn background_behind_open_modal_is_not_in_action_space() {
-    let space = hyper_use_agent::Agent::<MockBrowser, PuaPolicy>::action_space(&m(PROJECT_MODAL));
+    let space =
+        hyper_use_agent::Agent::<MockBrowser, InstinctPolicy>::action_space(&m(PROJECT_MODAL));
     assert!(space.get_str("CLICK:page-delete").is_none());
     assert!(space.get_str("CLICK:page-cancel").is_none());
     assert!(space.get_str("CLICK:confirm-delete").is_some());
@@ -174,7 +179,7 @@ fn covered_disabled_hidden_offscreen_targets_never_execute() {
         region id=d role=button label="Save" x=10 y=900 w=80 h=24 actions=click sources=dom,accessibility flags=offscreen
         region id=x role=button label="Help" x=10 y=130 w=80 h=24 actions=click sources=dom,accessibility
     "#);
-    let mut agent = AgentBuilder::new(MockBrowser::new(page), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
         .max_steps(3)
         .build("Save");
     let _ = agent.run();
@@ -194,7 +199,7 @@ fn twin_labels_in_different_rows_abstain_without_pressing() {
         region id=row2 role=generic label="Invoice 1002" x=0 y=40 w=800 h=40 actions=focus sources=dom
         region id=del2 role=button label="Delete" x=700 y=48 w=60 h=24 actions=click parent=row2 sources=dom,accessibility
     "#);
-    let mut agent = AgentBuilder::new(MockBrowser::new(page), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
         .max_steps(3)
         .build("Delete");
     let outcome = agent.run();
@@ -207,7 +212,7 @@ fn twin_labels_in_different_rows_abstain_without_pressing() {
 
 #[test]
 fn rerender_replacing_node_between_predict_and_act_is_stale() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(3)
         .build("Go");
     agent.predict().unwrap().expect("prediction");
@@ -222,7 +227,7 @@ fn rerender_replacing_node_between_predict_and_act_is_stale() {
 
 #[test]
 fn focus_change_between_predict_and_act_is_stale() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(3)
         .build("Go");
     agent.predict().unwrap().expect("prediction");
@@ -236,7 +241,7 @@ fn focus_change_between_predict_and_act_is_stale() {
 fn page_rejecting_input_is_reported_not_retried_with_same_ticket() {
     let mut browser = MockBrowser::new(m(SEARCH));
     browser.reject_next("readonly");
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(3)
         .build(r#"Type "x" into Search"#);
     agent.predict().unwrap();
@@ -247,7 +252,7 @@ fn page_rejecting_input_is_reported_not_retried_with_same_ticket() {
 
 #[test]
 fn scroll_and_wait_are_page_primitives_without_tickets() {
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(3)
         .build("scroll down");
     let p = agent.predict().unwrap().expect("scroll").clone();
@@ -258,7 +263,7 @@ fn scroll_and_wait_are_page_primitives_without_tickets() {
     assert_eq!(agent.browser_mut().scroll_log(), &[ScrollDirection::Down]);
     assert!(agent.browser_mut().press_log().is_empty());
 
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(3)
         .build("wait");
     agent.predict().unwrap();
@@ -352,7 +357,7 @@ fn never_settling_page_hits_stale_bound_without_input() {
         n: 0,
         dispatched: 0,
     };
-    let mut agent = AgentBuilder::new(flicker, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(flicker, InstinctPolicy::default())
         .max_steps(20)
         .max_consecutive_stale(4)
         .build("Go");
@@ -367,34 +372,36 @@ fn never_settling_page_hits_stale_bound_without_input() {
 
 #[test]
 fn repeated_no_effect_click_is_bounded() {
-    // Clicking changes nothing; policy would repeat. Bound → Blocked.
+    // Clicking changes nothing; policy would repeat. Habituation (ADR 0008)
+    // freezes the repeat after 2 presses → Abstained before the old 3-strike
+    // bound; the abstain then feeds the escalation tier when configured.
     let page = m(r#"
         viewport w=800 h=600
         region id=go role=button label="Refresh" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
     "#);
-    let mut agent = AgentBuilder::new(MockBrowser::new(page), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
         .max_steps(10)
         .build("Refresh");
     let outcome = agent.run();
     assert!(
-        matches!(outcome, AgentOutcome::Blocked { .. }),
+        matches!(outcome, AgentOutcome::Abstained { .. }),
         "{outcome:?}"
     );
-    assert_eq!(agent.browser_mut().press_log().len(), 3);
+    assert_eq!(agent.browser_mut().press_log().len(), 2);
 }
 
 #[test]
 fn multi_step_type_then_click_runs_both_clauses() {
     use hyper_use_agent::TickResult;
     // Keep Go on the page; add a result so the click is state-changed. Removing
-    // Go would make the post-click predict abstain before PUA can choose DONE.
+    // Go would make the post-click predict abstain before Instinct can choose DONE.
     let after_go = m(r#"
         viewport w=800 h=600
         region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
         region id=go role=button label="Go" x=320 y=10 w=60 h=24 actions=click sources=dom,accessibility
         region id=result role=text label="ok" x=10 y=50 w=100 h=20 actions=focus sources=dom,accessibility
         "#);
-    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(m(SEARCH)), InstinctPolicy::default())
         .max_steps(10)
         .build(r#"Type "rust" into Search then click Go"#);
     assert_eq!(agent.clauses().len(), 2);
@@ -440,7 +447,7 @@ fn readonly_flipped_after_predict_refuses_at_executor_gate() {
         viewport w=800 h=600
         region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility flags=readonly
         "#);
-    let mut agent = AgentBuilder::new(MockBrowser::new(editable), PuaPolicy::default())
+    let mut agent = AgentBuilder::new(MockBrowser::new(editable), InstinctPolicy::default())
         .max_steps(3)
         .build(r#"Type "x" into Search"#);
     assert!(agent.predict().unwrap().is_some());
@@ -480,7 +487,7 @@ fn autocomplete_type_then_click_option_with_ticket_revalidate() {
     let mut browser = MockBrowser::new(before);
     // Typing opens the suggestion popup (next dispatch swaps the manifold).
     browser.set_on_press(after_type);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(10)
         .build(r#"Type "man" into City then click Manila"#);
     assert_eq!(agent.clauses().len(), 2);
@@ -548,7 +555,7 @@ fn virtualized_list_scroll_then_click_newly_visible_row() {
     // recycled window B (Item 50 did not exist as a region before).
     browser.schedule_swap(1, window_b);
     browser.set_on_press(after_click);
-    let mut agent = AgentBuilder::new(browser, PuaPolicy::default())
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
         .max_steps(10)
         .build(r#"scroll down then click Zebra target"#);
     assert_eq!(agent.clauses().len(), 2);

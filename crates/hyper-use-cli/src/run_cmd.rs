@@ -5,13 +5,15 @@
 //! hyper-use run --goal <text> --fixture <replay.cdp.json>   # full loop over a CDP replay
 //! hyper-use run --goal <text> --fixture <page.manifold>     # predict only (dry run)
 //! hyper-use run ... --text-model-cmd <program>   # feature `model-text`: model TYPE/SELECT payloads
+//! hyper-use run ... --policy instinct             # default; `pua` is a deprecated alias
 //! hyper-use run ... --policy jev                 # feature `jev`: JEV decides every step
 //! ```
 //!
 //! Live mode drives the attached Chrome page: observe → policy → gate → ticket →
 //! executor (revalidate + consume) → input → observe → verify, until DONE,
-//! BLOCKED, abstain, or a bound. Default policy is PUA: no LLM and no MCP are
-//! involved; PUA abstains rather than guessing.
+//! BLOCKED, abstain, or a bound. Default policy is Instinct: no LLM and no MCP are
+//! involved; Instinct abstains rather than guessing. `--policy pua` remains a
+//! deprecated alias for `--policy instinct`.
 //!
 //! `--policy jev` (built with `--features jev`) decides through JEV (System
 //! One) instead: the offered ActionSpace becomes one `operation` + one
@@ -31,7 +33,7 @@
 use hyper_use_agent::{Agent, AgentBuilder, AgentOutcome, BrowserRuntime, MockBrowser};
 use hyper_use_browser::{BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
 use hyper_use_core::parse_fixture;
-use hyper_use_policy::{BrowserPolicy, PuaPolicy, TextResolver};
+use hyper_use_policy::{BrowserPolicy, InstinctPolicy, TextResolver};
 
 use crate::CliError;
 
@@ -47,7 +49,7 @@ struct RunArgs {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PolicyKind {
-    Pua,
+    Instinct,
     Jev,
 }
 
@@ -88,11 +90,11 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
             "--policy" => {
                 let raw = value("--policy")?;
                 let kind = match raw.as_str() {
-                    "pua" => PolicyKind::Pua,
+                    "instinct" | "pua" => PolicyKind::Instinct,
                     "jev" => PolicyKind::Jev,
                     _ => {
                         return Err(CliError::UnknownFlag(format!(
-                            "unknown policy `{raw}` (pua|jev)"
+                            "unknown policy `{raw}` (instinct|jev)"
                         )))
                     }
                 };
@@ -143,7 +145,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         fixture,
         max_steps: max_steps.unwrap_or(20),
         text_model_cmd,
-        policy: policy.unwrap_or(PolicyKind::Pua),
+        policy: policy.unwrap_or(PolicyKind::Instinct),
     })
 }
 
@@ -183,7 +185,9 @@ pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
     // change would only measure the mock.
     let manifold = parse_fixture(&body).map_err(|err| CliError::Fixture(err.to_string()))?;
     match args.policy {
-        PolicyKind::Pua => predict_once(MockBrowser::new(manifold), PuaPolicy::default(), &args),
+        PolicyKind::Instinct => {
+            predict_once(MockBrowser::new(manifold), InstinctPolicy::default(), &args)
+        }
         PolicyKind::Jev => predict_jev(manifold, &args),
     }
 }
@@ -241,7 +245,7 @@ fn predict_jev(
 
 fn drive<T: CdpTransport>(session: BrowserSession<T>, args: &RunArgs) -> Result<String, CliError> {
     match args.policy {
-        PolicyKind::Pua => drive_with(session, PuaPolicy::default(), args),
+        PolicyKind::Instinct => drive_with(session, InstinctPolicy::default(), args),
         PolicyKind::Jev => drive_jev(session, args),
     }
 }
@@ -380,6 +384,16 @@ mod tests {
     }
 
     #[test]
+    fn instinct_policy_is_default_and_pua_is_an_alias() {
+        let default = parse(&a(&["--goal", "Go", "--fixture", "x"])).unwrap();
+        assert_eq!(default.policy, PolicyKind::Instinct);
+        for alias in ["instinct", "pua"] {
+            let parsed = parse(&a(&["--goal", "Go", "--fixture", "x", "--policy", alias])).unwrap();
+            assert_eq!(parsed.policy, PolicyKind::Instinct);
+        }
+    }
+
+    #[test]
     fn replay_script_runs_full_loop() {
         use hyper_use_browser::script::{Control, PageSpec, ScriptBuilder};
         let page = PageSpec::of(
@@ -460,7 +474,7 @@ mod tests {
         let err =
             run_command(&a(&["--goal", "x", "--fixture", "y", "--policy", "grok"])).unwrap_err();
         assert!(
-            matches!(err, CliError::UnknownFlag(ref m) if m.contains("pua|jev")),
+            matches!(err, CliError::UnknownFlag(ref m) if m.contains("instinct|jev")),
             "{err:?}"
         );
     }

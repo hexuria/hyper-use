@@ -12,7 +12,7 @@ pub struct RankedAction {
     pub id: ActionId,
     pub kind: ActionKind,
     pub label: String,
-    /// PUA confidence millis 0..=1000 (not a probability).
+    /// Instinct confidence millis 0..=1000 (not a probability).
     pub confidence_millis: i16,
 }
 

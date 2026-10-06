@@ -28,7 +28,7 @@ rust-version = "1.99"
 
 
 [workspace.dependencies]
-# Pinned Exact: hexuria/pua @ fe3f1fd (ADR 0001 / Phase 2). Bump only with deliberate eval.
-pua-core = { git = "https://github.com/hexuria/pua", rev = "fe3f1fd3818feb452fae1771ff2171b8598f86e6" }
-pua-text = { git = "https://github.com/hexuria/pua", rev = "fe3f1fd3818feb452fae1771ff2171b8598f86e6" }
-pua-lexicon = { git = "https://github.com/hexuria/pua", rev = "fe3f1fd3818feb452fae1771ff2171b8598f86e6" }
+# Pinned Exact: hexuria/instinct @ a42d16b (ADR 0008). Bump only with deliberate eval.
+instinct-core = { git = "https://github.com/hexuria/instinct", rev = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea" }
+instinct-text = { git = "https://github.com/hexuria/instinct", rev = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea" }
+instinct-lexicon = { git = "https://github.com/hexuria/instinct", rev = "a42d16b6f5ccc3273939c8e3d3f462d78765bfea" }

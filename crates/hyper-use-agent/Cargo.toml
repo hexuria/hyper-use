@@ -12,7 +12,7 @@ default = []
 # Model-backed TextResolver (`AgentBuilder::model_text`). Off by default;
 # `DeterministicTextResolver` stays the default resolver even when enabled.
 model-text = ["hyper-use-policy/model-text"]
-# Arm D: PUA → remote fallback (consumer-supplied transport; no Jev dependency).
+# Arm D: Instinct → remote fallback (consumer-supplied transport; no Jev dependency).
 remote = ["hyper-use-policy/remote"]
 
 [dependencies]

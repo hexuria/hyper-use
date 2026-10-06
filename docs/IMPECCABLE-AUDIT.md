@@ -1,4 +1,4 @@
-# Impeccable audit — Agent + PUA + ticket path
+# Impeccable audit — Agent + Instinct + ticket path
 
 Current note, 2026-10-06 (Asia/Manila). Baseline reviewed: `87ffc2d` (main
 after PR #17). Read-only impeccable-rust audit of the post-pivot path
@@ -18,7 +18,7 @@ every crate is `publish = false`.
 ## Scope
 
 ```text
-observe → ActionSpace (with_front_layer) → PuaPolicy / RemotePolicy
+observe → ActionSpace (with_front_layer) → InstinctPolicy / RemotePolicy
   → TextResolver (TYPE_TEXT / SELECT) → gate → ActionTicket
   → execute_ticketed: ledger → kind == ticket.action → fresh observe
       → revalidate (of_target world + target role/label/fp) → gate
@@ -27,7 +27,7 @@ observe → ActionSpace (with_front_layer) → PuaPolicy / RemotePolicy
 ```
 
 Files: `hyper-use-agent/src/{agent,executor,runtime,verify_map}.rs`,
-`hyper-use-guard/src/{gate,ticket,world}.rs`, `hyper-use-policy/src/{pua_policy,text,remote,goal}.rs`,
+`hyper-use-guard/src/{gate,ticket,world}.rs`, `hyper-use-policy/src/{instinct_policy,text,remote,goal}.rs`,
 `hyper-use-protocol/src/ticket.rs`.
 
 ## Findings and remediation
@@ -60,8 +60,8 @@ It retires with A5 / A6.
 | Focus-only change not detected under `of_target` | `ticket_props.rs` `focus_only_change_is_world_changed_under_of_target` |
 | Ticket attribute check weakened (role / label / fingerprint) | `ticket.rs` `revalidate_checks_role_label_and_fingerprint_independently` |
 | World fingerprint collisions | `ticket.rs` `world_fingerprint_has_no_collisions_across_distinct_worlds` |
-| PUA abstention becomes input | `props.rs` `abstain_never_executes` |
-| Text payload from PUA / wrong context | `policy/src/text.rs` tests; agent context-fingerprint check |
+| Instinct abstention becomes input | `props.rs` `abstain_never_executes` |
+| Text payload from Instinct / wrong context | `policy/src/text.rs` tests; agent context-fingerprint check |
 | Remote reply carries selector / coordinates / script / off-menu id | `policy/src/remote.rs` tests (feature `remote`) |
 | Concurrency, crash recovery, unsafe | none needed (single-threaded blocking CDP, no recovery protocol, no `unsafe`) |
 
@@ -130,7 +130,7 @@ Exit code 0 = all caught; 2 = missed mutants (see `mutants.out/missed.txt`);
 
 ## Follow-up, 2026-10-06 — CI architecture + fuzz (R7)
 
-The rest of the impeccable CI shape, ported from hexuria/pua (same toolchain
+The rest of the impeccable CI shape, ported from hexuria/instinct (same toolchain
 pin, same checks). One new bug found and fixed by the first fuzz run.
 
 | Change | Owner |

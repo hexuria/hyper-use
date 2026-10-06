@@ -7,7 +7,7 @@ the product path is a bug.
 **Product:** Hyper-Use is a **Rust-native browser-agent runtime**
 ([`docs/PRD.md`](docs/PRD.md), [ADR 0001](docs/adr/0001-agent-runtime-pivot.md)).
 The library `Agent` **owns the loop**: it observes the page, builds a finite
-`ActionSpace`, lets a policy choose (PUA first, optional explicit escalation),
+`ActionSpace`, lets a policy choose (Instinct first, optional explicit escalation),
 hard-gates the choice, executes only through a one-shot `ActionTicket`, then
 re-observes, diffs, and verifies.
 
@@ -20,17 +20,19 @@ crate.
 
 ## Anti-drift (read before changing anything on the agent path)
 
-> **Anti-drift block — Agent + PUA + ticket path (impeccable audit, baseline `87ffc2d`).**
+> **Anti-drift block — Agent + Instinct + ticket path (impeccable audit, baseline `87ffc2d`).**
 >
 > 1. **The agent owns the loop.** `observe → ActionSpace (front layer applied)
 >    → policy → gate → ActionTicket → execute_ticketed → settle → observe →
 >    diff / value check → history`. Do not reintroduce "Hyper-Use is not an
 >    agent / does not click" framing, and do not make MCP or a host the loop.
-> 2. **PUA owns HOW, Hyper-Use owns WHAT.** PUA picks among finite offered
+> 2. **Instinct owns HOW, Hyper-Use owns WHAT.** Instinct picks among finite offered
 >    actions (scores, threshold / margin, abstain). Hyper-Use supplies browser
->    evidence and builds the action space. No browser concepts in PUA. No
+>    evidence and builds the action space. No browser concepts in Instinct. No
 >    second float confidence gate on the agent path. Abstain is never turned
->    into "top candidate wins".
+>    into "top candidate wins". Habituation (ADR 0008) only lowers the urge of
+>    a repeated no-effect / wrong-effect action; it never adds candidates or
+>    bypasses the gate.
 > 3. **Hard invalidity is guard evidence, not a score.** Disabled, readonly
 >    (TYPE / SELECT), hidden / zero-area, occluded, front-layer, offscreen,
 >    missing target, unsupported action → `hyper_use_guard::gate` refuses. The
@@ -54,13 +56,13 @@ crate.
 >    neighborhood (ancestors, same-parent siblings, children, root peers within
 >    `NEIGHBOR_RADIUS_PX` = 160, inclusive). MCP `seen_world` stays whole-page
 >    (`WorldSnapshot::of`).
-> 7. **Text is not PUA.** `TYPE_TEXT` / `SELECT` payloads come from a
+> 7. **Text is not Instinct.** `TYPE_TEXT` / `SELECT` payloads come from a
 >    `TextResolver`, checked against their context fingerprint, before the
 >    ticket is consumed, so executor revalidation always runs after resolver
 >    latency. Payloads are CDP arguments, never spliced into script source;
 >    there is no coordinate tier for text.
 > 7a. **Model text is payload-only and grounded** (feature `model-text`,
->    ADR 0006). The model fills the payload of an action PUA already chose;
+>    ADR 0006). The model fills the payload of an action Instinct already chose;
 >    replies must echo the context fingerprint, pass shape checks, and occur
 >    in the goal clause, else deterministic fallback, else abstain. CI uses
 >    scripted models only; no provider SDK or key handling in the tree.
@@ -92,15 +94,15 @@ crate.
 | `hyper-use-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
 | `hyper-use-observe` | Observation history and id diff |
 | `hyper-use-geometry` | Geometry helpers |
-| `hyper-use-policy` | `BrowserPolicy`, `PuaPolicy` (pinned `hexuria/pua` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
+| `hyper-use-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
 | `hyper-use-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
 | `hyper-use-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
 | `hyper-use-protocol` | Guard / ticket / verify wire types |
 | `hyper-use-resonance` | `WeightedMatcher` (MCP / CLI locate + ranked guard only) |
 | `hyper-use-mcp` | Optional JSON-RPC adapter (observe / guard / verify) |
-| `hyper-use-cli` | `hyper-use run` (agent loop, `--policy pua|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
+| `hyper-use-cli` | `hyper-use run` (agent loop, `--policy instinct|jev`); `observe` / `guard` / `verify` / `locate` / `inspect` / `diff` preflight helpers; `mcp` (stdio); `TypesafeTransport` (feature `jev`: JEV-primary over the closed remote wire) |
 
-PUA is pinned by git rev in the workspace `Cargo.toml`; bump only with a
+Instinct is pinned by git rev in the workspace `Cargo.toml`; bump only with a
 deliberate eval. HGRA lives in `experiments/hgra/` and the resonance `hgra`
 feature, not the default product path.
 
@@ -113,8 +115,8 @@ feature, not the default product path.
 - Gate / ticket / world: `hyper-use-guard` unit tests,
   `tests/ticket_props.rs` (radius boundary 159 / 160 / 161, focus-only change,
   consumed never stale), `tests/world_context.rs`.
-- PUA evidence: `hyper-use-policy` unit tests. Do not add a second model of
-  PUA scoring or of `WeightedMatcher::rank`.
+- Instinct evidence: `hyper-use-policy` unit tests. Do not add a second model of
+  Instinct scoring or of `WeightedMatcher::rank`.
 - `write_fixture` / `parse_fixture` own the manifold fixture grammar. CDP
   replay is a different grammar. Fusion is the only DOM/accessibility merge.
   Region identity across observations is owned by the browser `IdentityMap`.

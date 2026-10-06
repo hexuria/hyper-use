@@ -1,4 +1,4 @@
-# Eval / parity status (agent + PUA runtime)
+# Eval / parity status (agent + Instinct runtime)
 
 Date: 2026-10-06 (Asia/Manila). See ADR 0002 and ADR 0003.
 
@@ -8,8 +8,8 @@ Date: 2026-10-06 (Asia/Manila). See ADR 0002 and ADR 0003.
 |---|---|---|
 | A | upstream `jev-ultrafast` (Python reference) | **not run** here |
 | B | Hyper-Use + remote/Jev policy only | wire + transport trait (`remote` feature); no live model wired |
-| C | Hyper-Use + PUA only | **offline e2e (mock + CDP replay) + live Chrome smoke** |
-| D | Hyper-Use + PUA → escalation | **offline e2e** with `ScriptedRemote`; no live model |
+| C | Hyper-Use + Instinct only | **offline e2e (mock + CDP replay) + live Chrome smoke** |
+| D | Hyper-Use + Instinct → escalation | **offline e2e** with `ScriptedRemote`; no live model |
 
 No arm has multi-run, multi-site numbers yet. Do not quote any of this as
 general performance evidence (n is tiny and the tasks are single-intent).
@@ -27,7 +27,7 @@ cargo test -p hyper-use-agent --test replay_cdp  # real BrowserSession over a CD
 cargo test -p hyper-use-agent --test props       # property tests (ticket substitution, stale, abstain)
 cargo test -p hyper-use-agent --test mock_loop   # original ADR 0002 loop tests
 cargo test -p hyper-use-guard gate               # hard gate unit tests
-cargo test -p hyper-use-policy                   # PUA policy, evidence, resolver
+cargo test -p hyper-use-policy                   # Instinct policy, evidence, resolver
 ```
 
 From the CLI, a CDP replay script runs the full loop offline:
@@ -48,16 +48,16 @@ cargo run -p hyper-use-cli -- run --goal 'Select "Business" in Cabin class' \
 The dry run on `modal-confirm.manifold` predicts `CLICK:confirm-delete`: the
 background `Delete project` is behind the modal and is not offered.
 
-## Arm D offline (PUA → remote)
+## Arm D offline (Instinct → remote)
 
 ```bash
 cargo test -p hyper-use-policy -p hyper-use-agent \
   --features hyper-use-agent/remote,hyper-use-policy/remote
 ```
 
-`remote_e2e.rs`: twins make PUA abstain → scripted remote picks `CLICK:b` →
+`remote_e2e.rs`: twins make Instinct abstain → scripted remote picks `CLICK:b` →
 same gate / ticket / executor path → only `b` is pressed. Off-menu replies
-(`CLICK:#delete-all`) fail without input. `UnconfiguredRemote` keeps the PUA
+(`CLICK:#delete-all`) fail without input. `UnconfiguredRemote` keeps the Instinct
 abstain.
 
 ## Live Chrome smoke (arm C, manual)
@@ -130,7 +130,7 @@ and execution on a live page.
   (upstream unpaid path unavailable). Documented as blocked below.
 - Multi-step is **only** plain `then` / `and then` outside quotes
   (`split_sequential_clauses`). No branching, conditionals, or LLM planner.
-  Each clause remains one PUA single-intent.
+  Each clause remains one Instinct single-intent.
 - `model-text` TextResolver ([ADR 0006](adr/0006-model-text-resolver.md)) is
   tested offline only, with `ScriptedTextModel` and a local `sh` command
   model. No live LLM numbers are claimed. Values must be grounded in the goal
@@ -163,18 +163,18 @@ to abstain instead of falling back.
 - MCP `guard` still uses the float `0.55` / `0.05` ranking gate for host
   preflight (A5/A6 / combo benches). Agent path uses hard `gate` only.
   Allow tickets now share `gate::check` + target-scoped world fingerprints.
-- RESULTS.md A1–A8 remain historical (pre-pivot); see the agent+PUA section.
+- RESULTS.md A1–A8 remain historical (pre-pivot); see the agent+Instinct section.
 
 ## Offline arm C repeats (n = 3)
 
 Scripted: `cargo test -p hyper-use-agent` three times on this tip. All three
-runs green (same deterministic offline suite). See RESULTS.md § "Agent + PUA
+runs green (same deterministic offline suite). See RESULTS.md § "Agent + Instinct
 pivot (offline arm C)".
 
 Arms A / B / D: **blocked / out of scope** here — need upstream
 `jev-ultrafast` and/or a paid remote model. Offline D (`ScriptedRemote`) still
 passes under `--features remote`.
 
-## PUA pin
+## Instinct pin
 
-`fe3f1fd3818feb452fae1771ff2171b8598f86e6`
+`a42d16b6f5ccc3273939c8e3d3f462d78765bfea`

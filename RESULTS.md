@@ -10,7 +10,7 @@
 > stale for JEV+hyper-use claims. See **Mac remasure 2026-10-06 — A3 vs A8**
 > below (fair Luna+JEV both sides).
 
-## Agent + PUA pivot (offline arm C)
+## Agent + Instinct pivot (offline arm C)
 
 > Post-ActionTicket product path. Tip of this section: see git history for the
 > merge commit that lands PR gaps (readonly observe, target-scoped world,
@@ -30,13 +30,13 @@ model). All three green.
 | 2 | 0.34 | pass |
 | 3 | 0.36 | pass |
 
-What this measures: the owned loop (observe → PUA → hard gate → ticket →
+What this measures: the owned loop (observe → Instinct → hard gate → ticket →
 executor → verify) including TYPE_TEXT / SELECT / CLICK / SCROLL, adversarial
 refuses, target-scoped stale discard, multi-step `then`, and CDP replay
 fixtures. It does **not** measure live sites, Luna, JEV, or Browser Use.
 
 Arms A / B / D live parity: **blocked** (need unpaid `jev-ultrafast` / paid
-remote). Historical A1–A8 table below is pre-pivot and not agent+PUA evidence.
+remote). Historical A1–A8 table below is pre-pivot and not agent+Instinct evidence.
 
 
 ## Mac remasure 2026-10-06 — A3 vs A8 (acme-mail, fair parity)

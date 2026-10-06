@@ -1,3 +1,13 @@
+<p align="center">
+  <a href="https://hdqwalls.com/wallpaper/3440x1440/goku-jiren-masterd-ultra-instinct">
+    <img
+      src="https://images.hdqwalls.com/download/goku-jiren-masterd-ultra-instinct-2e-3440x1440.jpg"
+      alt="Ultra Instinct Goku"
+      width="100%"
+    >
+  </a>
+</p>
+
 # ultra-instinct
 
 **Ultra-Instinct is a Rust-native browser-agent runtime with a deterministic

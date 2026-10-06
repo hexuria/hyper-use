@@ -191,20 +191,56 @@ fn fold(s: &str) -> String {
         .collect()
 }
 
+fn instruction_tokens(goal: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for clause in goal.split(['.', ';', '!', '?', ',', '\n']) {
+        let clause_tokens = tokenize(clause);
+        if matches!(
+            clause_tokens.first().map(String::as_str),
+            Some("if" | "unless" | "otherwise")
+        ) {
+            continue;
+        }
+        tokens.extend(clause_tokens);
+    }
+    tokens
+}
+
+fn matches_instruction_tokens(tokens: &[String], keys: &[&[&str]]) -> bool {
+    keys.iter().any(|key| {
+        tokens.windows(key.len()).any(|window| {
+            window
+                .iter()
+                .zip(key.iter())
+                .all(|(token, expected)| token.as_str() == *expected)
+        })
+    })
+}
+
 fn control_keyword_hit(goal: &str, kind: ActionKind) -> bool {
-    let g = fold(goal);
-    let keys: &[&str] = match kind {
-        ActionKind::Done => &["done", "finished", "complete", "completed"],
-        ActionKind::Blocked => &["blocked", "stuck", "impossible"],
-        ActionKind::Wait => &["wait", "pause", "loading"],
-        ActionKind::ScrollDown => &["scrolldown", "scrollpage", "pagedown"],
-        ActionKind::ScrollUp => &["scrollup", "pageup"],
-        ActionKind::Click => &["click", "press", "tap"],
-        ActionKind::TypeText => &["type", "enter", "fill", "input"],
-        ActionKind::Select => &["select", "choose", "pick"],
+    let keys: &[&[&str]] = match kind {
+        ActionKind::Done => &[&["done"], &["finished"], &["complete"], &["completed"]],
+        ActionKind::Blocked => &[&["blocked"], &["stuck"], &["impossible"]],
+        ActionKind::Wait => &[&["wait"], &["pause"], &["loading"]],
+        ActionKind::ScrollDown => &[
+            &["scroll", "down"],
+            &["scroll", "page"],
+            &["page", "down"],
+            &["scrolldown"],
+            &["pagedown"],
+        ],
+        ActionKind::ScrollUp => &[
+            &["scroll", "up"],
+            &["page", "up"],
+            &["scrollup"],
+            &["pageup"],
+        ],
+        ActionKind::Click => &[&["click"], &["press"], &["tap"]],
+        ActionKind::TypeText => &[&["type"], &["enter"], &["fill"], &["input"]],
+        ActionKind::Select => &[&["select"], &["choose"], &["pick"]],
         _ => &[],
     };
-    keys.iter().any(|k| g.contains(k))
+    matches_instruction_tokens(&instruction_tokens(goal), keys)
 }
 
 /// Score ceiling for a target-bound operation the goal did not name when it
@@ -237,10 +273,19 @@ fn role_mentioned(goal: &str, role: Role) -> bool {
 }
 
 fn done_language(goal: &str) -> bool {
-    let g = fold(goal);
-    ["done", "finish", "complete", "success", "submitted"]
-        .iter()
-        .any(|k| g.contains(k))
+    matches_instruction_tokens(
+        &instruction_tokens(goal),
+        &[
+            &["done"],
+            &["finish"],
+            &["finished"],
+            &["complete"],
+            &["completed"],
+            &["success"],
+            &["successful"],
+            &["submitted"],
+        ],
+    )
 }
 
 #[cfg(test)]
@@ -267,5 +312,55 @@ mod tests {
     fn fold_strips_case_and_space() {
         assert!(eq_fold("Sign In", "sign in"));
         assert!(!eq_fold("Sign In", "Sign Out"));
+    }
+
+    #[test]
+    fn control_keywords_match_whole_token_sequences() {
+        assert!(!control_keyword_hit(
+            "Open the city center map",
+            ActionKind::TypeText
+        ));
+        assert!(!control_keyword_hit("Express checkout", ActionKind::Click));
+        assert!(control_keyword_hit(
+            "Type \"man\" into City then click Manila",
+            ActionKind::TypeText
+        ));
+        assert!(control_keyword_hit(
+            "Type \"man\" into City then click Manila",
+            ActionKind::Click
+        ));
+        assert!(control_keyword_hit(
+            "Click Save. Say done when finished",
+            ActionKind::Done
+        ));
+    }
+
+    #[test]
+    fn scroll_keywords_match_adjacent_tokens_and_compact_forms() {
+        assert!(control_keyword_hit("scroll down", ActionKind::ScrollDown));
+        assert!(control_keyword_hit(
+            "Scroll  Down please",
+            ActionKind::ScrollDown
+        ));
+        assert!(control_keyword_hit("page up", ActionKind::ScrollUp));
+        assert!(control_keyword_hit("scrolldown", ActionKind::ScrollDown));
+        assert!(control_keyword_hit("pagedown", ActionKind::ScrollDown));
+        assert!(control_keyword_hit("pageup", ActionKind::ScrollUp));
+        assert!(control_keyword_hit("scrollup", ActionKind::ScrollUp));
+    }
+
+    #[test]
+    fn conditional_clauses_do_not_trigger_control_or_done_language() {
+        let goal = "Star the email \"Weekly sync\". If the task cannot be done on this site, stop and say so (give up) without changing anything.";
+        assert!(!control_keyword_hit(goal, ActionKind::Done));
+        assert!(!done_language(goal));
+        assert!(!control_keyword_hit(
+            "If it is loading, click Retry",
+            ActionKind::Wait
+        ));
+        assert!(control_keyword_hit(
+            "If it is loading, click Retry",
+            ActionKind::Click
+        ));
     }
 }

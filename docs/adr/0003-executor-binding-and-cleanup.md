@@ -11,7 +11,7 @@ After ADR 0002 the agent owned the loop, but only CLICK reached the page:
 `BrowserSession::press` refused every other action, the agent mapped
 TYPE_TEXT / SELECT onto a click ticket, typed text was dropped, and the
 agent re-ran the ranked `guard()` (Weighted matcher + float `0.55` gate) on a
-choice PUA had already made. Remote escalation was an empty feature flag, the
+choice Instinct had already made. Remote escalation was an empty feature flag, the
 CLI had no way to run the agent, and the legacy JEV `contract.rs` types were
 still exported.
 
@@ -32,7 +32,7 @@ still exported.
    / CLI preflight surface, where a host proposes a label.
 3. **Front layer applied to the action space.** The agent builds
    `ActionSpace::from_manifold(&with_front_layer(m))`, so a control behind an
-   open modal is never offered to PUA (and the gate refuses it anyway).
+   open modal is never offered to Instinct (and the gate refuses it anyway).
 4. **Live CDP inputs.** `BrowserSession` gains `type_text`, `select_option`,
    `scroll`, `navigate`, `ready_state`, `field_value`:
    - TYPE / SELECT resolve the **observed node** (node id, then backend id) and
@@ -55,7 +55,7 @@ still exported.
    agent goes back to Ready, and the next tick re-observes and re-decides.
    `max_consecutive_stale` (default 5) turns a page that never settles into a
    failure instead of a loop.
-7. **Text payloads stay out of PUA.** SELECT options use the same
+7. **Text payloads stay out of Instinct.** SELECT options use the same
    `TextResolver` as TYPE_TEXT (`field_role = "select"`). The resolution
    fingerprint must match its context. Resolution happens before the ticket is
    consumed, so the executor's fresh revalidation always runs **after**
@@ -112,5 +112,5 @@ bench, and world-context tests. The agent path no longer touches them.
 - Each target-bound step costs three observations (decide, executor
   revalidation, after). Correctness over CDP round trips; measure before
   optimizing.
-- PUA policy is still single-intent per goal; multi-step goals need a planner
+- Instinct policy is still single-intent per goal; multi-step goals need a planner
   or the remote tier. That is a policy gap, not a runtime gap.

@@ -8,7 +8,7 @@
 
 PR #16 left honest gaps: readonly only failed inside the CDP input function,
 ticket world fingerprints hashed the whole page (unrelated banners forced
-stale discards), PUA was single-intent only, MCP `guard` still floated at
+stale discards), Instinct was single-intent only, MCP `guard` still floated at
 0.55 while the agent used hard `gate`, and `hyper-use run --fixture` lacked
 checked-in type/select/click replays.
 
@@ -22,7 +22,7 @@ checked-in type/select/click replays.
    siblings, children, geometrically nearby root peers). MCP `seen_world`
    comparison stays whole-page (`WorldSnapshot::of`).
 3. **Multi-step without an LLM planner.** `split_sequential_clauses` splits on
-   `then` / `and then` outside quotes. The agent runs one PUA clause at a time
+   `then` / `and then` outside quotes. The agent runs one Instinct clause at a time
    and advances on DONE. Limits are documented on that function.
 4. **MCP alignment without breaking A5/A6.** Ranked `guard` still uses 0.55 /
    0.05. Before Allow it calls `gate::check`, and Allow tickets use

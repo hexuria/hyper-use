@@ -11,14 +11,14 @@
 `DeterministicTextResolver` only extracts quoted values and the
 `type X into F` / `fill F with X` forms. Goals such as
 `type rust ownership in the Search box` or `select business in Cabin class`
-choose the right target through PUA but leave the payload unresolved, so the
+choose the right target through Instinct but leave the payload unresolved, so the
 agent fails with nothing typed. ADR 0002 reserved the `model-text` feature
 name for a model-backed resolver; it was a stub.
 
 ## Decision
 
 1. **Payload only.** `ModelTextResolver<M: TextModel, F = DeterministicTextResolver>`
-   implements `TextResolver`. It runs **after** PUA has chosen a TYPE_TEXT /
+   implements `TextResolver`. It runs **after** Instinct has chosen a TYPE_TEXT /
    SELECT action from the finite `ActionSpace`, and only proposes that
    action's payload. It never sees other regions, selectors, or coordinates,
    never chooses a target, and never dispatches input. Gate → ActionTicket →
@@ -50,7 +50,7 @@ name for a model-backed resolver; it was a stub.
    fallback (`without_fallback`) or it also fails, it returns
    `TextError::Abstain`; the agent maps that to `AgentError::Abstain` →
    `AgentOutcome::Abstained` with nothing typed — the same first-class abstain
-   as PUA, never a guessed value. `last_source()` reports
+   as Instinct, never a guessed value. `last_source()` reports
    `Model | Fallback(reason) | Abstained(reason)`; `model_calls()` counts calls.
 5. **Staleness stays single-barrier.** Model latency is covered exactly like
    deterministic resolution (ADR 0005 §R2): the payload is resolved before the

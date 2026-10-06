@@ -41,11 +41,19 @@ dependencies = [
 name = "aui-browser"
 version = "0.1.0"
 dependencies = [
+ "aui-cdp",
  "aui-core",
  "aui-geometry",
  "aui-observe",
  "aui-resonance",
  "proptest",
+ "serde_json",
+]
+
+[[package]]
+name = "aui-cdp"
+version = "0.1.0"
+dependencies = [
  "serde_json",
  "tungstenite",
 ]

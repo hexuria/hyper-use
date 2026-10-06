@@ -18,9 +18,17 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 name = "aui-browser"
 version = "0.1.0"
 dependencies = [
+ "aui-cdp",
  "aui-core",
  "aui-geometry",
  "aui-observe",
+ "serde_json",
+]
+
+[[package]]
+name = "aui-cdp"
+version = "0.1.0"
+dependencies = [
  "serde_json",
  "tungstenite",
 ]

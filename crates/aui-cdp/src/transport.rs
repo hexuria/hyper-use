@@ -1,4 +1,4 @@
-use crate::error::CdpError;
+use crate::CdpError;
 
 /// One CDP command/response exchange.
 ///

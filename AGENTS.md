@@ -97,7 +97,8 @@ crate.
 | Crate | Owns |
 |---|---|
 | `aui-core` | `InteractionManifold`, regions, `ActionSpace`, fixture grammar |
-| `aui-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs, replay |
+| `aui-cdp` | CDP transport trait, websocket, replay transport, replay script builder |
+| `aui-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs |
 | `aui-observe` | Observation history and id diff |
 | `aui-geometry` | Geometry helpers |
 | `aui-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |

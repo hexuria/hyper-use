@@ -8,12 +8,48 @@ use aui_browser::{
     BrowserSession, ReplayTransport, DOM_SELECT_FUNCTION, DOM_TYPE_FUNCTION,
     SCROLL_VIEWPORT_FRACTION,
 };
-use aui_core::ActionKind;
-use aui_policy::InstinctPolicy;
-use serde_json::Value;
+use aui_core::{ActionKind, ActionSpace};
+use aui_policy::{
+    AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
+    PolicyOutcome,
+};
+use serde_json::{json, Value};
 
 fn session(script: ScriptBuilder) -> BrowserSession<ReplayTransport> {
     BrowserSession::new(ReplayTransport::parse(&script.to_json()).unwrap())
+}
+
+#[derive(Default)]
+struct SelectThenDone;
+
+impl BrowserPolicy for SelectThenDone {
+    fn decide(
+        &mut self,
+        space: &ActionSpace,
+        _goal: &AgentGoal,
+        history: &[HistoryEntry],
+    ) -> Result<PolicyOutcome, PolicyError> {
+        let action = if history.is_empty() {
+            space.targets_of(ActionKind::Select).next()
+        } else {
+            space.get_str(ActionKind::Done.as_str())
+        };
+        let Some(action) = action else {
+            return Ok(PolicyOutcome::Abstain {
+                reason: "select replay action unavailable".into(),
+                operation_ranked: Vec::new(),
+                target_ranked: Vec::new(),
+            });
+        };
+        Ok(PolicyOutcome::Choice(PolicyDecision {
+            action_id: action.id().clone(),
+            kind: action.kind(),
+            target_label: action.label().to_owned(),
+            confidence_millis: 1_000,
+            operation_ranked: Vec::new(),
+            target_ranked: Vec::new(),
+        }))
+    }
 }
 
 fn search_page() -> PageSpec {
@@ -212,6 +248,77 @@ fn select_over_cdp_uses_select_function_and_verifies_option_text() {
     let fns = calls_of(transport.logged_calls(), "Runtime.callFunctionOn");
     assert_eq!(fns[0]["functionDeclaration"], DOM_SELECT_FUNCTION);
     assert_eq!(fns[0]["arguments"][0]["value"], "Business");
+}
+
+fn cabin_page_with_observed_options() -> PageSpec {
+    let select = Control {
+        tag: "SELECT",
+        role: "combobox",
+        ..Control::button(20, 200, "Cabin class", (20.0, 80.0, 200.0, 28.0))
+    };
+    let mut page = PageSpec::of(
+        &[
+            select,
+            Control::button(21, 201, "Find flights", (20.0, 140.0, 140.0, 28.0)),
+        ],
+        "http://127.0.0.1/travel",
+        "Travel",
+    );
+    page.dom[0] = page.dom[0]
+        .clone()
+        .with_compact_state(json!({"o": ["Economy", "Business"], "sel": "Economy"}));
+    page
+}
+
+#[test]
+fn unquoted_select_goal_uses_observed_option_text() {
+    let page = cabin_page_with_observed_options();
+    let script = ScriptBuilder::new()
+        .observe_compact(&page)
+        .observe_compact(&page)
+        .dom_input(20)
+        .ready_state("complete")
+        .observe_compact(&page)
+        .dom_read_value(20, "business", "Business");
+    let mut agent = AgentBuilder::new(session(script), SelectThenDone)
+        .max_steps(2)
+        .build("Set cabin class to business");
+    let prediction = agent.predict().unwrap().expect("select").clone();
+    assert_eq!(
+        prediction.decision.kind,
+        ActionKind::Select,
+        "{prediction:?}"
+    );
+    assert_eq!(prediction.payload.as_deref(), Some("Business"));
+
+    let record = agent.act().unwrap();
+    assert_eq!(record.verification, VerificationKind::Success);
+    let functions = calls_of(
+        agent.browser_mut().transport().logged_calls(),
+        "Runtime.callFunctionOn",
+    );
+    assert_eq!(functions[0]["functionDeclaration"], DOM_SELECT_FUNCTION);
+    assert_eq!(functions[0]["arguments"][0]["value"], "Business");
+}
+
+#[test]
+fn unmatched_select_goal_abstains_without_dispatch() {
+    let page = cabin_page_with_observed_options();
+    let script = ScriptBuilder::new().observe_compact(&page);
+    let mut agent = AgentBuilder::new(session(script), SelectThenDone)
+        .max_steps(2)
+        .build("Set cabin class to Premium");
+
+    let error = agent.predict().expect_err("unmatched SELECT must abstain");
+    assert!(
+        matches!(error, AgentError::Abstain(ref reason) if reason.contains("select:")),
+        "{error:?}"
+    );
+    assert!(calls_of(
+        agent.browser_mut().transport().logged_calls(),
+        "Runtime.callFunctionOn"
+    )
+    .is_empty());
 }
 
 #[test]

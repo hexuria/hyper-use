@@ -12,7 +12,43 @@
 use aui_agent::{AgentBuilder, AgentOutcome, BrowserRuntime, VerificationKind};
 use aui_browser::{open_tab, BrowserSession, WebSocketTransport};
 use aui_core::{ActionKind, ActionSpace};
-use aui_policy::InstinctPolicy;
+use aui_policy::{
+    AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
+    PolicyOutcome,
+};
+
+#[derive(Default)]
+struct SelectThenDone;
+
+impl BrowserPolicy for SelectThenDone {
+    fn decide(
+        &mut self,
+        space: &ActionSpace,
+        _goal: &AgentGoal,
+        history: &[HistoryEntry],
+    ) -> Result<PolicyOutcome, PolicyError> {
+        let action = if history.is_empty() {
+            space.targets_of(ActionKind::Select).next()
+        } else {
+            space.get_str(ActionKind::Done.as_str())
+        };
+        let Some(action) = action else {
+            return Ok(PolicyOutcome::Abstain {
+                reason: "select live action unavailable".into(),
+                operation_ranked: Vec::new(),
+                target_ranked: Vec::new(),
+            });
+        };
+        Ok(PolicyOutcome::Choice(PolicyDecision {
+            action_id: action.id().clone(),
+            kind: action.kind(),
+            target_label: action.label().to_owned(),
+            confidence_millis: 1_000,
+            operation_ranked: Vec::new(),
+            target_ranked: Vec::new(),
+        }))
+    }
+}
 
 const PAGE: &str = "<!doctype html><title>HU live smoke</title><h1>Flight search</h1>\
 <input id=q aria-label=Search style=width:300px>\
@@ -305,4 +341,56 @@ fn live_observe_captures_control_state_without_password_values() {
             .chain(state.options.iter())
             .all(|value| !value.contains("hunter2")));
     }
+}
+
+const SELECT_GROUNDING_PAGE: &str = r#"<!doctype html><title>HU SELECT grounding</title>
+<label>Time zone <select aria-label="Time zone">
+  <option>UTC</option><option>Asia/Manila</option>
+</select></label>"#;
+
+fn select_grounding_data_url() -> String {
+    let mut out = String::from("data:text/html,");
+    for b in SELECT_GROUNDING_PAGE.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "needs a live Chrome with --remote-debugging-port (ULTRA_INSTINCT_CDP)"]
+fn live_select_uses_an_observed_option_for_an_unquoted_goal() {
+    let endpoint =
+        std::env::var("ULTRA_INSTINCT_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_owned());
+    let mut session = BrowserSession::new(WebSocketTransport::connect(&endpoint).unwrap());
+    session.navigate(&select_grounding_data_url()).unwrap();
+    session.settle();
+
+    let mut agent = AgentBuilder::new(session, SelectThenDone)
+        .max_steps(2)
+        .build("Set the time zone to Asia/Manila");
+    let outcome = agent.run();
+    eprintln!("observed-option SELECT: {outcome:?}");
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1, "{outcome:?}");
+    assert_eq!(outcome.steps()[0].kind, ActionKind::Select);
+    assert_eq!(outcome.steps()[0].verification, VerificationKind::Success);
+
+    let region_id = BrowserRuntime::observe(agent.browser_mut())
+        .unwrap()
+        .regions()
+        .find(|region| region.label() == "Time zone")
+        .unwrap()
+        .id()
+        .clone();
+    let actual = agent
+        .browser_mut()
+        .field_value(&region_id)
+        .unwrap()
+        .unwrap()
+        .0;
+    assert_eq!(actual, "Asia/Manila");
 }

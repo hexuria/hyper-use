@@ -61,7 +61,10 @@ crate.
 >    `TextResolver`, checked against their context fingerprint, before the
 >    ticket is consumed, so executor revalidation always runs after resolver
 >    latency. Payloads are CDP arguments, never spliced into script source;
->    there is no coordinate tier for text.
+>    there is no coordinate tier for text. SELECT payloads are grounded in
+>    observed enabled options when observe captured them: resolver text must
+>    equal one option label, else exactly one option label must occur in the
+>    goal, else the agent abstains.
 > 7a. **Model text is payload-only and grounded** (feature `model-text`,
 >    ADR 0006). The model fills the payload of an action Instinct already chose;
 >    replies must echo the context fingerprint, pass shape checks, and occur

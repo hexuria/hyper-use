@@ -1,5 +1,5 @@
 # Max lines of Rust under <crate>/src per crate. Raise a ceiling only in a PR that
 # says why; splitting the crate is usually the better answer.
-# Current usage: aui-browser 4926, aui-cdp 1852, every other crate < 3.1k (2026-10-06).
+# Current usage: aui-browser 4927, aui-cdp 1853, every other crate < 3.1k (2026-10-06).
 default 6000
 aui-browser 6700 # owned per-agent CDP tab lifecycle

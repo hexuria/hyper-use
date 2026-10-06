@@ -1,0 +1,40 @@
+# Dependency direction for hexuria/hyper-use (AGENTS.md "Crates (product graph)").
+#
+# Format:
+#   <crate>: <allowed hyper-use-* deps, space separated>
+#       | <banned crates anywhere in the crate's dependency closure; `*` is a glob>
+#
+# Checked by scripts/check_architecture.py in CI:
+#   1. every workspace member has an entry (new crates must declare their direction);
+#   2. a crate's normal and build dependencies on workspace crates are a subset of "allowed";
+#   3. no banned crate appears anywhere in its resolved dependency closure (incl. dev-deps).
+#
+# The product path is blocking and single-threaded by design (AGENTS.md anti-drift #10):
+# no async runtime, HTTP client, or model SDK below hyper-use-cli. typesafe-sdk is allowed
+# only in hyper-use-cli's closure (the optional `jev` example leg), so tokio / reqwest /
+# hyper reach the workspace exclusively through that crate's gated edge.
+hyper-use-core:
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-geometry: hyper-use-core
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-observe: hyper-use-core
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-resonance: hyper-use-core hyper-use-geometry hyper-use-hyper
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-protocol: hyper-use-core
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-browser: hyper-use-core hyper-use-geometry hyper-use-observe hyper-use-resonance
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-guard: hyper-use-core hyper-use-protocol hyper-use-resonance
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-policy: hyper-use-core
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-agent: hyper-use-core hyper-use-browser hyper-use-guard hyper-use-observe hyper-use-policy hyper-use-protocol
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-mcp: hyper-use-protocol hyper-use-core hyper-use-resonance hyper-use-browser hyper-use-guard hyper-use-observe
+    | tokio axum sqlx reqwest hyper typesafe-sdk
+hyper-use-cli: hyper-use-core hyper-use-resonance hyper-use-browser hyper-use-guard hyper-use-observe hyper-use-mcp hyper-use-protocol hyper-use-agent hyper-use-policy
+    | axum sqlx
+# Frozen experiment (HGRA). Leaf crate: no hyper-use-* edges, no async/network deps.
+hyper-use-hyper:
+    | tokio axum sqlx reqwest hyper typesafe-sdk

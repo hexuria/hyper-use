@@ -128,6 +128,34 @@ Exit code 0 = all caught; 2 = missed mutants (see `mutants.out/missed.txt`);
   published. R2 removes two public fields; API is 0.1.
 - Live Chrome and paid remote stay `#[ignore]`; CI uses CDP replay fixtures.
 
+## Follow-up, 2026-10-06 — CI architecture + fuzz (R7)
+
+The rest of the impeccable CI shape, ported from hexuria/pua (same toolchain
+pin, same checks). One new bug found and fixed by the first fuzz run.
+
+| Change | Owner |
+| --- | --- |
+| PR gate reshaped per skill "CI shape": `repo-rules` (toolchain pin, forbid-unsafe, crate ceilings, architecture), `fmt`, `clippy --all-features`, per-crate `check` (--no-default-features / --all-features), `test` (nextest `ci` profile + feature matrix + doctests + JUnit), `docs`, `deny`, `zizmor`, `ci-ok` aggregate | `.github/workflows/ci.yml` |
+| `cargo nextest` with `retries = 0` — a flaky result fails the run; a test that passes only on retry has failed | `.config/nextest.toml` |
+| Dependency direction enforced: no async runtime / HTTP client / model SDK below `hyper-use-cli` (typesafe-sdk stays inside cli's optional `jev` closure only) | `scripts/architecture.txt`, `scripts/check_architecture.py` |
+| `cargo-fuzz` targets on untrusted input: `fixture` (parse/write/parse round-trip), `replay_cdp`, `mcp_rpc` (reply must be valid JSON), `remote_reply` (against a real ActionSpace), `command_reply` — dated nightly, nightly smoke | `fuzz/`, `scripts/fuzz-smoke.sh`, `.github/workflows/nightly.yml` |
+| Nightly tier: proptest 4096 cases (release), fuzz smoke, unsafe-audit tripwire, fresh advisories | `.github/workflows/nightly.yml` |
+| All actions pinned by SHA, `persist-credentials: false`, `permissions: contents: read`, concurrency groups on scheduled workflows, `${{ }}` expansions routed through `env` | all workflows; verified `zizmor --persona=auditor` = 0 findings |
+| `dependabot.yml` (weekly, grouped) — stagnation is a choice with rising cost | `.github/dependabot.yml` |
+| PR template carrying the Verification impact block | `.github/pull_request_template.md` |
+| Observe call-count budget tests (regression tripwire for the hot path): 25 calls / 5 controls, 205 calls / 50 controls baseline | `crates/hyper-use-browser/tests/call_budget.rs` |
+
+**Bug found by the `fixture` fuzz target (first 30 s run):** `strip_comment`
+toggled `in_quotes` on an escaped `\"` inside a quoted label, so a label
+holding both `"` and `#` made `write_fixture` emit a line `parse_fixture`
+could not re-parse ("unclosed quote"). Fixed by tracking the escape in
+`strip_comment` to match `split_tokens`; regression test in `lib.rs`
+(`fixture_roundtrip_preserves_the_manifold`). After the fix: 5 targets,
+~4.3 M executions, 0 crashes.
+
+The `cargo-fuzz` note under "Deliberately skipped" below stays true for PR
+CI — fuzz campaigns are nightly-only, per the skill's CI split.
+
 ## Deferred (out of scope for R1–R6)
 
 - Live A/B/C/D on pinned main (needs jev-ultrafast / paid remote).

@@ -1,5 +1,9 @@
 /target
 **/*.rs.bk
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/mutants.out*
 # bench: repo-local Python envs, pinned vendor clones, raw run artifacts
 /bench/.venv
 /bench/envs/*/.venv

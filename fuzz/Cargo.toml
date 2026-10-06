@@ -1,0 +1,57 @@
+# cargo-fuzz targets (nightly, dated: see $NIGHTLY in .github/workflows/nightly.yml).
+# Not a workspace member: it needs nightly and libfuzzer-sys. Run: scripts/fuzz-smoke.sh 60
+[package]
+name = "hyper-use-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+hyper-use-core = { path = "../crates/hyper-use-core" }
+hyper-use-browser = { path = "../crates/hyper-use-browser" }
+hyper-use-mcp = { path = "../crates/hyper-use-mcp" }
+hyper-use-policy = { path = "../crates/hyper-use-policy", features = ["remote", "model-text"] }
+
+[[bin]]
+name = "fixture"
+path = "fuzz_targets/fixture.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "replay_cdp"
+path = "fuzz_targets/replay_cdp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_rpc"
+path = "fuzz_targets/mcp_rpc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_reply"
+path = "fuzz_targets/remote_reply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "command_reply"
+path = "fuzz_targets/command_reply.rs"
+test = false
+doc = false
+bench = false

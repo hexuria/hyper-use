@@ -1,0 +1,92 @@
+# Nightly tier (skill "CI shape"): longer property runs, fuzz smoke, fresh advisories, and the
+# unsafe-audit tripwire that keeps the Miri skip honest. Fuzzing needs nightly rustc, so it uses
+# a DATED nightly ($NIGHTLY); everything else stays on the 1.99.0 pin. Miri is deliberately not
+# run: every crate is #![forbid(unsafe_code)] (compiler-enforced), see AGENTS.md anti-drift #10.
+name: Nightly
+
+on:
+  schedule:
+    - cron: "11 18 * * *" # 02:11 Asia/Manila
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: seconds per fuzz target
+        default: "120"
+
+permissions:
+  contents: read
+
+# Scheduled: never cancel an in-flight nightly; a newer run just queues.
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  NIGHTLY: nightly-2026-10-01
+
+jobs:
+  proptest-long:
+    name: proptest (4096 cases, release)
+    runs-on: ubuntu-24.04
+    env:
+      PROPTEST_CASES: "4096"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --workspace --locked --release --profile ci --no-tests=pass
+
+  fuzz-smoke:
+    name: cargo-fuzz smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install $NIGHTLY --profile minimal
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-fuzz
+      - run: scripts/fuzz-smoke.sh "$FUZZ_SECONDS"
+        env:
+          FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '120' }}
+      - name: Upload crashes
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+
+  unsafe-audit:
+    name: unsafe audit (documents the Miri skip)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: No unsafe in hyper-use sources
+        run: |
+          # The workspace lint forbids unsafe_code; this keeps the Miri skip honest if a crate ever
+          # opts out. Any hit means Miri must be added (AGENTS.md anti-drift #10).
+          if grep -rnwE 'unsafe' --include='*.rs' crates experiments fuzz 2>/dev/null | grep -v 'forbid(unsafe_code)' | grep -v '^\s*//' ; then
+            echo "unsafe found: add a Miri job before merging"; exit 1
+          fi
+
+  deny:
+    name: cargo-deny (fresh advisories)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories

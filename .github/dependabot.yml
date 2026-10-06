@@ -1,0 +1,25 @@
+# Stagnation is a choice with rising cost (skill §9): weekly reminders, grouped to cut noise.
+# Bumps that pass ci-ok may be merged; a toolchain bump is an owner decision (1.99.0 pin).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Manila
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Manila
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [dependencies, ci]

@@ -1,0 +1,5 @@
+# Max lines of Rust under <crate>/src per crate. Raise a ceiling only in a PR that
+# says why; splitting the crate is usually the better answer.
+# Current usage: hyper-use-browser ~5.4k, every other crate < 3.1k (2026-10-06).
+default 6000
+hyper-use-browser 6500

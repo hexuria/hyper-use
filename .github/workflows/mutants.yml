@@ -6,9 +6,18 @@ on:
   schedule:
     - cron: "0 18 * * *" # 02:00 Asia/Manila
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Scheduled: never cancel an in-flight mutants run; a newer commit just queues.
+concurrency:
+  group: mutants-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   mutants:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -25,15 +34,19 @@ jobs:
               --re 'of_target|neighborhood_of|nearby'
     name: mutants (${{ matrix.name }})
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-mutants
       # Exit code 2 = missed mutants (a test gap), 3 = timeouts. Either fails the job.
-      - run: cargo mutants --no-shuffle --timeout 300 -j 2 -o mutants-out ${{ matrix.args }}
+      - run: cargo mutants --no-shuffle --timeout 300 -j 2 -o mutants-out $MUTANTS_ARGS
+        env:
+          MUTANTS_ARGS: ${{ matrix.args }}
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mutants-${{ matrix.name }}
           path: mutants-out/mutants.out

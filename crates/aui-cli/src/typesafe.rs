@@ -132,6 +132,13 @@ fn build_questions(request: &Value) -> Result<BuiltQuestions, String> {
                 if let Some(role) = a["role"].as_str() {
                     element.insert("role".to_owned(), Value::String(role.to_owned()));
                 }
+                if let Some(state) = a.get("state").and_then(Value::as_object) {
+                    for key in ["value", "checked", "expanded", "selected", "options"] {
+                        if let Some(value) = state.get(key) {
+                            element.insert(key.to_owned(), value.clone());
+                        }
+                    }
+                }
                 (region.to_owned(), Some(JsonContent::from(element)))
             })
             .collect();
@@ -337,6 +344,33 @@ mod tests {
         assert_eq!(type_keys, &["n44"]);
         assert_eq!(built.state["goal"], "Send the message");
         assert!(built.state["recent_actions"].is_array());
+    }
+
+    #[test]
+    fn type_text_question_includes_observed_value_in_target_criteria() {
+        let request = json!({
+            "goal":"Fill the name",
+            "actions":[{
+                "id":"TYPE_TEXT:n44",
+                "kind":"TYPE_TEXT",
+                "label":"Name",
+                "role":"textbox",
+                "state":{"value":"Ana"}
+            }],
+            "history":[]
+        });
+        let built = build_questions(&request).unwrap();
+        let (_, question) = built
+            .questions
+            .iter()
+            .find(|(name, _)| name == "type_text_target")
+            .unwrap();
+        let question = serde_json::to_value(question).unwrap();
+        assert_eq!(
+            question["criteria"]["n44"]["value"], "Ana",
+            "criteria about: {}",
+            question["criteria"]["n44"]
+        );
     }
 
     #[test]

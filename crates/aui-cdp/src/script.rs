@@ -30,6 +30,8 @@ pub struct DomSpec {
     pub shadow_roots: Vec<DomSpec>,
     /// Same-origin iframe `contentDocument` root (usually a `#document` node).
     pub content_document: Option<Box<DomSpec>>,
+    /// Extra per-node fields merged into the compact observe record.
+    pub compact_state: Option<Value>,
 }
 
 impl DomSpec {
@@ -44,6 +46,7 @@ impl DomSpec {
             attributes: Vec::new(),
             shadow_roots: Vec::new(),
             content_document: None,
+            compact_state: None,
         }
     }
 
@@ -69,6 +72,7 @@ impl DomSpec {
             ],
             shadow_roots: Vec::new(),
             content_document: None,
+            compact_state: None,
         }
     }
 
@@ -109,6 +113,7 @@ impl DomSpec {
             attributes: Vec::new(),
             shadow_roots: Vec::new(),
             content_document: None,
+            compact_state: None,
         }
     }
 
@@ -124,6 +129,7 @@ impl DomSpec {
             attributes: Vec::new(),
             shadow_roots: Vec::new(),
             content_document: None,
+            compact_state: None,
         }
     }
 
@@ -136,6 +142,12 @@ impl DomSpec {
     /// Add one attribute.
     pub fn with_attr(mut self, name: &str, value: &str) -> Self {
         self.attributes.push((name.to_owned(), value.to_owned()));
+        self
+    }
+
+    /// Add control-state fields to this node's compact observe record.
+    pub fn with_compact_state(mut self, state: Value) -> Self {
+        self.compact_state = Some(state);
         self
     }
 
@@ -500,10 +512,18 @@ impl ScriptBuilder {
                 .get(&node.backend)
                 .and_then(|backend| k_of_backend.get(backend).copied())
                 .unwrap_or(k);
-            nodes.insert(
-                k.to_string(),
-                json!({"r": r, "s": s, "h": if node.rect.is_some() { json!(hit) } else { Value::Null }}),
-            );
+            let mut record = json!({"r": r, "s": s, "h": if node.rect.is_some() { json!(hit) } else { Value::Null }});
+            if let (Some(record), Some(state)) = (
+                record.as_object_mut(),
+                node.compact_state.as_ref().and_then(Value::as_object),
+            ) {
+                record.extend(
+                    state
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone())),
+                );
+            }
+            nodes.insert(k.to_string(), record);
         }
         self.calls.push(result(
             "Runtime.evaluate",

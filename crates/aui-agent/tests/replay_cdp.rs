@@ -34,6 +34,52 @@ fn calls_of(log: &[(String, String)], method: &str) -> Vec<Value> {
         .collect()
 }
 
+fn autocomplete_poll_calls(log: &[(String, String)]) -> Vec<Value> {
+    calls_of(log, "Runtime.callFunctionOn")
+        .into_iter()
+        .filter(|call| {
+            call["functionDeclaration"]
+                .as_str()
+                .is_some_and(|function| function.contains("aria-controls"))
+        })
+        .collect()
+}
+
+fn autocomplete_page(with_option: bool, picked: bool) -> PageSpec {
+    autocomplete_page_scoped(with_option, picked, true)
+}
+
+fn document_wide_autocomplete_page(with_option: bool, picked: bool) -> PageSpec {
+    autocomplete_page_scoped(with_option, picked, false)
+}
+
+fn autocomplete_page_scoped(with_option: bool, picked: bool, with_controls: bool) -> PageSpec {
+    let mut controls = vec![Control::combobox(
+        10,
+        100,
+        "City",
+        (10.0, 10.0, 200.0, 28.0),
+    )];
+    if with_option {
+        controls.push(Control::option(
+            11,
+            110,
+            "Manila",
+            (10.0, 40.0, 200.0, 28.0),
+        ));
+    }
+    if picked {
+        controls.push(Control::button(12, 120, "picked", (10.0, 80.0, 80.0, 24.0)));
+    }
+    let mut page = PageSpec::of(&controls, "http://127.0.0.1/auto", "Auto");
+    if with_controls {
+        page.dom[0]
+            .attributes
+            .push(("aria-controls".to_owned(), "suggestions".to_owned()));
+    }
+    page
+}
+
 #[test]
 fn type_text_over_cdp_sends_argument_not_source_and_verifies_value() {
     let page = search_page();
@@ -245,4 +291,147 @@ fn autocomplete_type_then_option_click_over_cdp() {
     assert_eq!(steps[1].label, "Manila");
     let transport = agent.browser_mut().transport();
     assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+}
+
+#[test]
+fn autocomplete_waits_for_stable_delayed_options_over_cdp() {
+    let empty = autocomplete_page(false, false);
+    let open = autocomplete_page(true, false);
+    let picked = autocomplete_page(true, true);
+    let script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10)
+        .dom_read_autocomplete_signature(10, serde_json::json!("o0:"))
+        .dom_read_autocomplete_signature(10, serde_json::json!("o1:Manila"))
+        .dom_read_autocomplete_signature(10, serde_json::json!("o1:Manila"))
+        .observe(&open) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&open) // TYPE clause → DONE
+        .observe(&open) // predict CLICK Manila
+        .observe(&open) // executor revalidate CLICK
+        .dom_click(11)
+        .observe(&picked) // after CLICK
+        .observe(&picked); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(6)
+        .build(r#"Type "man" into City then click Manila"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    let steps = outcome.steps();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[0].kind, ActionKind::TypeText);
+    assert_eq!(steps[1].kind, ActionKind::Click);
+    assert_eq!(steps[1].label, "Manila");
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+    assert_eq!(autocomplete_poll_calls(transport.logged_calls()).len(), 3);
+}
+
+#[test]
+fn autocomplete_with_no_options_uses_all_bounded_polls_over_cdp() {
+    let empty = autocomplete_page(false, false);
+    let mut script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10);
+    for _ in 0..10 {
+        script = script.dom_read_autocomplete_signature(10, serde_json::json!("o0:"));
+    }
+    let script = script
+        .observe(&empty) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&empty); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1);
+    assert_eq!(outcome.steps()[0].kind, ActionKind::TypeText);
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "all ten polls were consumed");
+    assert_eq!(autocomplete_poll_calls(transport.logged_calls()).len(), 10);
+}
+
+#[test]
+fn autocomplete_polling_stops_when_interrupted_over_cdp() {
+    let empty = autocomplete_page(false, false);
+    let script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidate TYPE
+        .dom_input(10)
+        .dom_read_autocomplete_signature(10, serde_json::json!("o0:"))
+        .dom_read_autocomplete_signature(10, serde_json::Value::Null)
+        .ready_state("complete") // settle after interruption
+        .observe(&empty) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&empty); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1);
+    assert_eq!(outcome.steps()[0].kind, ActionKind::TypeText);
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+    assert_eq!(autocomplete_poll_calls(transport.logged_calls()).len(), 2);
+}
+
+#[test]
+fn autocomplete_waits_past_stable_unrelated_document_options_over_cdp() {
+    let empty = document_wide_autocomplete_page(false, false);
+    let mut script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidation TYPE
+        .dom_input(10);
+    for _ in 0..10 {
+        script = script.dom_read_autocomplete_signature(10, serde_json::json!("d1:Canada"));
+    }
+    let script = script
+        .observe(&empty) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&empty); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1);
+    assert_eq!(outcome.steps()[0].kind, ActionKind::TypeText);
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "all ten polls were consumed");
+    assert_eq!(autocomplete_poll_calls(transport.logged_calls()).len(), 10);
+}
+
+#[test]
+fn autocomplete_stops_when_document_options_change_over_cdp() {
+    let empty = document_wide_autocomplete_page(false, false);
+    let open = document_wide_autocomplete_page(true, false);
+    let script = ScriptBuilder::new()
+        .observe(&empty) // predict TYPE
+        .observe(&empty) // executor revalidation TYPE
+        .dom_input(10)
+        .dom_read_autocomplete_signature(10, serde_json::json!("d1:Canada"))
+        .dom_read_autocomplete_signature(10, serde_json::json!("d2:Canada\u{001f}Manila"))
+        .dom_read_autocomplete_signature(10, serde_json::json!("d2:Canada\u{001f}Manila"))
+        .observe(&open) // after TYPE
+        .dom_read_value(10, "man", "")
+        .observe(&open); // goal → DONE
+    let mut agent = AgentBuilder::new(session(script), InstinctPolicy::default())
+        .max_steps(4)
+        .build(r#"Type "man" into City"#);
+    let outcome = agent.run();
+    assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+    assert_eq!(outcome.steps().len(), 1);
+    assert_eq!(outcome.steps()[0].kind, ActionKind::TypeText);
+
+    let transport = agent.browser_mut().transport();
+    assert_eq!(transport.remaining(), 0, "every scripted call consumed");
+    assert_eq!(autocomplete_poll_calls(transport.logged_calls()).len(), 3);
 }

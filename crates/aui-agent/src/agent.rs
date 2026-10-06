@@ -501,7 +501,7 @@ where
             Err(other) => return Err(AgentError::Ticket(other.to_string())),
         };
 
-        self.browser.settle();
+        self.browser.settle_after_input(&executed.target, &input);
         let after = self.browser.observe()?.clone();
         let after_page = self.browser.page().cloned();
         let page_d = match (executed.before_page.as_ref(), after_page.as_ref()) {

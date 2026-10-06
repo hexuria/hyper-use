@@ -31,7 +31,7 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use aui_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId};
 
@@ -69,6 +69,8 @@ pub enum ScrollDirection {
 
 /// Fraction of the viewport height one page scroll moves.
 pub const SCROLL_VIEWPORT_FRACTION: f64 = 0.8;
+
+const AUTOCOMPLETE_OPTIONS_SIGNATURE_FUNCTION: &str = r#"function(){if(document.readyState!=='complete')return null;const root=this.getRootNode?this.getRootNode():document;const byId=id=>(root.getElementById?root.getElementById(id):null)||document.getElementById(id);const ids=((this.getAttribute('aria-controls')||'')+' '+(this.getAttribute('aria-owns')||'')).split(/\s+/).filter(Boolean);const owned=ids.map(byId).filter(Boolean);const pool=owned.length?owned.flatMap(el=>[...(el.matches('[role=option]')?[el]:[]),...el.querySelectorAll('[role=option]')]):Array.from(document.querySelectorAll('[role=option]'));const options=pool.filter(el=>el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden');return(owned.length?'o':'d')+options.length+':'+options.slice(0,20).map(el=>(el.textContent||'').trim().slice(0,80)).join('\u001f');}"#;
 
 pub struct BrowserSession<T: CdpTransport> {
     transport: T,
@@ -413,13 +415,19 @@ impl<T: CdpTransport> BrowserSession<T> {
             .ok_or_else(|| BrowserError::UnknownRegion(id.to_string()))?;
         // From here CDP click calls may reach the page, even if one fails.
         self.stale = true;
-        if let Some(node_id) = binding.dom_node_id {
-            if self.try_semantic_click(json!({"nodeId": node_id}))? {
-                return Ok(ActMechanism::DomSemantic);
-            }
-        }
-        if let Some(backend) = binding.backend_node_id {
-            if self.try_semantic_click(json!({"backendNodeId": backend}))? {
+        for node in binding
+            .dom_node_id
+            .map(|_| NodeBinding {
+                backend_node_id: None,
+                ..binding.clone()
+            })
+            .into_iter()
+            .chain(binding.backend_node_id.map(|_| NodeBinding {
+                dom_node_id: None,
+                ..binding.clone()
+            }))
+        {
+            if self.try_semantic_click(&node)? {
                 return Ok(ActMechanism::DomSemantic);
             }
         }
@@ -519,42 +527,35 @@ impl<T: CdpTransport> BrowserSession<T> {
             .map(str::to_owned))
     }
 
-    /// Read the observed field's `(value, selected option text)` without
-    /// changing the page. `None` when the node has no value (not a field).
-    /// Used to verify TYPE_TEXT / SELECT postconditions.
+    /// Format `<o|d><count>:<texts joined by U+001F>`; `o` is the owned popup, `d` document-wide.
+    pub fn autocomplete_options_signature(
+        &mut self,
+        id: &RegionId,
+    ) -> Result<Option<String>, BrowserError> {
+        let Some(binding) = self.binding_for(id).ok() else {
+            return Ok(None);
+        };
+        match self.call_function_on_node(&binding, AUTOCOMPLETE_OPTIONS_SIGNATURE_FUNCTION) {
+            Ok(value) => Ok(value.and_then(|value| value.as_str().map(str::to_owned))),
+            Err(BrowserError::TargetUnresolved | BrowserError::Cdp(CdpError::Protocol { .. })) => {
+                Ok(None)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Read `(value, selected text)` without mutation; `None` if absent.
     pub fn field_value(&mut self, id: &RegionId) -> Result<Option<(String, String)>, BrowserError> {
         let binding = self.binding_for(id)?;
-        let node = match (binding.dom_node_id, binding.backend_node_id) {
-            (Some(node_id), _) => json!({"nodeId": node_id}),
-            (None, Some(backend)) => json!({"backendNodeId": backend}),
-            (None, None) => return Err(BrowserError::TargetUnresolved),
-        };
-        let resolved = self.call("DOM.resolveNode", &node.to_string())?;
-        let object_id = extract::object_id(&resolved)?;
-        let params = json!({
-            "functionDeclaration": DOM_READ_VALUE_FUNCTION,
-            "objectId": object_id,
-            "returnByValue": true
-        })
-        .to_string();
-        let body = self.call("Runtime.callFunctionOn", &params)?;
-        if extract::call_threw(&body)? {
+        let Some(value) = self.call_function_on_node(&binding, DOM_READ_VALUE_FUNCTION)? else {
             return Ok(None);
-        }
-        let value: serde_json::Value =
-            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
-                message: err.to_string(),
-            })?;
-        let Some(pair) = value
-            .get("result")
-            .and_then(|r| r.get("value"))
-            .and_then(serde_json::Value::as_array)
-        else {
+        };
+        let Some(pair) = value.as_array() else {
             return Ok(None);
         };
         let get = |i: usize| {
             pair.get(i)
-                .and_then(serde_json::Value::as_str)
+                .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned()
         };
@@ -571,6 +572,30 @@ impl<T: CdpTransport> BrowserSession<T> {
             .ok_or_else(|| BrowserError::UnknownRegion(id.to_string()))
     }
 
+    fn call_function_on_node(
+        &mut self,
+        binding: &NodeBinding,
+        function: &str,
+    ) -> Result<Option<Value>, BrowserError> {
+        let node = match (binding.dom_node_id, binding.backend_node_id) {
+            (Some(node_id), _) => json!({"nodeId": node_id}),
+            (None, Some(backend_node_id)) => json!({"backendNodeId": backend_node_id}),
+            (None, None) => return Err(BrowserError::TargetUnresolved),
+        };
+        let object_id = extract::object_id(&self.call("DOM.resolveNode", &node.to_string())?)?;
+        let params =
+            json!({"functionDeclaration":function,"objectId":object_id,"returnByValue":true})
+                .to_string();
+        let body = self.call("Runtime.callFunctionOn", &params)?;
+        if extract::call_threw(&body)? {
+            return Ok(None);
+        }
+        let value: Value = serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+            message: err.to_string(),
+        })?;
+        Ok(Some(value["result"]["value"].clone()))
+    }
+
     /// Resolve the bound node (node id, then backend id) and call `function`
     /// with one string argument. A thrown function is a page refusal and
     /// stops immediately; only an unresolvable node moves to the next tier.
@@ -580,14 +605,16 @@ impl<T: CdpTransport> BrowserSession<T> {
         function: &str,
         value: &str,
     ) -> Result<(), BrowserError> {
-        let mut tiers = Vec::new();
-        if let Some(node_id) = binding.dom_node_id {
-            tiers.push(json!({"nodeId": node_id}));
-        }
-        if let Some(backend) = binding.backend_node_id {
-            tiers.push(json!({"backendNodeId": backend}));
-        }
-        for node in tiers {
+        for node in binding
+            .dom_node_id
+            .map(|node_id| json!({"nodeId": node_id}))
+            .into_iter()
+            .chain(
+                binding
+                    .backend_node_id
+                    .map(|backend| json!({"backendNodeId": backend})),
+            )
+        {
             let resolved = match self.call("DOM.resolveNode", &node.to_string()) {
                 Ok(body) => body,
                 Err(BrowserError::Cdp(CdpError::Protocol { .. })) => continue,
@@ -637,22 +664,9 @@ impl<T: CdpTransport> BrowserSession<T> {
         }
     }
 
-    /// `node` is `{"nodeId": n}` or `{"backendNodeId": n}`.
-    fn try_semantic_click(&mut self, node: serde_json::Value) -> Result<bool, BrowserError> {
-        let resolved = match self.call("DOM.resolveNode", &node.to_string()) {
-            Ok(body) => body,
-            Err(BrowserError::Cdp(CdpError::Protocol { .. })) => return Ok(false),
-            Err(other) => return Err(other),
-        };
-        let object_id = extract::object_id(&resolved)?;
-        let params = json!({
-            "functionDeclaration": DOM_CLICK_FUNCTION,
-            "objectId": object_id,
-            "returnByValue": true
-        })
-        .to_string();
-        match self.call("Runtime.callFunctionOn", &params) {
-            Ok(body) => Ok(!extract::call_threw(&body)?),
+    fn try_semantic_click(&mut self, binding: &NodeBinding) -> Result<bool, BrowserError> {
+        match self.call_function_on_node(binding, DOM_CLICK_FUNCTION) {
+            Ok(value) => Ok(value.is_some()),
             Err(BrowserError::Cdp(CdpError::Protocol { .. })) => Ok(false),
             Err(other) => Err(other),
         }

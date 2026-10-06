@@ -166,93 +166,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
-name = "hyper-use-browser"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "hyper-use-geometry",
- "hyper-use-observe",
- "serde_json",
- "tungstenite",
-]
-
-[[package]]
-name = "hyper-use-core"
-version = "0.1.0"
-
-[[package]]
-name = "hyper-use-fuzz"
+name = "instinct-core"
 version = "0.0.0"
+source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
 dependencies = [
- "hyper-use-browser",
- "hyper-use-core",
- "hyper-use-mcp",
- "hyper-use-policy",
- "libfuzzer-sys",
- "serde_json",
+ "blake3",
 ]
 
 [[package]]
-name = "hyper-use-geometry"
-version = "0.1.0"
+name = "instinct-lexicon"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
 dependencies = [
- "hyper-use-core",
+ "instinct-core",
+ "instinct-text",
 ]
 
 [[package]]
-name = "hyper-use-guard"
-version = "0.1.0"
+name = "instinct-text"
+version = "0.0.0"
+source = "git+https://github.com/hexuria/instinct?rev=a42d16b6f5ccc3273939c8e3d3f462d78765bfea#a42d16b6f5ccc3273939c8e3d3f462d78765bfea"
 dependencies = [
- "hyper-use-core",
- "hyper-use-protocol",
- "hyper-use-resonance",
-]
-
-[[package]]
-name = "hyper-use-mcp"
-version = "0.1.0"
-dependencies = [
- "hyper-use-browser",
- "hyper-use-core",
- "hyper-use-guard",
- "hyper-use-observe",
- "hyper-use-protocol",
- "hyper-use-resonance",
- "serde_json",
-]
-
-[[package]]
-name = "hyper-use-observe"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
-]
-
-[[package]]
-name = "hyper-use-policy"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "pua-core",
- "pua-lexicon",
- "pua-text",
- "serde_json",
-]
-
-[[package]]
-name = "hyper-use-protocol"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
-]
-
-[[package]]
-name = "hyper-use-resonance"
-version = "0.1.0"
-dependencies = [
- "hyper-use-core",
- "hyper-use-geometry",
- "tracing",
+ "instinct-core",
+ "unicode-normalization",
+ "unicode-security",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -327,34 +265,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "pua-core"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
-dependencies = [
- "blake3",
-]
-
-[[package]]
-name = "pua-lexicon"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
-dependencies = [
- "pua-core",
- "pua-text",
-]
-
-[[package]]
-name = "pua-text"
-version = "0.0.0"
-source = "git+https://github.com/hexuria/pua?rev=fe3f1fd3818feb452fae1771ff2171b8598f86e6#fe3f1fd3818feb452fae1771ff2171b8598f86e6"
-dependencies = [
- "pua-core",
- "unicode-normalization",
- "unicode-security",
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -567,6 +477,96 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ultra-instinct-browser"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tungstenite",
+ "ultra-instinct-core",
+ "ultra-instinct-geometry",
+ "ultra-instinct-observe",
+]
+
+[[package]]
+name = "ultra-instinct-core"
+version = "0.1.0"
+
+[[package]]
+name = "ultra-instinct-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "serde_json",
+ "ultra-instinct-browser",
+ "ultra-instinct-core",
+ "ultra-instinct-mcp",
+ "ultra-instinct-policy",
+]
+
+[[package]]
+name = "ultra-instinct-geometry"
+version = "0.1.0"
+dependencies = [
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-guard"
+version = "0.1.0"
+dependencies = [
+ "ultra-instinct-core",
+ "ultra-instinct-protocol",
+ "ultra-instinct-resonance",
+]
+
+[[package]]
+name = "ultra-instinct-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "ultra-instinct-browser",
+ "ultra-instinct-core",
+ "ultra-instinct-guard",
+ "ultra-instinct-observe",
+ "ultra-instinct-protocol",
+ "ultra-instinct-resonance",
+]
+
+[[package]]
+name = "ultra-instinct-observe"
+version = "0.1.0"
+dependencies = [
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-policy"
+version = "0.1.0"
+dependencies = [
+ "instinct-core",
+ "instinct-lexicon",
+ "instinct-text",
+ "serde_json",
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-protocol"
+version = "0.1.0"
+dependencies = [
+ "ultra-instinct-core",
+]
+
+[[package]]
+name = "ultra-instinct-resonance"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "ultra-instinct-core",
+ "ultra-instinct-geometry",
+]
 
 [[package]]
 name = "unicode-ident"

@@ -11,7 +11,7 @@ use aui_browser::{
 use aui_core::{ActionKind, ActionSpace};
 use aui_policy::{
     AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
-    PolicyOutcome,
+    PolicyOutcome, TextContext, TextError, TextResolution, TextResolver,
 };
 use serde_json::{json, Value};
 
@@ -49,6 +49,14 @@ impl BrowserPolicy for SelectThenDone {
             operation_ranked: Vec::new(),
             target_ranked: Vec::new(),
         }))
+    }
+}
+
+struct AbstainingTextResolver;
+
+impl TextResolver for AbstainingTextResolver {
+    fn resolve(&mut self, _context: &TextContext) -> Result<TextResolution, TextError> {
+        Err(TextError::Abstain("no resolver value".into()))
     }
 }
 
@@ -281,6 +289,38 @@ fn unquoted_select_goal_uses_observed_option_text() {
         .observe_compact(&page)
         .dom_read_value(20, "business", "Business");
     let mut agent = AgentBuilder::new(session(script), SelectThenDone)
+        .max_steps(2)
+        .build("Set cabin class to business");
+    let prediction = agent.predict().unwrap().expect("select").clone();
+    assert_eq!(
+        prediction.decision.kind,
+        ActionKind::Select,
+        "{prediction:?}"
+    );
+    assert_eq!(prediction.payload.as_deref(), Some("Business"));
+
+    let record = agent.act().unwrap();
+    assert_eq!(record.verification, VerificationKind::Success);
+    let functions = calls_of(
+        agent.browser_mut().transport().logged_calls(),
+        "Runtime.callFunctionOn",
+    );
+    assert_eq!(functions[0]["functionDeclaration"], DOM_SELECT_FUNCTION);
+    assert_eq!(functions[0]["arguments"][0]["value"], "Business");
+}
+
+#[test]
+fn unquoted_select_goal_uses_observed_option_text_when_resolver_abstains() {
+    let page = cabin_page_with_observed_options();
+    let script = ScriptBuilder::new()
+        .observe_compact(&page)
+        .observe_compact(&page)
+        .dom_input(20)
+        .ready_state("complete")
+        .observe_compact(&page)
+        .dom_read_value(20, "business", "Business");
+    let mut agent = AgentBuilder::new(session(script), SelectThenDone)
+        .text_resolver(AbstainingTextResolver)
         .max_steps(2)
         .build("Set cabin class to business");
     let prediction = agent.predict().unwrap().expect("select").clone();

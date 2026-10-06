@@ -64,7 +64,10 @@ crate.
 >    there is no coordinate tier for text. SELECT payloads are grounded in
 >    observed enabled options when observe captured them: resolver text must
 >    equal one option label, else exactly one option label must occur in the
->    goal, else the agent abstains.
+>    goal, else the agent abstains. The deterministic resolver excludes
+>    literals successfully typed earlier, then picks an untyped quoted literal
+>    whose preceding three goal words share a word with the field label, else
+>    the first untyped literal, else abstains (parity with the bench A3q helper).
 > 7a. **Model text is payload-only and grounded** (feature `model-text`,
 >    ADR 0006). The model fills the payload of an action Instinct already chose;
 >    replies must echo the context fingerprint, pass shape checks, and occur

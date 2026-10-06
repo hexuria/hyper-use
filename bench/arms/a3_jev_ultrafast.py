@@ -4,17 +4,48 @@ Pinned at bench/vendor/jev-ultrafast. Three bench patches, all by monkeypatch, n
 - the JEV systemone URL goes to the counting proxy (``spec["typesafe_base"]``),
 - the 1120x780 device-metrics override becomes the bench's 1280x800,
 - the text helper is GPT 6 Luna through the proxy (its upstream default is DeepSeek).
+
+A3q (``arm_options.text == "quoted"``) swaps the text helper for ``quoted_field_text``:
+the goal's quoted literal, no model call. That matches A9 / A10, which type quoted
+literals too, so the race compares decisions and loops, not text models.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from arms.common import Trace, goal_text, load_spec  # noqa: E402
+
+
+QUOTED = re.compile(r'"([^"]+)"|\u201c([^\u201d]+)\u201d')
+WORD = re.compile(r"[a-z0-9]+")
+
+
+def quoted_field_text(context):
+    """Bench-only text helper: a quoted goal literal for this field, no model call.
+
+    Prefers an untyped literal whose three preceding goal words share a word with the
+    field label ("street \"12 Mabini St\"" -> Street), else the first untyped literal.
+    """
+    goal = context["goal"]
+    label = set(WORD.findall((context["field"].get("label") or "").lower()))
+    typed = {h.get("text") for h in context["recent_actions"] if h.get("text")}
+    literals = []
+    for m in QUOTED.finditer(goal):
+        before = set(WORD.findall(goal[max(0, m.start() - 32):m.start()].lower())[-3:])
+        literals.append((m[1] or m[2], before))
+    untyped = [(value, before) for value, before in literals if value not in typed]
+    for value, before in untyped:
+        if label & before:
+            return value, {"model": "quoted-literal", "latency_ms": 0, "usage": {}}
+    if untyped:
+        return untyped[0][0], {"model": "quoted-literal", "latency_ms": 0, "usage": {}}
+    raise ValueError("No quoted literal left for this field; nothing typed.")
 
 
 def main() -> None:
@@ -29,6 +60,7 @@ def main() -> None:
         "TYPESAFE_MODEL": spec.get("jev_model", "jev-latest"),
     })
     sys.path.insert(0, str(Path(spec["root"]) / "bench/vendor/jev-ultrafast"))
+    from jev_ultrafast import agent as jagent
     from jev_ultrafast import browser as jbrowser
     from jev_ultrafast import model as jmodel
     from jev_ultrafast.agent import Agent
@@ -39,6 +71,8 @@ def main() -> None:
         return real_post(url.replace("https://api.typesafe.ai", spec["typesafe_base"]), key, body)
 
     jmodel.post_json = post_json
+    if spec["arm_options"].get("text") == "quoted":
+        jagent.field_text = quoted_field_text
     real_call = jbrowser.Browser.call
     vp = spec["viewport"]
 

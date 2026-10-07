@@ -342,6 +342,15 @@ impl BrowserRuntime for Flicker {
     fn scroll(&mut self, _direction: ScrollDirection) -> Result<(), AgentError> {
         Ok(())
     }
+    fn last_observation(&self) -> Option<&InteractionManifold> {
+        // The last `observe` incremented `n`, so the odd/even mock that just
+        // served owns the cached manifold.
+        if self.n % 2 == 1 {
+            self.a.last_observation()
+        } else {
+            self.b.last_observation()
+        }
+    }
 }
 
 #[test]

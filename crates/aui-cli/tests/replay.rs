@@ -81,3 +81,61 @@ fn a_fresh_instinct_diary_replays_to_full_agreement() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Learned trust enters scoring only through the capped evidence path
+/// (issue #49, work item 4): a store that agrees with the recorded runs
+/// must leave every verdict untouched — replay no-regressions with
+/// evidence present. The bounded flip lives in aui-policy unit tests.
+#[test]
+fn a_lesson_store_does_not_regress_recorded_runs() {
+    let dir = std::env::temp_dir().join(format!("aui-replay-lessons-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        fixture("diary-divergence.jsonl"),
+        dir.join("divergence.jsonl"),
+    )
+    .unwrap();
+
+    // Trust for the fixture's situation key: "Go" with a winning streak
+    // learned from a proving diary. Bounded evidence, applied on every
+    // decision — and the recorded verdicts must not move.
+    let situation = aui_dojo::Situation::default();
+    let key = aui_dojo::situation_key(None, &situation, "Click Go");
+    let mut store = aui_dojo::LessonStore::default();
+    store.trust.entry(key).or_default().insert(
+        "Go".to_owned(),
+        aui_dojo::Trust {
+            wins: 9,
+            losses: 0,
+            last_seen_ms: 1_791_000_000_000,
+            diaries: vec!["training-run".to_owned()],
+        },
+    );
+    let store_path = dir.join("lessons.json");
+    aui_dojo::save_lessons(&store, &store_path).unwrap();
+
+    let with_lessons = aui_cli::execute(&[
+        "replay".to_owned(),
+        "--diary".to_owned(),
+        dir.to_str().unwrap().to_owned(),
+        "--lessons".to_owned(),
+        store_path.to_str().unwrap().to_owned(),
+    ])
+    .unwrap();
+    let baseline = aui_cli::execute(&[
+        "replay".to_owned(),
+        "--diary".to_owned(),
+        dir.to_str().unwrap().to_owned(),
+    ])
+    .unwrap();
+
+    for line in baseline.lines() {
+        assert!(
+            with_lessons.contains(line),
+            "verdict moved: {line}\n{with_lessons}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

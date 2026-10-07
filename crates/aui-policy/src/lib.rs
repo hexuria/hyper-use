@@ -23,7 +23,7 @@ mod types;
 pub use escalate::EscalatingPolicy;
 pub use evidence::{label_covers_target, label_names_target};
 pub use goal::{split_sequential_clauses, AgentGoal};
-pub use instinct_policy::{InstinctPolicy, HABITUATION_STEP};
+pub use instinct_policy::{InstinctPolicy, HABITUATION_STEP, TRUST_CAP_MILLIS};
 #[cfg(feature = "model-text")]
 pub use model_text::{
     parse_command_reply, vet, CommandTextModel, Grounding, ModelRefusal, ModelTextResolver,

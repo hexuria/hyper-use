@@ -106,23 +106,31 @@ pub fn replay_command(args: &[String]) -> Result<String, CliError> {
         });
     }
 
+    let lessons = match &parsed.lessons {
+        Some(store) => {
+            Some(
+                aui_dojo::load_lessons(Path::new(store)).map_err(|e| CliError::Io {
+                    path: store.clone(),
+                    message: e.to_string(),
+                })?,
+            )
+        }
+        None => None,
+    };
     let mut out = String::new();
     if let Some(store) = &parsed.lessons {
-        let lessons = aui_dojo::load_lessons(Path::new(store)).map_err(|e| CliError::Io {
-            path: store.clone(),
-            message: e.to_string(),
-        })?;
+        let lessons = lessons.as_ref().expect("loaded above");
         let words: usize = lessons.words.values().map(Vec::len).sum();
         let moves: usize = lessons.moves.values().map(Vec::len).sum();
         let trust_pairs: usize = lessons.trust.values().map(|m| m.len()).sum();
         out.push_str(&format!(
-            "lessons {store}: {} places, {words} words, {moves} moves, {trust_pairs} trust pairs (evidence wiring lands in work item 4)\n",
+            "lessons {store}: {} places, {words} words, {moves} moves, {trust_pairs} trust pairs (trust applied as evidence)\n",
             lessons.places.len(),
         ));
     }
     let mut total = Report::default();
     for file in &files {
-        let report = replay_file(file, &mut out)?;
+        let report = replay_file(file, lessons.as_ref(), &mut out)?;
         out.push_str(&format!("{}: {}\n", file.display(), report.render()));
         total.add(&report);
     }
@@ -130,7 +138,11 @@ pub fn replay_command(args: &[String]) -> Result<String, CliError> {
     Ok(out)
 }
 
-fn replay_file(path: &Path, out: &mut String) -> Result<Report, CliError> {
+fn replay_file(
+    path: &Path,
+    lessons: Option<&aui_dojo::LessonStore>,
+    out: &mut String,
+) -> Result<Report, CliError> {
     let lines = read_diary(path).map_err(|e| CliError::Io {
         path: path.display().to_string(),
         message: e.to_string(),
@@ -144,6 +156,9 @@ fn replay_file(path: &Path, out: &mut String) -> Result<Report, CliError> {
             continue;
         };
         report.decisions += 1;
+        if let Some(store) = lessons {
+            apply_trust(&mut policy, store, decision, aui_dojo::diary_stamp_ms(path));
+        }
         match score_decision(&mut policy, decision) {
             Some((verdict, replayed)) => {
                 match verdict {
@@ -186,6 +201,29 @@ fn score_decision(
     let outcome = policy.decide(&space, &goal, &history).ok()?;
     let verdict = compare(decision, &outcome);
     Some((verdict, outcome))
+}
+
+/// Set this decision's learned-trust evidence on the policy: the
+/// situation key of the recorded decision indexes the store's per-
+/// situation trust table; `last_seen` ages against the run's own stamp
+/// so replay asks "what would the policy do at that time".
+fn apply_trust(
+    policy: &mut InstinctPolicy,
+    store: &aui_dojo::LessonStore,
+    decision: &DecisionLine,
+    now_ms: u64,
+) {
+    let key = aui_dojo::situation_key(
+        decision.site.as_ref(),
+        &decision.situation,
+        &decision.clause,
+    );
+    let map = store
+        .trust
+        .get(&key)
+        .map(|table| aui_dojo::label_bonus_map(table, now_ms))
+        .unwrap_or_default();
+    policy.set_evidence_adjustments(map);
 }
 
 fn history_entries(decision: &DecisionLine) -> Vec<HistoryEntry> {

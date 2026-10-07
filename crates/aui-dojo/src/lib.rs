@@ -14,6 +14,7 @@ pub mod lessons;
 pub mod line;
 pub mod rebuild;
 pub mod site;
+pub mod trust;
 
 pub use diary::{read_diary, DiaryWriter};
 pub use error::DojoError;
@@ -28,3 +29,4 @@ pub use line::{
 };
 pub use rebuild::{action_space, element_state};
 pub use site::{site_line, situation_key};
+pub use trust::{label_bonus_map, trust_bonus};

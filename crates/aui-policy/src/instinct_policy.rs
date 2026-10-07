@@ -18,26 +18,59 @@ pub const HABITUATION_STEP: i16 = 250;
 
 /// Instinct-backed finite policy. Hard-invalid targets are already absent from
 /// [`ActionSpace`]; this policy never applies occlusion/disabled as scores.
+/// Hard cap on learned-trust evidence, in confidence millis. Kept well
+/// below the Standard profile's `min_margin` (150) so a lesson can break a
+/// near-tie but can never lift a candidate over the bar on its own.
+pub const TRUST_CAP_MILLIS: i16 = 75;
+
 #[derive(Clone, Debug)]
 pub struct InstinctPolicy {
     profile: Profile,
+    /// Learned-trust evidence: target label -> bonus millis (clamped to
+    /// +/-TRUST_CAP_MILLIS at apply time). Set by the dojo around decide;
+    /// empty on every other path.
+    adjustments: BTreeMap<String, i16>,
 }
 
 impl Default for InstinctPolicy {
     fn default() -> Self {
         Self {
             profile: Profile::Standard,
+            adjustments: BTreeMap::new(),
         }
     }
 }
 
 impl InstinctPolicy {
     pub fn new(profile: Profile) -> Self {
-        Self { profile }
+        Self {
+            profile,
+            adjustments: BTreeMap::new(),
+        }
     }
 
     pub fn profile(&self) -> Profile {
         self.profile
+    }
+
+    /// Replace the learned-trust evidence for the next `decide` calls.
+    /// Keys are target labels; values are bonus/penalty millis clamped to
+    /// +/-[`TRUST_CAP_MILLIS`] when applied.
+    pub fn set_evidence_adjustments(&mut self, adjustments: BTreeMap<String, i16>) {
+        self.adjustments = adjustments;
+    }
+
+    /// `base` evidence for `action` plus this label's learned-trust
+    /// adjustment, capped and saturated — the only place lessons enter
+    /// Instinct's arithmetic.
+    fn adjusted(&self, action: &ObservedAction, base: Confidence) -> Confidence {
+        let bonus = self
+            .adjustments
+            .get(action.label())
+            .copied()
+            .unwrap_or(0)
+            .clamp(-TRUST_CAP_MILLIS, TRUST_CAP_MILLIS);
+        Confidence::saturating(i32::from(base.get()) + i32::from(bonus))
     }
 }
 
@@ -68,7 +101,7 @@ impl BrowserPolicy for InstinctPolicy {
         for kind in kinds.iter().copied() {
             let best = space
                 .targets_of(kind)
-                .max_by_key(|a| score_action(goal_text, a).get());
+                .max_by_key(|a| self.adjusted(a, score_action(goal_text, a)).get());
             let id = if kind.is_control() {
                 ActionId::try_new(kind.as_str())
                     .map_err(|e| PolicyError::Internal(e.to_string()))?
@@ -137,7 +170,7 @@ impl BrowserPolicy for InstinctPolicy {
 
         let target_scores: Vec<(&ObservedAction, Confidence)> = targets
             .iter()
-            .map(|a| (*a, score_action(goal_text, a)))
+            .map(|a| (*a, self.adjusted(a, score_action(goal_text, a))))
             .collect();
 
         let (chosen, target_ranked) = choose_targets(&target_scores, history, self.profile)?;
@@ -548,6 +581,95 @@ mod tests {
             }
             PolicyOutcome::Choice(c) => panic!("expected abstain, got {c:?}"),
         }
+    }
+
+    /// Learned-trust evidence (issue #49, item 4): a penalty drops an
+    /// at-threshold winner to abstain — evidence enters through the
+    /// capped adjustment only.
+    #[test]
+    fn learned_trust_penalty_flips_at_threshold() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=a role=button label="Archive this conversation thread" x=10 y=10 w=160 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = AgentGoal::new("Archive");
+        let mut policy = InstinctPolicy::default();
+        assert!(
+            policy
+                .decide(&space, &goal, &[])
+                .unwrap()
+                .as_choice()
+                .is_some(),
+            "baseline should win at the bar"
+        );
+        let mut adj = BTreeMap::new();
+        adj.insert("Archive this conversation thread".to_owned(), -75_i16);
+        policy.set_evidence_adjustments(adj);
+        let outcome = policy.decide(&space, &goal, &[]).unwrap();
+        assert!(
+            outcome.as_choice().is_none(),
+            "-75 on a 750 baseline must abstain, got {outcome:?}"
+        );
+    }
+
+    /// The cap is hard: an out-of-range entry applies as exactly
+    /// +/-TRUST_CAP_MILLIS, so a huge bogus lesson can never bury a winner.
+    #[test]
+    fn learned_trust_adjustment_is_capped() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=signin role=button label="Sign in" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = AgentGoal::new("Sign in");
+        let mut policy = InstinctPolicy::default();
+        let mut adj = BTreeMap::new();
+        adj.insert("Sign in".to_owned(), -10_000_i16);
+        policy.set_evidence_adjustments(adj);
+        let outcome = policy.decide(&space, &goal, &[]).unwrap();
+        let choice = outcome
+            .as_choice()
+            .unwrap_or_else(|| panic!("clamped -75 must still win at 1000-75=925: {outcome:?}"));
+        assert_eq!(choice.target_label, "Sign in");
+        assert_eq!(
+            choice.confidence_millis, 925,
+            "adjustment applied as exactly -{TRUST_CAP_MILLIS}"
+        );
+    }
+
+    /// Bounded below the threshold-margin gap: even a full +TRUST_CAP
+    /// boost on one of two tied labels leaves margin < min_margin, so a
+    /// lesson can never break a tie into a choice.
+    #[test]
+    fn learned_trust_cannot_break_a_tie() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=a role=button label="Send feedback" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+            region id=b role=button label="Send to device" x=10 y=50 w=80 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let goal = AgentGoal::new("Send");
+        let mut policy = InstinctPolicy::default();
+        assert!(
+            policy
+                .decide(&space, &goal, &[])
+                .unwrap()
+                .as_choice()
+                .is_none(),
+            "baseline tie should abstain"
+        );
+        let mut adj = BTreeMap::new();
+        adj.insert("Send to device".to_owned(), TRUST_CAP_MILLIS);
+        policy.set_evidence_adjustments(adj);
+        let outcome = policy.decide(&space, &goal, &[]).unwrap();
+        assert!(
+            outcome.as_choice().is_none(),
+            "a bounded lesson must not break a tie, got {outcome:?}"
+        );
     }
 
     #[test]

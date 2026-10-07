@@ -17,6 +17,7 @@ aui-mcp = { path = "../aui-mcp" }
 aui-protocol = { path = "../aui-protocol" }
 aui-agent = { path = "../aui-agent" }
 aui-policy = { path = "../aui-policy" }
+aui-dojo = { path = "../aui-dojo" }
 
 [dev-dependencies]
 serde_json = "1"

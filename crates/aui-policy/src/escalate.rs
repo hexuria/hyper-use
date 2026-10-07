@@ -11,11 +11,16 @@ use aui_core::ActionSpace;
 pub struct EscalatingPolicy<L, H> {
     pub local: L,
     pub fallback: Option<H>,
+    last: &'static str,
 }
 
 impl<L, H> EscalatingPolicy<L, H> {
     pub fn new(local: L, fallback: Option<H>) -> Self {
-        Self { local, fallback }
+        Self {
+            local,
+            fallback,
+            last: "none",
+        }
     }
 }
 
@@ -24,6 +29,7 @@ impl<L> EscalatingPolicy<L, L> {
         Self {
             local,
             fallback: None,
+            last: "none",
         }
     }
 }
@@ -40,13 +46,26 @@ where
         history: &[HistoryEntry],
     ) -> Result<PolicyOutcome, PolicyError> {
         let first = self.local.decide(space, goal, history)?;
+        self.last = self.local.decision_source();
         if first.as_choice().is_some() {
             return Ok(first);
         }
         if let Some(fallback) = self.fallback.as_mut() {
-            return fallback.decide(space, goal, history);
+            let outcome = fallback.decide(space, goal, history)?;
+            self.last = fallback.decision_source();
+            return Ok(outcome);
         }
         Ok(first)
+    }
+
+    fn name(&self) -> &'static str {
+        "escalating"
+    }
+
+    /// The arm that answered the most recent decision — the diary records
+    /// `instinct` vs `jev`/`clef-flash`, not the `escalating` wrapper.
+    fn decision_source(&self) -> &'static str {
+        self.last
     }
 }
 

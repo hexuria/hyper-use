@@ -35,8 +35,10 @@ aui-agent: aui-core aui-browser aui-guard aui-observe aui-policy aui-protocol
     | tokio axum sqlx reqwest hyper typesafe-sdk
 aui-mcp: aui-protocol aui-core aui-resonance aui-browser aui-guard aui-observe
     | tokio axum sqlx reqwest hyper typesafe-sdk
-aui-cli: aui-core aui-resonance aui-browser aui-guard aui-observe aui-mcp aui-protocol aui-agent aui-policy
+aui-cli: aui-core aui-resonance aui-browser aui-guard aui-observe aui-mcp aui-protocol aui-agent aui-policy aui-dojo
     | axum sqlx
+aui-dojo: aui-core
+    | tokio axum sqlx reqwest hyper typesafe-sdk
 # Frozen experiment (HGRA). Leaf crate: no aui-* edges, no async/network deps.
 aui-hyper:
     | tokio axum sqlx reqwest hyper typesafe-sdk

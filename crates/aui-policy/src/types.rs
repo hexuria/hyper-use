@@ -91,4 +91,16 @@ pub trait BrowserPolicy {
         goal: &AgentGoal,
         history: &[HistoryEntry],
     ) -> Result<PolicyOutcome, PolicyError>;
+
+    /// Stable name recorded in the battle diary (`instinct`, `jev`,
+    /// `clef-flash`, …). Default keeps old test policies honest.
+    fn name(&self) -> &'static str {
+        "policy"
+    }
+
+    /// Which arm produced the most recent decision. Escalating policies
+    /// override this to report the arm that answered, not the wrapper.
+    fn decision_source(&self) -> &'static str {
+        self.name()
+    }
 }

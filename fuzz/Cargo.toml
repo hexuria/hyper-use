@@ -20,6 +20,7 @@ aui-core = { path = "../crates/aui-core" }
 aui-browser = { path = "../crates/aui-browser", features = ["fuzz-support"] }
 aui-mcp = { path = "../crates/aui-mcp" }
 aui-policy = { path = "../crates/aui-policy", features = ["remote", "model-text"] }
+aui-dojo = { path = "../crates/aui-dojo" }
 
 [[bin]]
 name = "fixture"
@@ -59,6 +60,13 @@ bench = false
 [[bin]]
 name = "compact_snapshot"
 path = "fuzz_targets/compact_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "diary_line"
+path = "fuzz_targets/diary_line.rs"
 test = false
 doc = false
 bench = false

@@ -65,6 +65,7 @@ dependencies = [
  "aui-agent",
  "aui-browser",
  "aui-core",
+ "aui-dojo",
  "aui-guard",
  "aui-mcp",
  "aui-observe",
@@ -79,6 +80,15 @@ dependencies = [
 [[package]]
 name = "aui-core"
 version = "0.1.0"
+
+[[package]]
+name = "aui-dojo"
+version = "0.1.0"
+dependencies = [
+ "aui-core",
+ "proptest",
+ "serde_json",
+]
 
 [[package]]
 name = "aui-geometry"

@@ -1,0 +1,23 @@
+#![forbid(unsafe_code)]
+//! The dojo: ultra-instinct's learning loop over its own battle diaries.
+//!
+//! The agent never touches files — it emits journal events; `aui-cli`
+//! maps them into [`line::DiaryLine`]s and a [`diary::DiaryWriter`]. The
+//! diary is the evidence base the replay arena, lesson store, and belt
+//! exams all read. Lessons only ever adjust evidence inside the finite
+//! `ActionSpace`; they never pick an off-menu action and never bypass the
+//! guard/ticket/executor chain (the anti-drift rules own that path).
+
+pub mod diary;
+pub mod error;
+pub mod line;
+pub mod site;
+
+pub use diary::{read_diary, DiaryWriter};
+pub use error::DojoError;
+pub use line::{
+    parse_line, ChoiceLine, ClauseLine, CorrectionLine, DecisionLine, DiaryLine, HistoryLine,
+    OfferedLine, OfferedState, OutcomeLine, RankedLine, RunLine, SiteLine, Situation, StaleLine,
+    StepLine, SCHEMA,
+};
+pub use site::{site_line, situation_key};

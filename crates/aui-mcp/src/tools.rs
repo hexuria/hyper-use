@@ -178,7 +178,7 @@ fn observe(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
                 "role": region.role().as_str(),
                 "label": region.label(),
                 "parent": region.parent().map_or(Value::Null, |id| json!(id.as_str())),
-                "state": state_json(&manifold, region),
+                "state": state_json(manifold.as_ref(), region),
             })
         })
         .collect();
@@ -211,7 +211,7 @@ fn locate(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     if arguments.get("dims").is_some() && matcher_name != "hgra" {
         return Err(ToolError::DimsRequireHgra);
     }
-    let ranked = rank(&manifold, &query, &matcher_name, arguments)?;
+    let ranked = rank(manifold.as_ref(), &query, &matcher_name, arguments)?;
     let key = QueryKey::new(&query, &matcher_name, opt_u64(arguments, "dims")?);
     let count = server.record_locate(&origin_key(&origin), &raw, key);
     let top = ranked.first();
@@ -317,7 +317,7 @@ fn inspect(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
         "id": found.id().as_str(),
         "role": found.role().as_str(),
         "label": found.label(),
-        "state": state_json(&manifold, found),
+        "state": state_json(manifold.as_ref(), found),
         "parent": found.parent().map_or(Value::Null, |id| json!(id.as_str())),
         "blocked_by": blocker(&raw, found).map_or(Value::Null, |dialog| json!(dialog.id().as_str())),
         "x": found.rect().x(),
@@ -415,7 +415,7 @@ fn guard_tool(server: &mut Server, arguments: &Value) -> Result<Value, ToolError
     insert(
         &mut body,
         "scope",
-        scope_json(&query, &with_front_layer(&manifold)),
+        scope_json(&query, with_front_layer(&manifold).as_ref()),
     );
     Ok(body)
 }

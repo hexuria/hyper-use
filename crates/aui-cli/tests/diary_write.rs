@@ -7,7 +7,7 @@ use aui_core::{
     InteractionRegion, Rect, RegionFlags, RegionId, RegionParts, Role, SourceMask, UnitInterval,
 };
 use aui_dojo::{read_diary, DiaryLine};
-use aui_policy::{HistoryEntry, PolicyDecision, PolicyOutcome};
+use aui_policy::{PolicyDecision, PolicyOutcome};
 
 use aui_cli::diary::write_diary;
 
@@ -49,7 +49,7 @@ fn decision(space: ActionSpace) -> JournalEvent {
         front_layer: false,
         roles: vec!["textfield"],
         near: Vec::new(),
-        space,
+        space: std::sync::Arc::new(space),
         outcome: PolicyOutcome::Choice(PolicyDecision {
             action_id: ActionId::try_new("TYPE_TEXT:pw").unwrap(),
             kind: ActionKind::TypeText,
@@ -58,7 +58,6 @@ fn decision(space: ActionSpace) -> JournalEvent {
             operation_ranked: Vec::new(),
             target_ranked: Vec::new(),
         }),
-        history: Vec::<HistoryEntry>::new(),
     }
 }
 

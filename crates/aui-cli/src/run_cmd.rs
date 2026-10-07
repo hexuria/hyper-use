@@ -39,7 +39,9 @@
 //! TYPE_TEXT / SELECT *payloads* come from: a user program speaking the
 //! `CommandTextModel` JSON line protocol. Replies are context-bound and
 //! grounded in the goal; refused replies fall back to the deterministic
-//! resolver, then abstain. The program owns any API keys.
+//! resolver, then abstain. The program owns any API keys. Without the flag,
+//! jev-ultrafast's `TEXT_MODEL_API_KEY`/`TEXT_MODEL_BASE_URL`/`TEXT_MODEL`
+//! env drives an OpenAI-compatible HTTP model ([`crate::openai_text`]).
 
 use aui_agent::{Agent, AgentBuilder, AgentOutcome, BrowserRuntime, MockBrowser};
 use aui_browser::{open_tab, BrowserSession, CdpTransport, ReplayTransport, WebSocketTransport};
@@ -427,7 +429,15 @@ fn drive_with<T: CdpTransport, P: BrowserPolicy>(
             .max_wait(std::time::Duration::from_secs(u64::from(secs)));
     }
     if let Some(program) = args.text_model_cmd.as_deref() {
-        return drive_model_text(builder, program, args);
+        return drive_model_text_cmd(builder, program, args);
+    }
+    // jev-ultrafast parity: no flag but TEXT_MODEL_API_KEY set means the
+    // OpenAI-compatible HTTP model fills payloads. The flag always wins.
+    #[cfg(feature = "model-text")]
+    if let Some(model) =
+        crate::openai_text::OpenAiTextModel::from_env().map_err(CliError::Config)?
+    {
+        return drive_model_text(builder, "openai", Box::new(model), args);
     }
     let mut agent = builder.build(args.goal.clone());
     let outcome = agent.run();
@@ -491,17 +501,41 @@ fn drive_clef<T: CdpTransport>(
 }
 
 #[cfg(feature = "model-text")]
-fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
+fn drive_model_text_cmd<B: BrowserRuntime, P: BrowserPolicy>(
     builder: AgentBuilder<B, P>,
     program: &str,
     args: &RunArgs,
 ) -> Result<String, CliError> {
-    let mut agent = builder
-        .model_text(aui_policy::CommandTextModel::new(program))
-        .build(args.goal.clone());
+    drive_model_text(
+        builder,
+        "command",
+        Box::new(aui_policy::CommandTextModel::new(program)),
+        args,
+    )
+}
+
+#[cfg(not(feature = "model-text"))]
+fn drive_model_text_cmd<B: BrowserRuntime, P: BrowserPolicy>(
+    _builder: AgentBuilder<B, P>,
+    _program: &str,
+    _args: &RunArgs,
+) -> Result<String, CliError> {
+    Err(CliError::UnknownFlag(
+        "--text-model-cmd requires building with --features model-text".into(),
+    ))
+}
+
+#[cfg(feature = "model-text")]
+fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
+    builder: AgentBuilder<B, P>,
+    source: &str,
+    model: Box<dyn aui_policy::TextModel>,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let mut agent = builder.model_text(model).build(args.goal.clone());
     let outcome = agent.run();
     let mut out = format!(
-        "text resolver model (command) calls={}\n",
+        "text resolver model ({source}) calls={}\n",
         agent.text_resolver().model_calls()
     );
     let diary = write_diary_line(&mut agent, args)?;
@@ -516,17 +550,6 @@ fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
         }
         Err(other) => Err(other),
     }
-}
-
-#[cfg(not(feature = "model-text"))]
-fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
-    _builder: AgentBuilder<B, P>,
-    _program: &str,
-    _args: &RunArgs,
-) -> Result<String, CliError> {
-    Err(CliError::UnknownFlag(
-        "--text-model-cmd requires building with --features model-text".into(),
-    ))
 }
 
 /// Write the run's diary (when `--diary <dir>`) and return its path;

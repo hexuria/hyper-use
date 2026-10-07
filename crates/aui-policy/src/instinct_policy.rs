@@ -8,7 +8,9 @@ use instinct_core::{
     Profile, Scores,
 };
 
-use crate::evidence::{score_action, score_operation};
+#[cfg(test)]
+use crate::evidence::score_action;
+use crate::evidence::{score_action_with, score_operation_with, target_phrase, GoalView};
 use crate::goal::AgentGoal;
 use crate::types::{
     BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, RankedAction,
@@ -93,6 +95,12 @@ impl BrowserPolicy for InstinctPolicy {
         }
 
         let goal_text = goal.as_str();
+        // The goal's derived forms (tokens, fold, instruction tokens, its
+        // target phrase, and the Instinct-normalized view of each) are
+        // identical for every candidate in this decide — compute them once
+        // instead of once per action.
+        let phrase = target_phrase(goal_text).filter(|p| *p != goal_text);
+        let view = GoalView::of(goal_text, phrase.as_deref());
 
         // --- Operation head -------------------------------------------------
         let kinds = offered_kinds(space);
@@ -101,7 +109,7 @@ impl BrowserPolicy for InstinctPolicy {
         for kind in kinds.iter().copied() {
             let best = space
                 .targets_of(kind)
-                .max_by_key(|a| self.adjusted(a, score_action(goal_text, a)).get());
+                .max_by_key(|a| self.adjusted(a, score_action_with(&view, a)).get());
             let id = if kind.is_control() {
                 ActionId::try_new(kind.as_str())
                     .map_err(|e| PolicyError::Internal(e.to_string()))?
@@ -109,7 +117,7 @@ impl BrowserPolicy for InstinctPolicy {
                 best.map(|action| action.id().clone())
                     .ok_or_else(|| PolicyError::Internal(format!("no target for {kind}")))?
             };
-            op_scores.insert(kind, score_operation(goal_text, kind, best));
+            op_scores.insert(kind, score_operation_with(&view, kind, best));
             op_ids.insert(kind, id);
         }
 
@@ -170,7 +178,7 @@ impl BrowserPolicy for InstinctPolicy {
 
         let target_scores: Vec<(&ObservedAction, Confidence)> = targets
             .iter()
-            .map(|a| (*a, self.adjusted(a, score_action(goal_text, a))))
+            .map(|a| (*a, self.adjusted(a, score_action_with(&view, a))))
             .collect();
 
         let (chosen, target_ranked) = choose_targets(&target_scores, history, self.profile)?;

@@ -82,15 +82,14 @@ pub(crate) fn dom_elements(document_json: &str) -> Result<Vec<DomElement>, Brows
 }
 
 pub(crate) fn dom_document(document_json: &str) -> Result<DomDocument, BrowserError> {
-    let value = parse_json(document_json)?;
+    let value = parse_json_deep(document_json)?;
     let root = value.get("root").ok_or_else(|| {
         BrowserError::Cdp(CdpError::BadJson {
             message: "DOM.getDocument result has no root".into(),
         })
     })?;
     let mut out = DomDocument::default();
-    let mut ancestors = Vec::new();
-    walk_dom(root, None, &mut ancestors, &mut out);
+    walk_dom(root, &mut out);
     drop_ambiguous_hu_k(&mut out);
     Ok(out)
 }
@@ -261,57 +260,76 @@ pub(crate) fn call_threw(call_json: &str) -> Result<bool, BrowserError> {
     Ok(value.get("exceptionDetails").is_some())
 }
 
-/// `kept_ancestors` holds the backend ids of kept elements above `node`,
+/// `kept_ancestors` holds the backend ids of kept elements above a node,
 /// outermost first. Each kept element records them nearest first.
 /// `parent_backend` is the nearest element ancestor (kept or not).
-fn walk_dom(
-    node: &Value,
-    parent_backend: Option<i64>,
-    kept_ancestors: &mut Vec<i64>,
-    out: &mut DomDocument,
-) {
-    let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(1);
-    let mut next_parent = parent_backend;
-    let mut pushed_kept = false;
-    if node_type == 1 {
-        if let Some(backend) = node.get("backendNodeId").and_then(Value::as_i64) {
-            if let Some(parent) = parent_backend {
-                out.parent_of.insert(backend, parent);
+///
+/// The walk is iterative — the document is parsed with an unbounded depth,
+/// so a recursive descent would just move the stack wall from serde_json
+/// into this walk. `Pop` restores the ancestor chain after a subtree.
+enum DomWork<'a> {
+    Visit(&'a Value, Option<i64>),
+    Pop,
+}
+
+fn walk_dom(root: &Value, out: &mut DomDocument) {
+    let mut kept_ancestors: Vec<i64> = Vec::new();
+    let mut stack = vec![DomWork::Visit(root, None)];
+    while let Some(work) = stack.pop() {
+        let (node, parent_backend) = match work {
+            DomWork::Pop => {
+                kept_ancestors.pop();
+                continue;
             }
-            next_parent = Some(backend);
-            if let Some(k) = attr_map(node)
-                .get(crate::compact::HU_K_ATTR)
-                .and_then(|raw| raw.parse::<u32>().ok())
-            {
-                out.hu_k_of_backend.insert(backend, k);
-                out.backend_of_hu_k.insert(k, backend);
+            DomWork::Visit(node, parent_backend) => (node, parent_backend),
+        };
+        let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(1);
+        let mut next_parent = parent_backend;
+        let mut pushed_kept = false;
+        if node_type == 1 {
+            if let Some(backend) = node.get("backendNodeId").and_then(Value::as_i64) {
+                if let Some(parent) = parent_backend {
+                    out.parent_of.insert(backend, parent);
+                }
+                next_parent = Some(backend);
+                if let Some(k) = attr_map(node)
+                    .get(crate::compact::HU_K_ATTR)
+                    .and_then(|raw| raw.parse::<u32>().ok())
+                {
+                    out.hu_k_of_backend.insert(backend, k);
+                    out.backend_of_hu_k.insert(k, backend);
+                }
+            }
+            if let Some(mut element) = element_from(node) {
+                element.ancestors = kept_ancestors.iter().rev().copied().collect();
+                kept_ancestors.push(element.backend_node_id);
+                pushed_kept = true;
+                out.elements.push(element);
             }
         }
-        if let Some(mut element) = element_from(node) {
-            element.ancestors = kept_ancestors.iter().rev().copied().collect();
-            kept_ancestors.push(element.backend_node_id);
-            pushed_kept = true;
-            out.elements.push(element);
+        // Traversal order is children, then shadow roots, then the iframe
+        // document — pushed in reverse onto a LIFO stack, with the ancestor
+        // pop last.
+        if pushed_kept {
+            stack.push(DomWork::Pop);
         }
-    }
-    if let Some(children) = node.get("children").and_then(Value::as_array) {
-        for child in children {
-            walk_dom(child, next_parent, kept_ancestors, out);
+        // Same-origin iframe document. Cross-origin frames omit
+        // `contentDocument`.
+        if let Some(doc) = node.get("contentDocument") {
+            stack.push(DomWork::Visit(doc, next_parent));
         }
-    }
-    // Open shadow roots (closed ones are absent). CDP only populates
-    // `shadowRoots` when `DOM.getDocument` was called with `pierce: true`.
-    if let Some(roots) = node.get("shadowRoots").and_then(Value::as_array) {
-        for root in roots {
-            walk_dom(root, next_parent, kept_ancestors, out);
+        // Open shadow roots (closed ones are absent). CDP only populates
+        // `shadowRoots` when `DOM.getDocument` was called with `pierce: true`.
+        if let Some(roots) = node.get("shadowRoots").and_then(Value::as_array) {
+            for root in roots.iter().rev() {
+                stack.push(DomWork::Visit(root, next_parent));
+            }
         }
-    }
-    // Same-origin iframe document. Cross-origin frames omit `contentDocument`.
-    if let Some(doc) = node.get("contentDocument") {
-        walk_dom(doc, next_parent, kept_ancestors, out);
-    }
-    if pushed_kept {
-        kept_ancestors.pop();
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children.iter().rev() {
+                stack.push(DomWork::Visit(child, next_parent));
+            }
+        }
     }
 }
 
@@ -576,6 +594,21 @@ fn parse_json(text: &str) -> Result<Value, BrowserError> {
     })
 }
 
+/// Only the document tree needs depth beyond serde_json's 128-level cap —
+/// a real DOM nests ~2 JSON levels per element level, so observe died at
+/// ~60-deep pages. Stack growth makes deep parse safe; every other CDP
+/// payload stays bounded.
+fn parse_json_deep(text: &str) -> Result<Value, BrowserError> {
+    use serde::Deserialize;
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    deserializer.disable_recursion_limit();
+    Value::deserialize(serde_stacker::Deserializer::new(&mut deserializer)).map_err(|err| {
+        BrowserError::Cdp(CdpError::BadJson {
+            message: err.to_string(),
+        })
+    })
+}
+
 #[cfg(test)]
 mod pierce_tests {
     use super::*;
@@ -688,5 +721,44 @@ mod pierce_tests {
         assert_eq!(doc.elements.len(), 1);
         assert_eq!(doc.elements[0].role, Role::Generic);
         assert!(doc.elements[0].actions.contains(&Action::Select));
+    }
+
+    /// A ~400-level DOM is real (deep component trees, virtualized parents,
+    /// nested layouts) — observe must not die on serde_json's 128-level cap
+    /// or on a recursive walk. Both walls are covered here.
+    #[test]
+    fn a_deeply_nested_document_parses_and_walks() {
+        const DEPTH: usize = 400;
+        let mut json = r##"{"root":{"nodeType":9,"nodeName":"#document","children":["##.to_owned();
+        // Build one branch of DEPTH nested labelled DIVs, innermost first.
+        let mut inner = r##"{"nodeId":0,"backendNodeId":0,"nodeType":3,"nodeName":"#text","nodeValue":"leaf"}"##.to_owned();
+        for i in (0..DEPTH).rev() {
+            inner = format!(
+                r#"{{"nodeId":{nid},"backendNodeId":{nid},"nodeType":1,"nodeName":"DIV","attributes":["aria-label","depth {i}"],"children":[{inner}]}}"#,
+                nid = i + 1,
+                i = i,
+                inner = inner,
+            );
+        }
+        json.push_str(&inner);
+        json.push_str("]}}");
+
+        let doc = dom_document(&json).unwrap();
+        assert_eq!(doc.elements.len(), DEPTH);
+        // Ancestors are recorded nearest first: the deepest kept element
+        // chains through every kept level above it.
+        let deepest = &doc.elements[DEPTH - 1];
+        assert_eq!(deepest.ancestors.len(), DEPTH - 1);
+        assert_eq!(
+            deepest.ancestors.first().copied(),
+            Some((DEPTH - 1) as i64),
+            "nearest ancestor is the level directly above"
+        );
+        // And the parent map links every element to its element parent.
+        assert_eq!(doc.parent_of.len(), DEPTH - 1);
+        assert_eq!(
+            doc.parent_of.get(&(DEPTH as i64)).copied(),
+            Some((DEPTH - 1) as i64)
+        );
     }
 }

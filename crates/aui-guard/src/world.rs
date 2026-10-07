@@ -41,6 +41,7 @@
 //! only if Chrome's accessibility tree says so; two sibling modals block
 //! each other's content, which refuses rather than guesses.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use aui_core::{Action, InteractionManifold, InteractionRegion, Rect, RegionId, Role, SourceMask};
@@ -186,14 +187,17 @@ pub fn blocker<'a>(
 /// `occluded` flag. Ranking this copy applies the versioned occluded penalty,
 /// so a control inside the dialog outranks its buried twin, and
 /// [`RegionState`] reports the buried one as occluded.
-pub fn with_front_layer(manifold: &InteractionManifold) -> InteractionManifold {
+///
+/// Nothing blocked (the common case on dialog-free pages) borrows the input
+/// instead of cloning the whole manifold.
+pub fn with_front_layer(manifold: &InteractionManifold) -> Cow<'_, InteractionManifold> {
     let blocked: Vec<RegionId> = manifold
         .regions()
         .filter(|region| !region.flags().occluded() && blocker(manifold, region).is_some())
         .map(|region| region.id().clone())
         .collect();
     if blocked.is_empty() {
-        return manifold.clone();
+        return Cow::Borrowed(manifold);
     }
     let mut out = manifold.clone();
     for id in blocked {
@@ -204,7 +208,7 @@ pub fn with_front_layer(manifold: &InteractionManifold) -> InteractionManifold {
             InteractionRegion::try_new(parts).expect("rebuilding a valid region cannot fail");
         out.replace(updated);
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Maximum center-to-center distance (CSS px) for two root-level regions to

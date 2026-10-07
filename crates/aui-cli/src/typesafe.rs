@@ -13,10 +13,9 @@
 //!
 //! Env parity with jev-ultrafast: `TYPESAFE_API_KEY` (required, read by the
 //! SDK), `TYPESAFE_MODEL` (falls back to `TYPESAFE_DEFAULT_MODEL`, default
-//! `jev-latest`), `TYPESAFE_BASE_URL`. `TEXT_MODEL_*` is **not** read yet:
-//! TYPE_TEXT / SELECT payloads still come from the deterministic resolver or
-//! `--text-model-cmd` (feature `model-text`), so this is one of the two
-//! jev-ultrafast keys, not both.
+//! `jev-latest`), `TYPESAFE_BASE_URL`. `TEXT_MODEL_*` activates the
+//! OpenAI-compatible text model for TYPE_TEXT / SELECT payloads when
+//! `--text-model-cmd` is absent (feature `model-text`, [`crate::openai_text`]).
 //!
 //! Latency bounds come from the SDK client defaults: 10 s per attempt, at
 //! most 2 retries on 408 / 429 / 5xx / connection / timeout errors, 30 s

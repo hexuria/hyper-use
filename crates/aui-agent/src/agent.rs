@@ -654,6 +654,19 @@ where
                     }
                     Some(resolution.text)
                 }
+                // A deliberate decline (`Missing`/`Abstain`) stays quiet —
+                // `ground_select` still gets its goal match. Genuine resolver
+                // failures were silent before; journal them so a diary reader
+                // can tell "declined" from "broken".
+                Err(err @ (TextError::Ambiguous | TextError::Invalid(_))) => {
+                    self.journal.push(JournalEvent::PolicyError {
+                        clause_index: self.clause_index,
+                        clause: self.goal.as_str().to_owned(),
+                        source: "text-resolver",
+                        error: err.to_string(),
+                    });
+                    None
+                }
                 Err(_) => None,
             };
             payload = Some(

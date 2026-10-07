@@ -10,12 +10,17 @@
 
 pub mod diary;
 pub mod error;
+pub mod lessons;
 pub mod line;
 pub mod rebuild;
 pub mod site;
 
 pub use diary::{read_diary, DiaryWriter};
 pub use error::DojoError;
+pub use lessons::{
+    diary_id, diary_stamp_ms, learn_diary, learn_lines, load as load_lessons, save as save_lessons,
+    LessonStore, Move, MoveStep, Place, Trust, Word, LESSON_SCHEMA,
+};
 pub use line::{
     parse_line, ChoiceLine, ClauseLine, CorrectionLine, DecisionLine, DiaryLine, HistoryLine,
     OfferedLine, OfferedState, OutcomeLine, RankedLine, RunLine, SiteLine, Situation, StaleLine,

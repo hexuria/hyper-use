@@ -8,16 +8,20 @@
 //! `ActionSpace`; they never pick an off-menu action and never bypass the
 //! guard/ticket/executor chain (the anti-drift rules own that path).
 
+pub mod belt;
 pub mod diary;
 pub mod error;
+pub mod exams;
 pub mod lessons;
 pub mod line;
 pub mod rebuild;
 pub mod site;
 pub mod trust;
 
+pub use belt::{label_belts, move_belt, Belt};
 pub use diary::{read_diary, DiaryWriter};
 pub use error::DojoError;
+pub use exams::{examine, is_remote_source, ExamReport};
 pub use lessons::{
     diary_id, diary_stamp_ms, learn_diary, learn_lines, load as load_lessons, save as save_lessons,
     LessonStore, Move, MoveStep, Place, Trust, Word, LESSON_SCHEMA,
@@ -28,5 +32,5 @@ pub use line::{
     StepLine, SCHEMA,
 };
 pub use rebuild::{action_space, element_state};
-pub use site::{site_line, situation_key};
+pub use site::{context_key, site_line, situation_key};
 pub use trust::{label_bonus_map, trust_bonus};

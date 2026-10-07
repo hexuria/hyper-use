@@ -103,4 +103,21 @@ pub trait BrowserPolicy {
     fn decision_source(&self) -> &'static str {
         self.name()
     }
+
+    /// The situation the next `decide` runs in (site, front layer, roles
+    /// — the decision-time half of what the dojo journals; `near` is a
+    /// post-decision artifact and is not context). Default no-op: only
+    /// policies that consult situational knowledge (the dojo) need it.
+    fn set_situation(&mut self, _ctx: &PolicyContext) {}
+}
+
+/// Where a decision happens, as far as the caller can know before the
+/// policy answers. Plain owned data — no browser types.
+#[derive(Clone, Debug, Default)]
+pub struct PolicyContext {
+    pub site_url: Option<String>,
+    pub site_title: Option<String>,
+    pub front_layer: bool,
+    /// Roles present on the page, sorted.
+    pub roles: Vec<String>,
 }

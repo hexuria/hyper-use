@@ -213,7 +213,7 @@ fn apply_trust(
     decision: &DecisionLine,
     now_ms: u64,
 ) {
-    let key = aui_dojo::situation_key(
+    let key = aui_dojo::context_key(
         decision.site.as_ref(),
         &decision.situation,
         &decision.clause,

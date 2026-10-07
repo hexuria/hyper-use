@@ -22,7 +22,7 @@ use serde_json::{json, Map, Value};
 use crate::diary::read_diary;
 use crate::error::DojoError;
 use crate::line::{DiaryLine, SiteLine};
-use crate::site::situation_key;
+use crate::site::context_key;
 
 /// Lesson-store schema version. Bump on any layout change; `load` refuses
 /// other versions — a stale store is rebuilt from diaries, never migrated
@@ -76,7 +76,9 @@ pub struct Trust {
     pub diaries: Vec<String>,
 }
 
-/// The whole store, keyed by situation key (`site::situation_key`).
+/// The whole store, keyed by the decision-time context key
+/// (`site::context_key` — site, clause, front layer, roles; `near`
+/// excluded because a deciding policy cannot know it yet).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LessonStore {
     pub words: BTreeMap<String, Vec<Word>>,
@@ -123,7 +125,7 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
     for line in lines {
         match line {
             DiaryLine::Decision(d) => {
-                let key = situation_key(d.site.as_ref(), &d.situation, &d.clause);
+                let key = context_key(d.site.as_ref(), &d.situation, &d.clause);
                 decision_key.insert(d.seq, key.clone());
                 let place = store.places.entry(key.clone()).or_default();
                 place.host = d.site.as_ref().and_then(|s: &SiteLine| s.host.clone());
@@ -181,7 +183,7 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
                     .values()
                     .next()
                     .cloned()
-                    .unwrap_or_else(|| situation_key(None, &Default::default(), &c.clause));
+                    .unwrap_or_else(|| context_key(None, &Default::default(), &c.clause));
                 let trust_map = store.trust.entry(key).or_default();
                 let loss = trust_map.entry(c.chosen.clone()).or_default();
                 loss.losses += 1;

@@ -489,6 +489,11 @@ where
         self.browser
     }
 
+    /// Hand the policy back (e.g. the dojo takes its grown lesson store).
+    pub fn into_policy(self) -> P {
+        self.policy
+    }
+
     pub fn policy_calls(&self) -> u32 {
         self.policy_calls
     }
@@ -542,10 +547,6 @@ where
         let focused = self.browser.focused();
         let space = Self::action_space(&manifold);
         self.policy_calls += 1;
-        let outcome = self
-            .policy
-            .decide(&space, &self.goal, &self.policy_history)
-            .map_err(|e| AgentError::Policy(e.to_string()))?;
 
         let (site_url, site_title) = self
             .browser
@@ -563,6 +564,20 @@ where
             .collect();
         roles.sort_unstable();
         roles.dedup();
+        // Situational context for learning policies (the dojo); a no-op
+        // for every other arm.
+        self.policy.set_situation(&aui_policy::PolicyContext {
+            site_url: site_url.clone(),
+            site_title: site_title.clone(),
+            front_layer: manifold
+                .regions()
+                .any(|region| blocker(&manifold, region).is_some()),
+            roles: roles.iter().map(|r| (*r).to_owned()).collect(),
+        });
+        let outcome = self
+            .policy
+            .decide(&space, &self.goal, &self.policy_history)
+            .map_err(|e| AgentError::Policy(e.to_string()))?;
         self.journal.push(JournalEvent::Decision {
             clause_index: self.clause_index,
             clause: self.goal.as_str().to_owned(),

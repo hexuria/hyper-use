@@ -24,6 +24,11 @@ pub fn classify_delta(
         if page.is_some_and(|p| p.title_changed() || p.focus_changed()) {
             return VerificationKind::StateChanged;
         }
+        // Either side's URL/title was unreadable: the page may have
+        // navigated where we could not see it — not a no-effect.
+        if page.is_some_and(|p| !p.is_known()) {
+            return VerificationKind::Unknown;
+        }
         return VerificationKind::NoEffect;
     }
     VerificationKind::StateChanged

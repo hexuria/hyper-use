@@ -117,6 +117,7 @@ pub fn consume_ticket<E>(
 
 /// Failure consuming a ticket at the executor boundary.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConsumeError<E> {
     Invalid(TicketInvalid),
     Press(E),

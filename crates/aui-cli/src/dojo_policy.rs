@@ -185,13 +185,15 @@ impl DojoPolicy {
         goal: &AgentGoal,
         abstain: &PolicyOutcome,
     ) -> Option<PolicyDecision> {
-        let moves = self.store.moves.get(key)?;
+        let moves = self.store.moves.get(key);
         let trust_table = self.store.trust.get(key);
         // Higher belts replay first; ties keep store order (distilled
-        // lessons sit earlier than in-run learned ones).
-        let mut ranked: Vec<&aui_dojo::Move> = moves.iter().collect();
+        // lessons sit earlier than in-run learned ones). No move entry is
+        // not a miss — the word table below can still bind the clause.
+        let mut ranked: Vec<&aui_dojo::Move> =
+            moves.map(|m| m.iter().collect()).unwrap_or_default();
         ranked.sort_by_key(|mv| std::cmp::Reverse(aui_dojo::move_belt(&self.store, key, mv)));
-        let mut best: Option<&MoveStep> = None;
+        let mut best: Option<(ActionId, String)> = None;
         for mv in ranked {
             for step in &mv.steps {
                 if step.clause != goal.as_str() {
@@ -213,15 +215,37 @@ impl DojoPolicy {
                         continue;
                     }
                 }
-                best = Some(step);
+                best = Some((id, step.label.clone()));
                 break;
             }
             if best.is_some() {
                 break;
             }
         }
-        let step = best?;
-        let id = ActionId::try_new(step.action_id.as_str()).ok()?;
+        // A learned word binds this clause's phrase to a label that
+        // worked here — replay it only when exactly one offered action
+        // still carries the label, so a twin never picks at random.
+        let best = best.or_else(|| {
+            self.store.words.get(key).and_then(|ws| {
+                ws.iter()
+                    .filter(|w| w.phrase == goal.as_str())
+                    .filter(|w| {
+                        trust_table
+                            .and_then(|t| t.get(&w.label))
+                            .is_none_or(|t| trust_bonus(t, self.now_ms) >= 0)
+                    })
+                    .find_map(|w| {
+                        let mut carriers = space
+                            .actions()
+                            .filter(|a| !a.kind().is_control() && a.label() == w.label);
+                        match (carriers.next(), carriers.next()) {
+                            (Some(a), None) => Some((a.id().clone(), w.label.clone())),
+                            _ => None,
+                        }
+                    })
+            })
+        });
+        let (id, label) = best?;
         let action = space.get(&id)?;
         // Report the evidence Instinct saw for this action (the abstain's
         // own ranked list) — the lesson supplies the choice, not a score.
@@ -236,7 +260,7 @@ impl DojoPolicy {
         Some(PolicyDecision {
             action_id: id,
             kind: action.kind(),
-            target_label: step.label.clone(),
+            target_label: label,
             confidence_millis: confidence,
             operation_ranked: Vec::new(),
             target_ranked: Vec::new(),
@@ -547,5 +571,72 @@ mod tests {
         assert_eq!(choice.action_id.as_str(), "CLICK:alpha");
         assert_eq!(policy.decision_source(), "dojo");
         assert_eq!(calls.get(), 0);
+    }
+
+    /// A third button makes "Go" the space's only carrier of its label —
+    /// a learned word pointing at it replays locally.
+    fn trio_space() -> ActionSpace {
+        let m = parse_fixture(
+            r#"
+            viewport w=800 h=600
+            region id=alpha role=button label="Send" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+            region id=beta role=button label="Send" x=10 y=50 w=80 h=24 actions=click sources=dom,accessibility
+            region id=gamma role=button label="Go" x=10 y=90 w=80 h=24 actions=click sources=dom,accessibility
+            "#,
+        )
+        .unwrap();
+        ActionSpace::from_manifold(&m)
+    }
+
+    /// No move recorded, but the words table learned that this clause
+    /// resolved to a label — replay the label when exactly one offered
+    /// action still carries it.
+    #[test]
+    fn a_learned_word_replays_its_unique_carrier() {
+        let space = trio_space();
+        let goal = goal();
+        let key = DojoPolicy::new(None, LessonStore::default()).key(&goal);
+        let mut store = LessonStore::default();
+        store.words.insert(
+            key,
+            vec![aui_dojo::Word {
+                phrase: goal.as_str().to_owned(),
+                label: "Go".to_owned(),
+                diaries: vec![],
+            }],
+        );
+
+        let (remote, calls) = ScriptedRemote::armed();
+        let mut policy = DojoPolicy::new(Some(remote), store);
+        let out = policy.decide(&space, &goal, &[]).unwrap();
+        let choice = out.as_choice().expect("learned word replays");
+        assert_eq!(choice.action_id.as_str(), "CLICK:gamma");
+        assert_eq!(choice.target_label, "Go");
+        assert_eq!(policy.decision_source(), "dojo");
+        assert_eq!(calls.get(), 0);
+    }
+
+    /// Two same-label carriers make a word ambiguous — a replay would be a
+    /// coin flip, so the remote arm decides instead.
+    #[test]
+    fn an_ambiguous_word_replays_nothing() {
+        let space = space();
+        let goal = goal();
+        let key = DojoPolicy::new(None, LessonStore::default()).key(&goal);
+        let mut store = LessonStore::default();
+        store.words.insert(
+            key,
+            vec![aui_dojo::Word {
+                phrase: goal.as_str().to_owned(),
+                label: "Send".to_owned(),
+                diaries: vec![],
+            }],
+        );
+
+        let (remote, calls) = ScriptedRemote::armed();
+        let mut policy = DojoPolicy::new(Some(remote), store);
+        let _ = policy.decide(&space, &goal, &[]).unwrap();
+        assert_eq!(policy.decision_source(), "scripted-remote");
+        assert_eq!(calls.get(), 1);
     }
 }

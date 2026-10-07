@@ -295,6 +295,7 @@ mod tests {
                 expanded: Some(true),
                 selected: Some("UTC".to_owned()),
                 options: vec!["UTC".to_owned()],
+                input_type: None,
             });
         manifold.replace(name);
         ActionSpace::from_manifold(&manifold)

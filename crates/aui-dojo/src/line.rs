@@ -37,6 +37,9 @@ pub enum DiaryLine {
     Outcome(OutcomeLine),
     /// A human correction (never written by the agent itself).
     Correction(CorrectionLine),
+    /// A policy call that errored before producing an outcome — the
+    /// decision is still journaled so the diary shows the failure.
+    PolicyError(PolicyErrorLine),
 }
 
 /// Where the decision happened (URL-derived; absent on fixtures/mocks).
@@ -83,6 +86,9 @@ pub struct OfferedState {
     pub expanded: Option<bool>,
     pub selected: Option<String>,
     pub options: Vec<String>,
+    /// INPUT's `type`, lowercased — marks sensitive fields (`password`)
+    /// without recording their values.
+    pub input_type: Option<String>,
 }
 
 /// One ranked candidate as the policy saw it.
@@ -153,7 +159,8 @@ pub struct StepLine {
     pub label: String,
     /// `click` | `pointer` | `type` | `select` | `scroll-up` | `scroll-down` | `wait`.
     pub input: String,
-    /// TYPE_TEXT / SELECT payload. Never a password (observe skips them).
+    /// TYPE_TEXT / SELECT payload. `"[redacted]"` when the target was a
+    /// password input — the secret never reaches the diary.
     pub payload: Option<String>,
     /// `success` | `state-changed` | `navigation` | `no-effect` | …
     pub verification: String,
@@ -194,6 +201,17 @@ pub struct CorrectionLine {
     pub expected: String,
     /// What the policy actually chose ("" for abstain).
     pub chosen: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyErrorLine {
+    pub seq: u32,
+    pub clause_index: u32,
+    pub clause: String,
+    /// The arm that errored (`instinct`, `jev`, `clef-flash`, …).
+    pub source: String,
+    /// The policy's error text.
+    pub error: String,
 }
 
 impl DiaryLine {
@@ -306,6 +324,14 @@ impl DiaryLine {
                 obj.insert("expected".to_owned(), json!(line.expected));
                 obj.insert("chosen".to_owned(), json!(line.chosen));
             }
+            Self::PolicyError(line) => {
+                obj.insert("type".to_owned(), json!("policy_error"));
+                obj.insert("seq".to_owned(), json!(line.seq));
+                obj.insert("clause_index".to_owned(), json!(line.clause_index));
+                obj.insert("clause".to_owned(), json!(line.clause));
+                obj.insert("source".to_owned(), json!(line.source));
+                obj.insert("error".to_owned(), json!(line.error));
+            }
         }
         Value::Object(obj).to_string()
     }
@@ -347,6 +373,9 @@ fn offered_json(a: &OfferedLine) -> Value {
         }
         if !state.options.is_empty() {
             s.insert("options".to_owned(), json!(state.options));
+        }
+        if let Some(v) = &state.input_type {
+            s.insert("input_type".to_owned(), json!(v));
         }
         obj.insert("state".to_owned(), Value::Object(s));
     }
@@ -519,6 +548,13 @@ pub fn parse_line(raw: &str, line_no: usize) -> Result<DiaryLine, DojoError> {
             expected: str_field(obj, "expected", line_no)?.to_owned(),
             chosen: str_field(obj, "chosen", line_no)?.to_owned(),
         })),
+        "policy_error" => Ok(DiaryLine::PolicyError(PolicyErrorLine {
+            seq: u32_field(obj, "seq", line_no)?,
+            clause_index: u32_field(obj, "clause_index", line_no)?,
+            clause: str_field(obj, "clause", line_no)?.to_owned(),
+            source: str_field(obj, "source", line_no)?.to_owned(),
+            error: str_field(obj, "error", line_no)?.to_owned(),
+        })),
         other => Err(bad(line_no, format!("unknown line type `{other}`"))),
     }
 }
@@ -590,6 +626,7 @@ fn parse_offered(value: &Value, line_no: usize, index: usize) -> Result<OfferedL
                 expanded: s.get("expanded").and_then(Value::as_bool),
                 selected: opt_str_field(s, "selected", line_no)?,
                 options: str_list_field(s, "options", line_no).unwrap_or_default(),
+                input_type: opt_str_field(s, "input_type", line_no)?,
             })
         }
         None => None,

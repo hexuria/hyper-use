@@ -12,6 +12,9 @@ pub struct ElementState {
     pub selected: Option<String>,
     /// SELECT: enabled option labels in document order (skip disabled options and options in a disabled optgroup), trimmed, each ≤ 80 chars, at most 50.
     pub options: Vec<String>,
+    /// INPUT's `type` attribute, lowercased. Evidence only — it marks
+    /// sensitive fields (`password`) without ever reading their value.
+    pub input_type: Option<String>,
 }
 
 impl ElementState {
@@ -21,5 +24,6 @@ impl ElementState {
             && self.expanded.is_none()
             && self.selected.is_none()
             && self.options.is_empty()
+            && self.input_type.is_none()
     }
 }

@@ -574,10 +574,20 @@ where
                 .any(|region| blocker(&manifold, region).is_some()),
             roles: roles.iter().map(|r| (*r).to_owned()).collect(),
         });
-        let outcome = self
-            .policy
-            .decide(&space, &self.goal, &self.policy_history)
-            .map_err(|e| AgentError::Policy(e.to_string()))?;
+        let outcome = match self.policy.decide(&space, &self.goal, &self.policy_history) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                // Journal the attempted decision too — a policy error
+                // still belongs in the diary.
+                self.journal.push(JournalEvent::PolicyError {
+                    clause_index: self.clause_index,
+                    clause: self.goal.as_str().to_owned(),
+                    source: self.policy.decision_source(),
+                    error: e.to_string(),
+                });
+                return Err(AgentError::Policy(e.to_string()));
+            }
+        };
         self.journal.push(JournalEvent::Decision {
             clause_index: self.clause_index,
             clause: self.goal.as_str().to_owned(),

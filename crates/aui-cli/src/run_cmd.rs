@@ -59,6 +59,9 @@ struct RunArgs {
     policy: PolicyKind,
     /// `--diary <dir>`: write the run's battle diary (schema v1 JSONL).
     diary: Option<String>,
+    /// `--lessons <path>`: the dojo's lesson store (loaded at start,
+    /// grown during the run, saved back at exit).
+    lessons: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -67,6 +70,9 @@ enum PolicyKind {
     Jev,
     Clef,
     ClefFlash,
+    /// Instinct first; learned-move replay next; remote last. Writes
+    /// verified remote wins back into the --lessons store.
+    Dojo,
 }
 
 fn parse(args: &[String]) -> Result<RunArgs, CliError> {
@@ -79,6 +85,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
     let mut text_model_cmd = None;
     let mut policy = None;
     let mut diary = None;
+    let mut lessons = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -112,14 +119,16 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
                     "jev" => PolicyKind::Jev,
                     "clef" => PolicyKind::Clef,
                     "clef-flash" => PolicyKind::ClefFlash,
+                    "dojo" => PolicyKind::Dojo,
                     _ => {
                         return Err(CliError::UnknownFlag(format!(
-                            "unknown policy `{raw}` (instinct|jev|clef|clef-flash)"
+                            "unknown policy `{raw}` (instinct|jev|clef|clef-flash|dojo)"
                         )))
                     }
                 };
                 set(&mut policy, "--policy", kind)?;
             }
+            "--lessons" => set(&mut lessons, "--lessons", value("--lessons")?)?,
             "--max-steps" => {
                 let raw = value("--max-steps")?;
                 let n: u32 = raw.parse().map_err(|_| CliError::BadNumber {
@@ -180,6 +189,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         #[cfg(not(feature = "jev"))]
         policy: policy.unwrap_or(PolicyKind::Instinct),
         diary,
+        lessons,
     })
 }
 
@@ -229,7 +239,15 @@ pub(crate) fn run_command(args: &[String]) -> Result<String, CliError> {
         PolicyKind::Jev => predict_jev(manifold, &args),
         PolicyKind::Clef => predict_clef(manifold, &args, "clef"),
         PolicyKind::ClefFlash => predict_clef(manifold, &args, "clef-flash"),
+        PolicyKind::Dojo => predict_dojo(manifold, &args),
     }
+}
+
+fn predict_dojo(
+    manifold: aui_core::InteractionManifold,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    predict_once(MockBrowser::new(manifold), dojo_policy(args)?, args)
 }
 
 fn predict_once<P: BrowserPolicy>(
@@ -323,7 +341,64 @@ fn drive<T: CdpTransport>(session: BrowserSession<T>, args: &RunArgs) -> Result<
         PolicyKind::Jev => drive_jev(session, args),
         PolicyKind::Clef => drive_clef(session, args, "clef"),
         PolicyKind::ClefFlash => drive_clef(session, args, "clef-flash"),
+        PolicyKind::Dojo => drive_dojo(session, args),
     }
+}
+
+/// The dojo's remote arm: JEV when its transport is configured, else the
+/// run decides locally only (no remote calls, nothing new is learned
+/// remotely — but distilled lessons still replay).
+fn dojo_remote() -> Option<Box<dyn BrowserPolicy>> {
+    #[cfg(feature = "jev")]
+    {
+        if let Ok(transport) = crate::typesafe::TypesafeTransport::from_env() {
+            return Some(Box::new(aui_policy::RemotePolicy::named("jev", transport)));
+        }
+    }
+    None
+}
+
+fn dojo_policy(args: &RunArgs) -> Result<crate::dojo_policy::DojoPolicy, CliError> {
+    let store = match &args.lessons {
+        Some(path) => {
+            aui_dojo::load_lessons(std::path::Path::new(path)).map_err(|e| CliError::Io {
+                path: path.clone(),
+                message: e.to_string(),
+            })?
+        }
+        None => aui_dojo::LessonStore::default(),
+    };
+    Ok(crate::dojo_policy::DojoPolicy::new(dojo_remote(), store))
+}
+
+fn drive_dojo<T: CdpTransport>(
+    session: BrowserSession<T>,
+    args: &RunArgs,
+) -> Result<String, CliError> {
+    let mut builder = AgentBuilder::new(session, dojo_policy(args)?).max_steps(args.max_steps);
+    if let Some(secs) = args.wait_secs {
+        let polls = u64::from(secs) * 1_000 / aui_agent::WAIT_POLL_MS;
+        builder = builder
+            .max_wait_polls(u32::try_from(polls).unwrap_or(u32::MAX))
+            .max_wait(std::time::Duration::from_secs(u64::from(secs)));
+    }
+    let mut agent = builder.build(args.goal.clone());
+    let outcome = agent.run();
+    let diary = write_diary_line(&mut agent, args)?;
+    let mut out = with_diary(render(&agent, &outcome), diary.as_deref())?;
+    let policy = agent.into_policy();
+    if let Some(path) = &args.lessons {
+        aui_dojo::save_lessons(&policy.into_store(), std::path::Path::new(path)).map_err(|e| {
+            CliError::Io {
+                path: path.clone(),
+                message: e.to_string(),
+            }
+        })?;
+        out.push_str(&format!("lessons {path}: store saved\n"));
+    } else if policy.learned_count() > 0 {
+        out.push_str("dojo: lessons grown in memory only (no --lessons store to save)\n");
+    }
+    Ok(out)
 }
 
 fn drive_with<T: CdpTransport, P: BrowserPolicy>(

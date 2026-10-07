@@ -50,10 +50,7 @@ fn url_host_path(url: &str) -> (Option<String>, Option<String>) {
     )
 }
 
-/// The per-situation lesson key: same page shape + same clause + same
-/// neighborhood → same key.
-#[must_use]
-pub fn situation_key(site: Option<&SiteLine>, situation: &Situation, clause: &str) -> String {
+fn key_of(site: Option<&SiteLine>, situation: &Situation, clause: &str, near: bool) -> String {
     let mut key = String::with_capacity(128);
     if let Some(site) = site {
         key.push_str(site.host.as_deref().unwrap_or(""));
@@ -66,9 +63,27 @@ pub fn situation_key(site: Option<&SiteLine>, situation: &Situation, clause: &st
     key.push_str(if situation.front_layer { "fl" } else { "-" });
     key.push('|');
     key.push_str(&situation.roles.join(","));
-    key.push('|');
-    key.push_str(&situation.near.join(","));
+    if near {
+        key.push('|');
+        key.push_str(&situation.near.join(","));
+    }
     format!("{:016x}", fnv1a64(key.as_bytes()))
+}
+
+/// The per-situation lesson key: same page shape + same clause + same
+/// neighborhood → same key. Descriptive lessons (words, places) use this.
+#[must_use]
+pub fn situation_key(site: Option<&SiteLine>, situation: &Situation, clause: &str) -> String {
+    key_of(site, situation, clause, true)
+}
+
+/// The decision-time lesson key: same as [`situation_key`] minus `near`
+/// (a post-decision artifact a deciding policy cannot know yet). Moves
+/// and trust — the maps a live policy looks up — key on this so the
+/// `lessons` command and the dojo agree on the same keys.
+#[must_use]
+pub fn context_key(site: Option<&SiteLine>, situation: &Situation, clause: &str) -> String {
+    key_of(site, situation, clause, false)
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {

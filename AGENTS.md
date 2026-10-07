@@ -110,7 +110,7 @@ crate.
 | `aui-browser` | CDP observe (DOM/AX fusion, identity, stacking), raw CDP inputs |
 | `aui-observe` | Observation history and id diff |
 | `aui-geometry` | Geometry helpers |
-| `aui-policy` | `BrowserPolicy`, `InstinctPolicy` (pinned `hexuria/instinct` rev), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
+| `aui-policy` | `BrowserPolicy` + `PolicyContext` (`set_situation`, default no-op), `InstinctPolicy` (pinned `hexuria/instinct` rev) + `TRUST_CAP_MILLIS`/`set_evidence_adjustments` (bounded learned-trust evidence), `TextResolver`, `ModelTextResolver` (feature `model-text`), `RemotePolicy` (feature `remote`), multi-step clause split |
 | `aui-guard` | Hard `gate`, `ActionTicket` issue / `revalidate`, `TicketLedger`, `consume_ticket_once`, front layer + `WorldSnapshot`; ranked `guard()` for MCP preflight |
 | `aui-agent` | `Agent` state machine, `execute_ticketed`, `BrowserRuntime`, verification mapping, `MockBrowser` |
 | `aui-protocol` | Guard / ticket / verify wire types |

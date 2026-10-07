@@ -101,7 +101,7 @@ fn a_lesson_store_does_not_regress_recorded_runs() {
     // learned from a proving diary. Bounded evidence, applied on every
     // decision — and the recorded verdicts must not move.
     let situation = aui_dojo::Situation::default();
-    let key = aui_dojo::situation_key(None, &situation, "Click Go");
+    let key = aui_dojo::context_key(None, &situation, "Click Go");
     let mut store = aui_dojo::LessonStore::default();
     store.trust.entry(key).or_default().insert(
         "Go".to_owned(),

@@ -40,7 +40,8 @@ pub use text::{
     ground_select, DeterministicTextResolver, TextContext, TextError, TextResolution, TextResolver,
 };
 pub use types::{
-    BrowserPolicy, HistoryEntry, PolicyDecision, PolicyError, PolicyOutcome, RankedAction,
+    BrowserPolicy, HistoryEntry, PolicyContext, PolicyDecision, PolicyError, PolicyOutcome,
+    RankedAction,
 };
 
 /// Documented Instinct git rev this crate is pinned to.

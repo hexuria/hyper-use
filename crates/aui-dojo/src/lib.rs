@@ -11,6 +11,7 @@
 pub mod diary;
 pub mod error;
 pub mod line;
+pub mod rebuild;
 pub mod site;
 
 pub use diary::{read_diary, DiaryWriter};
@@ -20,4 +21,5 @@ pub use line::{
     OfferedLine, OfferedState, OutcomeLine, RankedLine, RunLine, SiteLine, Situation, StaleLine,
     StepLine, SCHEMA,
 };
+pub use rebuild::{action_space, element_state};
 pub use site::{site_line, situation_key};

@@ -67,6 +67,9 @@ pub struct OfferedLine {
     pub kind: String,
     pub label: String,
     pub role: Option<String>,
+    /// Region this action binds (`None` for page-level controls). Lets the
+    /// replay arena rebuild a target-bound `ObservedAction`.
+    pub region: Option<String>,
     /// Region fingerprint bits (0 for controls).
     pub fingerprint: u64,
     /// Observed control state, when present.
@@ -323,6 +326,9 @@ fn offered_json(a: &OfferedLine) -> Value {
     obj.insert("label".to_owned(), json!(a.label));
     if let Some(role) = &a.role {
         obj.insert("role".to_owned(), json!(role));
+    }
+    if let Some(region) = &a.region {
+        obj.insert("region".to_owned(), json!(region));
     }
     obj.insert("fingerprint".to_owned(), json!(a.fingerprint));
     if let Some(state) = &a.state {
@@ -592,6 +598,7 @@ fn parse_offered(value: &Value, line_no: usize, index: usize) -> Result<OfferedL
         id: str_field(obj, "id", line_no)?.to_owned(),
         kind: str_field(obj, "kind", line_no)?.to_owned(),
         label: str_field(obj, "label", line_no)?.to_owned(),
+        region: opt_str_field(obj, "region", line_no)?,
         role: opt_str_field(obj, "role", line_no)?,
         fingerprint: obj.get("fingerprint").and_then(Value::as_u64).unwrap_or(0),
         state,

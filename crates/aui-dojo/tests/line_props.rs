@@ -49,17 +49,21 @@ fn offered() -> impl Strategy<Value = Vec<OfferedLine>> {
                 "select",
                 "combobox"
             ]),
+            prop::option::of("[a-z0-9-]{1,12}"),
             0u64..u64::MAX,
             prop::option::of(offered_state()),
         )
-            .prop_map(|(id, kind, label, role, fingerprint, state)| OfferedLine {
-                id,
-                kind,
-                label,
-                role,
-                fingerprint,
-                state,
-            }),
+            .prop_map(
+                |(id, kind, label, role, region, fingerprint, state)| OfferedLine {
+                    id,
+                    kind,
+                    label,
+                    role,
+                    region,
+                    fingerprint,
+                    state,
+                },
+            ),
         0..5,
     )
 }

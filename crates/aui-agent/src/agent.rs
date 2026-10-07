@@ -828,9 +828,10 @@ where
             self.browser.settle();
             self.browser.observe()?;
             // `last_observation` re-borrows the cached manifold — no clone.
-            let after = self.browser.last_observation().ok_or_else(|| {
-                AgentError::Browser("observe produced no manifold".into())
-            })?;
+            let after = self
+                .browser
+                .last_observation()
+                .ok_or_else(|| AgentError::Browser("observe produced no manifold".into()))?;
             let after_page = self.browser.page().cloned();
             let page_d = match (before_page.as_ref(), after_page.as_ref()) {
                 (Some(b), Some(a)) => Some(self.browser.page_delta_between(b, a)),
@@ -932,9 +933,10 @@ where
         let value = input
             .payload()
             .and_then(|_| self.browser.read_value(&executed.target));
-        let after = self.browser.last_observation().ok_or_else(|| {
-            AgentError::Browser("observe produced no manifold".into())
-        })?;
+        let after = self
+            .browser
+            .last_observation()
+            .ok_or_else(|| AgentError::Browser("observe produced no manifold".into()))?;
         let verification = match input.payload() {
             Some(expected) => classify_value(expected, value.as_ref())
                 .unwrap_or_else(|| classify_delta(&executed.before, after, page_d.as_ref())),
@@ -961,9 +963,10 @@ where
             {
                 self.browser.observe()?;
                 self.reuse_observation = true;
-                let manifold = self.browser.last_observation().ok_or_else(|| {
-                    AgentError::Browser("observe produced no manifold".into())
-                })?;
+                let manifold = self
+                    .browser
+                    .last_observation()
+                    .ok_or_else(|| AgentError::Browser("observe produced no manifold".into()))?;
                 let on_screen = marker_on_screen(manifold, &marker);
                 self.marker_seen |= on_screen;
                 // An ad can start a moment after the page loads: give an
@@ -1236,9 +1239,10 @@ where
     /// One re-check of a `wait for X` clause. Never acts on the page.
     fn tick_wait_for(&mut self, target: &str) -> Result<TickResult, AgentError> {
         self.browser.observe()?;
-        let manifold = self.browser.last_observation().ok_or_else(|| {
-            AgentError::Browser("observe produced no manifold".into())
-        })?;
+        let manifold = self
+            .browser
+            .last_observation()
+            .ok_or_else(|| AgentError::Browser("observe produced no manifold".into()))?;
         let space = Self::action_space(manifold);
         let present = space
             .actions()

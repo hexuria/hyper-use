@@ -3,7 +3,47 @@
 use aui_core::{tokenize, ActionKind, ObservedAction, Role};
 use instinct_core::Confidence;
 use instinct_lexicon::overlap;
-use instinct_text::{normalize, NormalizeConfig};
+use instinct_text::{normalize, NormalizeConfig, Normalized};
+
+/// Everything scoring needs from one goal string, computed once: whitespace
+/// tokens, the whitespace-insensitive fold, instruction tokens (conditional
+/// clauses stripped), and the Instinct-normalized form. Scoring used to redo
+/// each of these — including the normalize — for every candidate action.
+struct TextView<'a> {
+    tokens: Vec<String>,
+    folded: String,
+    instruction: Vec<String>,
+    normalized: Option<Normalized<'a>>,
+}
+
+impl<'a> TextView<'a> {
+    fn of(text: &'a str) -> Self {
+        Self {
+            tokens: tokenize(text),
+            folded: fold(text),
+            instruction: instruction_tokens(text),
+            normalized: normalize(text, NormalizeConfig::default()).ok(),
+        }
+    }
+}
+
+/// The goal plus its stripped target phrase ([`target_phrase`] when it
+/// differs from the goal), shared by every candidate scored in one decide.
+pub(crate) struct GoalView<'a> {
+    goal: TextView<'a>,
+    phrase: Option<TextView<'a>>,
+}
+
+impl<'a> GoalView<'a> {
+    /// `phrase` must be `target_phrase(goal)` evaluated by the caller — the
+    /// owned string has to outlive this view, so it cannot live inside it.
+    pub(crate) fn of(goal: &'a str, phrase: Option<&'a str>) -> Self {
+        Self {
+            goal: TextView::of(goal),
+            phrase: phrase.map(TextView::of),
+        }
+    }
+}
 
 /// Score how well `action` matches `goal`. Returns Instinct confidence millis 0..=1000.
 ///
@@ -11,11 +51,21 @@ use instinct_text::{normalize, NormalizeConfig};
 /// (goal minus quoted payload, leading operation verb, and the preposition
 /// after them): in `Type "rust" into Search` the verb is operation evidence
 /// and `"rust"` is the TextResolver's payload; only `Search` names a target.
+///
+/// Test-facing wrapper that builds its own view; the decide hot path uses
+/// [`score_action_with`] on a shared [`GoalView`].
+#[cfg(test)]
 pub fn score_action(goal: &str, action: &ObservedAction) -> Confidence {
-    let best = score_action_best(goal, action);
+    let phrase = target_phrase(goal).filter(|p| *p != goal);
+    let view = GoalView::of(goal, phrase.as_deref());
+    score_action_with(&view, action)
+}
+
+pub(crate) fn score_action_with(view: &GoalView, action: &ObservedAction) -> Confidence {
+    let best = score_action_best_with(view, action);
     // Only an exact label can saturate: "Skip navigation" contains the goal
     // "Skip" but must stay a margin below the button labelled "Skip".
-    if best == Confidence::MAX && !exact_label(goal, action) {
+    if best == Confidence::MAX && !exact_label_with(view, action) {
         return Confidence::saturating(i32::from(NON_EXACT_CAP));
     }
     best
@@ -25,26 +75,30 @@ pub fn score_action(goal: &str, action: &ObservedAction) -> Confidence {
 /// Instinct Standard's margin below `MAX`, still above its min confidence.
 const NON_EXACT_CAP: i16 = 849;
 
-fn exact_label(goal: &str, action: &ObservedAction) -> bool {
-    let label = action.label();
-    eq_fold(goal, label)
-        || target_phrase(goal).is_some_and(|p| eq_fold(&p, label))
+fn exact_label_with(view: &GoalView, action: &ObservedAction) -> bool {
+    let label_folded = fold(action.label());
+    view.goal.folded == label_folded
+        || view
+            .phrase
+            .as_ref()
+            .is_some_and(|p| p.folded == label_folded)
         || (action.kind().is_control()
-            && (eq_fold(goal, action.kind().as_str()) || control_keyword_hit(goal, action.kind())))
+            && (view.goal.folded == fold(action.kind().as_str())
+                || control_keyword_hit_tokens(&view.goal.instruction, action.kind())))
 }
 
-fn score_action_best(goal: &str, action: &ObservedAction) -> Confidence {
-    let whole = score_action_text(goal, action);
-    match target_phrase(goal) {
-        Some(phrase) if phrase != goal => {
-            let p = score_action_text(&phrase, action);
+fn score_action_best_with(view: &GoalView, action: &ObservedAction) -> Confidence {
+    let whole = score_action_text_with(&view.goal, action);
+    match &view.phrase {
+        Some(phrase) => {
+            let p = score_action_text_with(phrase, action);
             if p.get() > whole.get() {
                 p
             } else {
                 whole
             }
         }
-        _ => whole,
+        None => whole,
     }
 }
 
@@ -104,68 +158,75 @@ pub fn target_phrase(goal: &str) -> Option<String> {
     }
 }
 
-fn score_action_text(goal: &str, action: &ObservedAction) -> Confidence {
+fn score_action_text_with(goal: &TextView, action: &ObservedAction) -> Confidence {
     let label = action.label();
     let kind = action.kind();
+    let label_folded = fold(label);
 
-    if eq_fold(goal, label) {
+    if goal.folded == label_folded {
         return Confidence::MAX;
     }
-    if kind.is_control() && eq_fold(goal, kind.as_str()) {
+    if kind.is_control() && goal.folded == fold(kind.as_str()) {
         return Confidence::MAX;
     }
     // Control verbs ("done", "wait", "scroll down") pick the control itself.
     // Operation verbs on target-bound kinds ("type", "select") are operation
     // evidence (see `score_operation`), not a cap on label evidence.
-    if kind.is_control() && control_keyword_hit(goal, kind) {
+    if kind.is_control() && control_keyword_hit_tokens(&goal.instruction, kind) {
         return Confidence::saturating(920);
     }
 
     let mut score = Confidence::ZERO;
 
-    if let Ok(ov) = lexical_overlap(goal, label) {
-        // Overlap measures how much of the label the goal holds. A short
-        // label that names a sliver of the goal is scaled by goal coverage.
-        let ov = if !sliver_scaled(kind) || covers_most(goal, label) {
-            ov
-        } else {
-            scale_by_coverage(ov, goal, label)
-        };
-        score = score.saturating_add(ov);
+    if let Some(q) = goal.normalized.as_ref() {
+        if let Ok(c) = normalize(label, NormalizeConfig::default()) {
+            if let Ok(ov) = overlap(q, &c) {
+                // Overlap measures how much of the label the goal holds. A short
+                // label that names a sliver of the goal is scaled by goal coverage.
+                let ov = if !sliver_scaled(kind) || covers_most_tokens(&goal.tokens, label) {
+                    ov
+                } else {
+                    scale_by_coverage_tokens(ov, &goal.tokens, label)
+                };
+                score = score.saturating_add(ov);
+            }
+        }
     }
 
-    let g = fold(goal);
-    let l = fold(label);
+    let g = &goal.folded;
     // A label inside the goal is evidence only when it covers most of the
     // goal: a one-word chip ("kabisado") inside a long title goal is not.
-    if !l.is_empty() && g.contains(&l) && (!sliver_scaled(kind) || covers_most(goal, label)) {
+    if !label_folded.is_empty()
+        && g.contains(&label_folded)
+        && (!sliver_scaled(kind) || covers_most_tokens(&goal.tokens, label))
+    {
         score = score.saturating_add(Confidence::saturating(250));
-    } else if !g.is_empty() && l.contains(&g) {
+    } else if !g.is_empty() && label_folded.contains(g.as_str()) {
         score = score.saturating_add(Confidence::saturating(200));
     }
 
-    let goal_tokens = tokenize(goal);
-    let label_tokens = tokenize(label);
-    if !goal_tokens.is_empty() {
-        let hits = goal_tokens
+    if !goal.tokens.is_empty() {
+        let label_tokens = tokenize(label);
+        let hits = goal
+            .tokens
             .iter()
             .filter(|t| label_tokens.iter().any(|lt| lt == *t))
             .count();
-        if hits == goal_tokens.len() && hits > 0 {
+        if hits == goal.tokens.len() && hits > 0 {
             score = score.saturating_add(Confidence::saturating(300));
         } else if hits > 0 {
-            let part = i32::try_from(hits.saturating_mul(150) / goal_tokens.len()).unwrap_or(0);
+            let part = i32::try_from(hits.saturating_mul(150) / goal.tokens.len()).unwrap_or(0);
             score = score.saturating_add(Confidence::saturating(part));
         }
     }
 
     if let Some(role) = action.role() {
-        if role_mentioned(goal, role) {
+        if role_mentioned(&goal.folded, role) {
             score = score.saturating_add(Confidence::saturating(80));
         }
     }
 
-    if kind == ActionKind::Done && done_language(goal) {
+    if kind == ActionKind::Done && done_language_tokens(&goal.instruction) {
         score = score.saturating_add(Confidence::saturating(100));
     }
 
@@ -181,8 +242,7 @@ fn sliver_scaled(kind: ActionKind) -> bool {
 }
 
 /// `conf` times the fraction of `goal` tokens that occur in `label`.
-fn scale_by_coverage(conf: Confidence, goal: &str, label: &str) -> Confidence {
-    let goal_tokens = tokenize(goal);
+fn scale_by_coverage_tokens(conf: Confidence, goal_tokens: &[String], label: &str) -> Confidence {
     if goal_tokens.is_empty() {
         return Confidence::ZERO;
     }
@@ -197,8 +257,7 @@ fn scale_by_coverage(conf: Confidence, goal: &str, label: &str) -> Confidence {
 }
 
 /// At least two thirds of `goal`'s tokens occur in `label`.
-fn covers_most(goal: &str, label: &str) -> bool {
-    let goal_tokens = tokenize(goal);
+fn covers_most_tokens(goal_tokens: &[String], label: &str) -> bool {
     if goal_tokens.is_empty() {
         return false;
     }
@@ -208,6 +267,10 @@ fn covers_most(goal: &str, label: &str) -> bool {
         .filter(|t| label_tokens.contains(t))
         .count();
     hits * 3 >= goal_tokens.len() * 2
+}
+
+fn covers_most(goal: &str, label: &str) -> bool {
+    covers_most_tokens(&tokenize(goal), label)
 }
 
 /// The executed `label` names what the clause asked for: it covers at least
@@ -226,28 +289,29 @@ pub fn label_names_target(clause: &str, label: &str) -> bool {
     covers_most(&phrase, label) && covers_most(label, &phrase)
 }
 
-/// Score an operation kind given the goal and the best target (if any) for that kind.
-pub fn score_operation(
-    goal: &str,
+/// Score an operation kind given the goal's memoized view and the best
+/// target (if any) for that kind.
+pub(crate) fn score_operation_with(
+    view: &GoalView,
     kind: ActionKind,
     best_target: Option<&ObservedAction>,
 ) -> Confidence {
     let mut score = Confidence::ZERO;
-    if control_keyword_hit(goal, kind) {
+    if control_keyword_hit_tokens(&view.goal.instruction, kind) {
         score = score.saturating_add(Confidence::saturating(920));
     }
-    if eq_fold(goal, kind.as_str()) {
+    if view.goal.folded == fold(kind.as_str()) {
         return Confidence::MAX;
     }
     if let Some(target) = best_target {
-        let t = score_action(goal, target);
+        let t = score_action_with(view, target);
         if t.get() > score.get() {
             score = t;
         }
         // The goal names a different target-bound operation ("type … into
         // Search" offers CLICK and TYPE_TEXT on the same field): an unnamed
         // operation cannot outrank the named one on label evidence alone.
-        let named = named_target_operations(goal);
+        let named = named_target_operations_tokens(&view.goal.instruction);
         if !named.is_empty() && !named.contains(&kind) {
             score = Confidence::saturating(i32::from(score.get().min(UNNAMED_OPERATION_CAP)));
         }
@@ -258,13 +322,7 @@ pub fn score_operation(
     score
 }
 
-fn lexical_overlap(goal: &str, candidate: &str) -> Result<Confidence, ()> {
-    let cfg = NormalizeConfig::default();
-    let q = normalize(goal, cfg).map_err(|_| ())?;
-    let c = normalize(candidate, cfg).map_err(|_| ())?;
-    overlap(&q, &c).map_err(|_| ())
-}
-
+#[cfg(test)]
 fn eq_fold(a: &str, b: &str) -> bool {
     fold(a) == fold(b)
 }
@@ -302,7 +360,7 @@ fn matches_instruction_tokens(tokens: &[String], keys: &[&[&str]]) -> bool {
     })
 }
 
-fn control_keyword_hit(goal: &str, kind: ActionKind) -> bool {
+fn control_keyword_hit_tokens(tokens: &[String], kind: ActionKind) -> bool {
     let keys: &[&[&str]] = match kind {
         ActionKind::Done => &[&["done"], &["finished"], &["complete"], &["completed"]],
         ActionKind::Blocked => &[&["blocked"], &["stuck"], &["impossible"]],
@@ -325,7 +383,13 @@ fn control_keyword_hit(goal: &str, kind: ActionKind) -> bool {
         ActionKind::Select => &[&["select"], &["choose"], &["pick"]],
         _ => &[],
     };
-    matches_instruction_tokens(&instruction_tokens(goal), keys)
+    matches_instruction_tokens(tokens, keys)
+}
+
+/// Test-facing goal-string form of [`control_keyword_hit_tokens`].
+#[cfg(test)]
+fn control_keyword_hit(goal: &str, kind: ActionKind) -> bool {
+    control_keyword_hit_tokens(&instruction_tokens(goal), kind)
 }
 
 /// Score ceiling for a target-bound operation the goal did not name when it
@@ -333,15 +397,15 @@ fn control_keyword_hit(goal: &str, kind: ActionKind) -> bool {
 const UNNAMED_OPERATION_CAP: i16 = 500;
 
 /// Target-bound operations whose verb appears in the goal.
-fn named_target_operations(goal: &str) -> Vec<ActionKind> {
+fn named_target_operations_tokens(tokens: &[String]) -> Vec<ActionKind> {
     [ActionKind::Click, ActionKind::TypeText, ActionKind::Select]
         .into_iter()
-        .filter(|kind| control_keyword_hit(goal, *kind))
+        .filter(|kind| control_keyword_hit_tokens(tokens, *kind))
         .collect()
 }
 
-fn role_mentioned(goal: &str, role: Role) -> bool {
-    let g = fold(goal);
+fn role_mentioned(goal_folded: &str, role: Role) -> bool {
+    let g = goal_folded;
     let key = match role {
         Role::Button => "button",
         Role::Link => "link",
@@ -357,9 +421,15 @@ fn role_mentioned(goal: &str, role: Role) -> bool {
     g.contains(key)
 }
 
+/// Test-facing goal-string form of [`done_language_tokens`].
+#[cfg(test)]
 fn done_language(goal: &str) -> bool {
+    done_language_tokens(&instruction_tokens(goal))
+}
+
+fn done_language_tokens(instruction: &[String]) -> bool {
     matches_instruction_tokens(
-        &instruction_tokens(goal),
+        instruction,
         &[
             &["done"],
             &["finish"],

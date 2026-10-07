@@ -191,6 +191,9 @@ pub struct Predicted {
     pub space_captured_at_ms: u64,
     /// The observation the decision was made on (ticket is issued against it).
     pub manifold: InteractionManifold,
+    /// The finite space the decision was made in — shared with the journal
+    /// event, so act never rebuilds it from the manifold.
+    pub space: std::sync::Arc<ActionSpace>,
     pub focused: Option<RegionId>,
 }
 
@@ -510,7 +513,7 @@ where
     /// The finite action space for an observation: front layer applied, so a
     /// control behind an open dialog is never offered.
     pub fn action_space(manifold: &InteractionManifold) -> ActionSpace {
-        ActionSpace::from_manifold(&with_front_layer(manifold))
+        ActionSpace::from_manifold(with_front_layer(manifold).as_ref())
     }
 
     /// Policy decides on a fresh observation. Any previous prediction is discarded.
@@ -545,7 +548,7 @@ where
             }
         };
         let focused = self.browser.focused();
-        let space = Self::action_space(&manifold);
+        let space = std::sync::Arc::new(Self::action_space(&manifold));
         self.policy_calls += 1;
 
         let (site_url, site_title) = self
@@ -602,7 +605,6 @@ where
             near: near_labels(&manifold, &space, &outcome),
             space: space.clone(),
             outcome: outcome.clone(),
-            history: self.policy_history.clone(),
         });
 
         let decision = match outcome {
@@ -701,6 +703,7 @@ where
             payload,
             space_captured_at_ms: space.captured_at_ms(),
             manifold,
+            space,
             focused,
         });
         self.state = AgentState::Predicted;
@@ -801,7 +804,6 @@ where
             _ => None,
         };
         if scroll.is_some() || kind == ActionKind::Wait {
-            let before = predicted.manifold.clone();
             let before_page = self.browser.page().cloned();
             let input_name = match kind {
                 ActionKind::ScrollUp => "scroll-up",
@@ -812,6 +814,9 @@ where
                 self.browser.scroll(direction)?;
             }
             self.browser.settle();
+            // `observe()` mutably borrows the runtime, so `page()` cannot be
+            // called while `after` is alive — one owned manifold per scroll /
+            // wait is the cost of keeping the borrow scope tight.
             let after = self.browser.observe()?.clone();
             let after_page = self.browser.page().cloned();
             let page_d = match (before_page.as_ref(), after_page.as_ref()) {
@@ -819,16 +824,18 @@ where
                 _ => None,
             };
             return Ok((
-                record(classify_delta(&before, &after, page_d.as_ref())),
+                record(classify_delta(&predicted.manifold, &after, page_d.as_ref())),
                 input_name,
             ));
         }
 
         let action = region_action(kind)
             .ok_or(AgentError::InvalidState("non-executable kind reached act"))?;
-        let offered = Self::action_space(&predicted.manifold)
+        // The space the decision was made in travels with the prediction —
+        // rebuilding it per act was a whole-space clone for one lookup.
+        let offered = predicted
+            .space
             .get(&predicted.decision.action_id)
-            .cloned()
             .ok_or_else(|| AgentError::Policy("prediction not in its own action space".into()))?;
         let target = offered
             .target()

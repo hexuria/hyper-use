@@ -12,7 +12,9 @@ aui-cdp = { path = "../aui-cdp" }
 aui-observe = { path = "../aui-observe" }
 aui-core = { path = "../aui-core" }
 aui-geometry = { path = "../aui-geometry" }
-serde_json = "1"
+serde = "1"
+serde_json = { version = "1", features = ["unbounded_depth"] }
+serde_stacker = "0.1"
 
 [dev-dependencies]
 aui-resonance = { path = "../aui-resonance" }

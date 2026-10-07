@@ -6,8 +6,10 @@
 //! lines. Plain Rust, no serde, no IO — the loop stays allocation-bounded
 //! and the on-disk format stays a CLI concern.
 
+use std::sync::Arc;
+
 use aui_core::ActionSpace;
-use aui_policy::{HistoryEntry, PolicyOutcome};
+use aui_policy::PolicyOutcome;
 
 use crate::outcome::{AgentOutcome, StepRecord};
 
@@ -41,9 +43,10 @@ pub enum JournalEvent {
         roles: Vec<&'static str>,
         /// Labels near the chosen (or top-ranked) target.
         near: Vec<String>,
-        space: ActionSpace,
+        /// Shared with the [`Predicted`](crate::Predicted) the same decision produced — one
+        /// allocation serves the journal and the act path.
+        space: Arc<ActionSpace>,
         outcome: PolicyOutcome,
-        history: Vec<HistoryEntry>,
     },
     /// One per executed step: input kind, win flag, and the record
     /// (action, payload, verification) already kept for the outcome.

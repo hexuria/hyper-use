@@ -202,7 +202,7 @@ pub fn guard_with<M: RegionMatcher>(
     // Rank on the world as a person sees it: regions behind an open dialog
     // carry the occluded penalty.
     let effective = with_front_layer(manifold);
-    let ranked = matcher.rank(request.query(), &effective)?;
+    let ranked = matcher.rank(request.query(), effective.as_ref())?;
     // Ranking on the raw observation tells whether the best label match is
     // one the front layer buried.
     let raw_ranked = matcher.rank(request.query(), manifold)?;
@@ -557,7 +557,9 @@ mod tests {
                 .role(Role::Button),
         );
         let effective = with_front_layer(&m);
-        let ranked = default_matcher().rank(req.query(), &effective).unwrap();
+        let ranked = default_matcher()
+            .rank(req.query(), effective.as_ref())
+            .unwrap();
         assert_eq!(ranked[0].id().as_str(), "dlg-delete");
         assert!(ranked[0].confidence() - ranked[1].confidence() >= MIN_ALLOW_MARGIN);
         match guard(&m, &req).unwrap() {
@@ -587,7 +589,7 @@ mod tests {
                 .role(Role::Button),
         );
         let ranked = HgraMatcher::default()
-            .rank(req.query(), &with_front_layer(&m))
+            .rank(req.query(), with_front_layer(&m).as_ref())
             .unwrap();
         assert_eq!(
             ranked[0].id().as_str(),

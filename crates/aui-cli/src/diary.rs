@@ -34,21 +34,40 @@ pub fn write_diary(dir: &Path, events: &[JournalEvent]) -> Result<PathBuf, CliEr
     // Steps inherit their action's observed input type from the decision
     // that produced them — needed to keep passwords out of the file.
     let mut last_space: Option<&ActionSpace> = None;
+    // A decision's `history` line is the steps journaled before it — the
+    // journal no longer snapshots the vec per decision (a quadratic clone
+    // every policy call), so the writer rebuilds it here. The serialized
+    // `history` field is unchanged.
+    let mut history_so_far: Vec<HistoryLine> = Vec::new();
     for (seq, event) in events.iter().enumerate() {
         if let JournalEvent::Decision { space, .. } = event {
-            last_space = Some(space);
+            last_space = Some(space.as_ref());
         }
         writer
-            .write(&map_event(event, seq as u32, last_space))
+            .write(&map_event(event, seq as u32, last_space, &history_so_far))
             .map_err(|e| CliError::Io {
                 path: writer.path().display().to_string(),
                 message: e.to_string(),
             })?;
+        if let JournalEvent::Step { record, .. } = event {
+            history_so_far.push(HistoryLine {
+                step: record.step,
+                action_id: record.action_id.as_str().to_owned(),
+                kind: record.kind.as_str().to_owned(),
+                label: record.label.clone(),
+                verification: record.verification.as_str().to_owned(),
+            });
+        }
     }
     Ok(writer.path().to_path_buf())
 }
 
-fn map_event(event: &JournalEvent, seq: u32, last_space: Option<&ActionSpace>) -> DiaryLine {
+fn map_event(
+    event: &JournalEvent,
+    seq: u32,
+    last_space: Option<&ActionSpace>,
+    history_so_far: &[HistoryLine],
+) -> DiaryLine {
     match event {
         JournalEvent::Run {
             goal,
@@ -71,7 +90,6 @@ fn map_event(event: &JournalEvent, seq: u32, last_space: Option<&ActionSpace>) -
             near,
             space,
             outcome,
-            history,
         } => {
             let (choice, abstain, operation_ranked, target_ranked) = match outcome {
                 PolicyOutcome::Choice(decision) => (
@@ -117,16 +135,7 @@ fn map_event(event: &JournalEvent, seq: u32, last_space: Option<&ActionSpace>) -
                     .collect(),
                 operation_ranked: ranked_lines(operation_ranked),
                 target_ranked: ranked_lines(target_ranked),
-                history: history
-                    .iter()
-                    .map(|entry| HistoryLine {
-                        step: entry.step,
-                        action_id: entry.action_id.as_str().to_owned(),
-                        kind: entry.kind.as_str().to_owned(),
-                        label: entry.label.clone(),
-                        verification: entry.verification.clone(),
-                    })
-                    .collect(),
+                history: history_so_far.to_vec(),
                 choice,
                 abstain,
             }))

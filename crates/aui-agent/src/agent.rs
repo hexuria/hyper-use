@@ -595,6 +595,39 @@ where
             history: self.policy_history.clone(),
         });
 
+        let (site_url, site_title) = self
+            .browser
+            .page()
+            .map(|page| {
+                (
+                    page.url().map(str::to_owned),
+                    page.title().map(str::to_owned),
+                )
+            })
+            .unwrap_or_default();
+        let mut roles: Vec<&'static str> = manifold
+            .regions()
+            .map(|region| region.role().as_str())
+            .collect();
+        roles.sort_unstable();
+        roles.dedup();
+        self.journal.push(JournalEvent::Decision {
+            clause_index: self.clause_index,
+            clause: self.goal.as_str().to_owned(),
+            mode: self.mode_name(),
+            source: self.policy.decision_source(),
+            site_url,
+            site_title,
+            front_layer: manifold
+                .regions()
+                .any(|region| blocker(&manifold, region).is_some()),
+            roles,
+            near: near_labels(&manifold, &space, &outcome),
+            space: space.clone(),
+            outcome: outcome.clone(),
+            history: self.policy_history.clone(),
+        });
+
         let decision = match outcome {
             PolicyOutcome::Abstain { reason, .. } => return Err(AgentError::Abstain(reason)),
             PolicyOutcome::Choice(decision) => decision,

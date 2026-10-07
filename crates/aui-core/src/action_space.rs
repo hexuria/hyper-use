@@ -140,6 +140,29 @@ pub struct ObservedAction {
 }
 
 impl ObservedAction {
+    /// Build one offered action directly. `from_manifold` uses this for every
+    /// action it emits; the replay arena uses it to rebuild a recorded menu —
+    /// the caller owns which actions belong on the menu.
+    pub fn new(
+        id: ActionId,
+        kind: ActionKind,
+        target: Option<RegionId>,
+        label: impl Into<String>,
+        role: Option<Role>,
+        target_fingerprint: u64,
+        state: ElementState,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            target,
+            label: label.into(),
+            role,
+            target_fingerprint,
+            state,
+        }
+    }
+
     pub fn id(&self) -> &ActionId {
         &self.id
     }
@@ -215,6 +238,20 @@ impl ActionSpace {
         Self {
             captured_at_ms: manifold.captured_at_ms(),
             actions,
+        }
+    }
+
+    /// Build a space from already-offered actions — e.g. the replay arena
+    /// rebuilding a recorded menu. Viability filtering happened upstream;
+    /// this only orders deterministically. `captured_at_ms` is 0: a recorded
+    /// menu has no observation timestamp.
+    pub fn from_actions(actions: Vec<ObservedAction>) -> Self {
+        Self {
+            captured_at_ms: 0,
+            actions: actions
+                .into_iter()
+                .map(|action| (action.id.clone(), action))
+                .collect(),
         }
     }
 

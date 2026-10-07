@@ -104,6 +104,7 @@ fn map_event(event: &JournalEvent, seq: u32) -> DiaryLine {
                         kind: action.kind().as_str().to_owned(),
                         label: action.label().to_owned(),
                         role: action.role().map(|role| role.as_str().to_owned()),
+                        region: action.target().map(|id| id.as_str().to_owned()),
                         fingerprint: action.target_fingerprint(),
                         state: offered_state(action.state()),
                     })

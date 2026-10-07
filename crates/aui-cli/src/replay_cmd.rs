@@ -108,8 +108,16 @@ pub fn replay_command(args: &[String]) -> Result<String, CliError> {
 
     let mut out = String::new();
     if let Some(store) = &parsed.lessons {
+        let lessons = aui_dojo::load_lessons(Path::new(store)).map_err(|e| CliError::Io {
+            path: store.clone(),
+            message: e.to_string(),
+        })?;
+        let words: usize = lessons.words.values().map(Vec::len).sum();
+        let moves: usize = lessons.moves.values().map(Vec::len).sum();
+        let trust_pairs: usize = lessons.trust.values().map(|m| m.len()).sum();
         out.push_str(&format!(
-            "lessons {store}: ignored (the lesson store lands in work item 3)\n"
+            "lessons {store}: {} places, {words} words, {moves} moves, {trust_pairs} trust pairs (evidence wiring lands in work item 4)\n",
+            lessons.places.len(),
         ));
     }
     let mut total = Report::default();

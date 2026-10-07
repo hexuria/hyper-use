@@ -43,7 +43,7 @@ pub enum JournalEvent {
         roles: Vec<&'static str>,
         /// Labels near the chosen (or top-ranked) target.
         near: Vec<String>,
-        /// Shared with the [`Predicted`] the same decision produced — one
+        /// Shared with the [`Predicted`](crate::Predicted) the same decision produced — one
         /// allocation serves the journal and the act path.
         space: Arc<ActionSpace>,
         outcome: PolicyOutcome,

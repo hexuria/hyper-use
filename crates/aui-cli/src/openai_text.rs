@@ -28,7 +28,7 @@ const MODEL_ENV: &str = "TEXT_MODEL";
 const REASONING_ENV: &str = "TEXT_MODEL_REASONING";
 const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/v1";
 const DEFAULT_MODEL: &str = "deepseek-chat";
-const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+const CALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The reply contract the model must satisfy (`parse_command_reply` shape).
 const SYSTEM: &str = "You fill one browser field for a web agent. Reply with exactly one JSON \
@@ -61,13 +61,14 @@ impl OpenAiTextModel {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+        check_base_url(base.trim_end_matches('/'))?;
         let model = std::env::var(MODEL_ENV)
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_MODEL.to_owned());
         let reasoning = if std::env::var(REASONING_ENV).ok().as_deref() == Some("none") {
             json!({"reasoning": {"enabled": false}})
-        } else if base.contains("api.deepseek.com/") {
+        } else if is_deepseek_api(&base) {
             json!({"thinking": {"type": "disabled"}})
         } else {
             json!({"reasoning": {"effort": "low"}})
@@ -92,7 +93,10 @@ impl TextModel for OpenAiTextModel {
             "goal": request.goal,
             "field_label": request.field_label,
             "field_role": request.field_role,
-            "context_fingerprint": request.context_fingerprint,
+            // String on the wire: language models cannot reproduce a 19-digit
+            // JSON number faithfully; `parse_command_reply` accepts the
+            // decimal/hex string back.
+            "context_fingerprint": request.context_fingerprint.to_string(),
             "max_chars": request.max_chars,
         });
         let mut body = json!({
@@ -109,15 +113,19 @@ impl TextModel for OpenAiTextModel {
                 map.insert(key.clone(), value.clone());
             }
         }
-        let response: Value = self
-            .http
-            .post(&self.url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .map_err(|err| TextModelError::Unavailable(format!("request failed: {err}")))?
-            .error_for_status()
-            .map_err(|err| TextModelError::Unavailable(format!("http error: {err}")))?
+        // One retry on retryable failures — the call is inside the agent
+        // loop, so a transient blip must not cost a turn.
+        let mut result = self.send_once(&body);
+        let retryable = match &result {
+            Ok(r) => retryable_status(r.status()),
+            Err(err) => err.is_timeout() || err.is_connect(),
+        };
+        if retryable {
+            result = self.send_once(&body);
+        }
+        let response: Value = result
+            .and_then(|r| r.error_for_status())
+            .map_err(|err| TextModelError::Unavailable(format!("text model http: {err}")))?
             .json()
             .map_err(|err| TextModelError::Malformed(format!("response not JSON: {err}")))?;
         let content = response["choices"][0]["message"]["content"]
@@ -125,6 +133,51 @@ impl TextModel for OpenAiTextModel {
             .ok_or_else(|| TextModelError::Malformed("no assistant content".into()))?;
         parse_command_reply(content.as_bytes())
     }
+}
+
+impl OpenAiTextModel {
+    fn send_once(&self, body: &Value) -> Result<reqwest::blocking::Response, reqwest::Error> {
+        self.http
+            .post(&self.url)
+            .bearer_auth(&self.api_key)
+            .json(body)
+            .send()
+    }
+}
+
+fn retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// The API key rides the Authorization header — refuse cleartext endpoints
+/// (`http://` is allowed only for localhost test servers).
+fn check_base_url(base: &str) -> Result<(), String> {
+    if base.starts_with("https://") {
+        return Ok(());
+    }
+    if let Some(rest) = base.strip_prefix("http://") {
+        let authority = rest.split('/').next().unwrap_or_default();
+        let host = match authority.strip_prefix('[') {
+            Some(_) => &authority[..authority.find(']').map_or(authority.len(), |i| i + 1)],
+            None => authority.split(':').next().unwrap_or_default(),
+        };
+        if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "text model: {BASE_URL_ENV} {base:?} must be https:// (http:// allowed only for localhost)"
+    ))
+}
+
+/// `api.deepseek.com` exactly — a mere substring match would let
+/// `?x=api.deepseek.com` on another host select the deepseek request shape.
+fn is_deepseek_api(base: &str) -> bool {
+    base.split("://")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|authority| authority.split(':').next())
+        == Some("api.deepseek.com")
 }
 
 #[cfg(test)]
@@ -152,8 +205,41 @@ mod tests {
         let m = OpenAiTextModel::from_env().unwrap().unwrap();
         assert_eq!(m.reasoning, json!({"reasoning": {"enabled": false}}));
         assert_eq!(m.url, "https://example.test/v1/chat/completions");
+
+        // Cleartext endpoints are refused (the key rides Authorization);
+        // localhost http is allowed for test servers.
+        std::env::set_var(BASE_URL_ENV, "http://api.evil.example/v1");
+        assert!(OpenAiTextModel::from_env().is_err());
+        std::env::set_var(BASE_URL_ENV, "ftp://api.deepseek.com");
+        assert!(OpenAiTextModel::from_env().is_err());
+        std::env::set_var(BASE_URL_ENV, "http://127.0.0.1:9000");
+        assert!(OpenAiTextModel::from_env().unwrap().is_some());
         std::env::remove_var(API_KEY_ENV);
         std::env::remove_var(BASE_URL_ENV);
         std::env::remove_var(REASONING_ENV);
+    }
+
+    #[test]
+    fn base_url_guard_hosts() {
+        for ok in [
+            "https://api.deepseek.com/v1",
+            "http://localhost",
+            "http://localhost:8000",
+            "http://127.0.0.1:3000/v1",
+            "http://[::1]:8080",
+        ] {
+            assert!(check_base_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://api.deepseek.com/v1",
+            "http://127.0.0.1.evil.test",
+            "localhost:8000",
+        ] {
+            assert!(check_base_url(bad).is_err(), "{bad}");
+        }
+        assert!(is_deepseek_api("https://api.deepseek.com/v1"));
+        assert!(is_deepseek_api("https://api.deepseek.com"));
+        assert!(!is_deepseek_api("https://deepseek.com"));
+        assert!(!is_deepseek_api("https://evil.test/?x=api.deepseek.com/"));
     }
 }

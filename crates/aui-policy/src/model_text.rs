@@ -381,8 +381,8 @@ impl TextModel for ScriptedTextModel {
 ///
 /// Request: `{"goal":…,"field_label":…,"field_role":…,"context_fingerprint":N,"max_chars":N}`
 ///
-/// Reply: `{"text":"…","context_fingerprint":N}` (echo the request number) or
-/// `{"declined":"reason"}`.
+/// Reply: `{"text":"…","context_fingerprint":N}` (echo the request value —
+/// a JSON number or a decimal/hex string) or `{"declined":"reason"}`.
 ///
 /// The program owns its API keys (environment / keychain); ultra-instinct never
 /// reads, logs, or forwards them. Stderr is discarded so a chatty client
@@ -456,11 +456,29 @@ pub fn parse_command_reply(stdout: &[u8]) -> Result<TextModelReply, TextModelErr
         .ok_or_else(|| TextModelError::Malformed("missing string `text`".into()))?;
     let context_fingerprint = value
         .get("context_fingerprint")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| TextModelError::Malformed("missing u64 `context_fingerprint`".into()))?;
+        .and_then(reply_fingerprint)
+        .ok_or_else(|| {
+            TextModelError::Malformed(
+                "missing `context_fingerprint` (u64 number or decimal/hex string)".into(),
+            )
+        })?;
     Ok(TextModelReply {
         text: text.to_owned(),
         context_fingerprint,
+    })
+}
+
+/// A fingerprint echoed on the wire may be a JSON number or a decimal/hex
+/// string. Language models routinely corrupt a 19-digit integer, so adapters
+/// send the fingerprint as a string and accept it back in either form.
+fn reply_fingerprint(value: &serde_json::Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value.as_str().and_then(|s| {
+            s.parse::<u64>().ok().or_else(|| {
+                s.strip_prefix("0x")
+                    .and_then(|h| u64::from_str_radix(h, 16).ok())
+            })
+        })
     })
 }
 
@@ -625,6 +643,25 @@ mod tests {
                 context_fingerprint: u64::MAX
             })
         );
+        // LLM adapters echo the fingerprint as a string — decimal or hex.
+        assert_eq!(
+            parse_command_reply(br#"{"text":"rust","context_fingerprint":"18446744073709551615"}"#),
+            Ok(TextModelReply {
+                text: "rust".into(),
+                context_fingerprint: u64::MAX
+            })
+        );
+        assert_eq!(
+            parse_command_reply(br#"{"text":"rust","context_fingerprint":"0x10"}"#),
+            Ok(TextModelReply {
+                text: "rust".into(),
+                context_fingerprint: 16
+            })
+        );
+        assert!(matches!(
+            parse_command_reply(br#"{"text":"rust","context_fingerprint":"not-a-number"}"#),
+            Err(TextModelError::Malformed(_))
+        ));
         assert!(matches!(
             parse_command_reply(br#"{"declined":"no value"}"#),
             Err(TextModelError::Declined(_))

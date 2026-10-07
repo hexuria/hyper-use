@@ -2,7 +2,7 @@
 //! crate does not pull a TLS stack. Chrome's local debugging port is `ws`.
 
 use std::io::{ErrorKind, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -16,6 +16,11 @@ pub const DEFAULT_CDP_HTTP: &str = "http://127.0.0.1:9222";
 
 /// Maximum time to wait for a CDP response after sending a call.
 const CALL_DEADLINE: Duration = Duration::from_secs(30);
+
+/// TCP connect deadline and per-read/write timeout. The ws handshake runs on
+/// a socket that already carries these, so a silent peer fails fast.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 type Socket = WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
 
@@ -176,22 +181,54 @@ fn connect_socket(ws_url: &str) -> Result<Socket, CdpError> {
             message: format!("websocket URL `{ws_url}` must use ws://"),
         });
     }
-    let (socket, _response) = tungstenite::connect(ws_url).map_err(|err| CdpError::Transport {
+    // `tungstenite::connect` applies no deadline until it returns — a host
+    // that accepts TCP but never completes the upgrade would stall forever.
+    // Connect with a timeout, then run the blocking handshake over a socket
+    // that already carries read/write timeouts.
+    let authority = ws_url["ws://".len()..]
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    let host_port = match authority.contains(':') {
+        true => authority.to_owned(),
+        false => format!("{authority}:80"),
+    };
+    let stream = connect_tcp(&host_port)?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
+        .map_err(|err| CdpError::Transport {
+            message: err.to_string(),
+        })?;
+    let (socket, _response) = tungstenite::client(
+        ws_url,
+        tungstenite::stream::MaybeTlsStream::Plain(stream),
+    )
+    .map_err(|err| CdpError::Transport {
         message: err.to_string(),
     })?;
-    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_ref() {
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .map_err(|err| CdpError::Transport {
-                message: err.to_string(),
-            })?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(5)))
-            .map_err(|err| CdpError::Transport {
-                message: err.to_string(),
-            })?;
-    }
     Ok(socket)
+}
+
+fn connect_tcp(host_port: &str) -> Result<TcpStream, CdpError> {
+    let mut last_err = String::from("no addresses resolved");
+    for addr in host_port
+        .to_socket_addrs()
+        .map_err(|err| CdpError::Transport {
+            message: format!("resolve `{host_port}`: {err}"),
+        })?
+    {
+        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+            Ok(stream) => {
+                stream.set_nodelay(true).ok();
+                return Ok(stream);
+            }
+            Err(err) => last_err = format!("{addr}: {err}"),
+        }
+    }
+    Err(CdpError::Transport {
+        message: format!("connect `{host_port}`: {last_err}"),
+    })
 }
 
 fn resolve_websocket_url(endpoint: &str) -> Result<String, CdpError> {
@@ -294,7 +331,9 @@ fn close_owned_target(target: &OwnedTarget) {
         )?;
         Ok::<(), CdpError>(())
     })();
-    let _ = result;
+    if let Err(err) = result {
+        eprintln!("cdp: closing owned target {} failed: {err}", target.target_id);
+    }
 }
 
 fn http_get(url: &str) -> Result<String, CdpError> {
@@ -305,9 +344,11 @@ fn http_get(url: &str) -> Result<String, CdpError> {
         })?;
     let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
     let path = format!("/{path}");
-    let mut stream = TcpStream::connect(host).map_err(|err| CdpError::Transport {
-        message: err.to_string(),
-    })?;
+    let host_port = match host.contains(':') {
+        true => host.to_owned(),
+        false => format!("{host}:80"),
+    };
+    let mut stream = connect_tcp(&host_port)?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|err| CdpError::Transport {
@@ -517,5 +558,26 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn connect_socket_fails_fast_when_the_peer_never_answers() {
+        // A listener that accepts TCP but never completes the ws upgrade used
+        // to stall the CLI forever: `tungstenite::connect` applies no deadline
+        // until it returns.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            let _held = listener.accept();
+            std::thread::sleep(Duration::from_secs(30));
+        });
+        let started = Instant::now();
+        let result = connect_socket(&format!("ws://127.0.0.1:{port}/devtools/page/X"));
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "handshake took {:?}",
+            started.elapsed()
+        );
     }
 }

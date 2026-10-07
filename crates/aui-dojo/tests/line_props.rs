@@ -25,15 +25,24 @@ fn opt_bool() -> impl Strategy<Value = Option<bool>> {
 }
 
 fn offered_state() -> impl Strategy<Value = OfferedState> {
-    (maybe_word(), opt_bool(), opt_bool(), maybe_word(), words()).prop_map(
-        |(value, checked, expanded, selected, options)| OfferedState {
-            value,
-            checked,
-            expanded,
-            selected,
-            options,
-        },
+    (
+        maybe_word(),
+        opt_bool(),
+        opt_bool(),
+        maybe_word(),
+        words(),
+        prop::option::of(prop_oneof!["password", "text", "email"]),
     )
+        .prop_map(
+            |(value, checked, expanded, selected, options, input_type)| OfferedState {
+                value,
+                checked,
+                expanded,
+                selected,
+                options,
+                input_type,
+            },
+        )
 }
 
 fn offered() -> impl Strategy<Value = Vec<OfferedLine>> {

@@ -59,6 +59,7 @@ pub struct TextModelReply {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TextModelError {
     /// Transport / process / timeout failure. Never contains credentials.
     Unavailable(String),

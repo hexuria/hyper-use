@@ -57,6 +57,15 @@ pub enum JournalEvent {
         won: bool,
         record: StepRecord,
     },
+    /// The policy call itself errored — journaled so the diary records
+    /// the attempted decision, not just the failed run.
+    PolicyError {
+        clause_index: usize,
+        clause: String,
+        /// Arm that errored (`instinct`, `jev`, `clef-flash`, …).
+        source: &'static str,
+        error: String,
+    },
     /// A prediction discarded because the ticket caught page drift.
     StaleDiscard { reason: String },
     /// A `then` clause boundary crossed.

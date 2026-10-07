@@ -437,7 +437,7 @@ fn json_escape(text: &str) -> String {
 }
 
 mod compare;
-pub(crate) mod diary;
+pub mod diary;
 pub mod dojo_policy;
 pub mod exams_cmd;
 pub(crate) mod lessons_cmd;

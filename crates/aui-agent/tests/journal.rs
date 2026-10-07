@@ -114,3 +114,51 @@ fn journal_records_a_full_mock_run() {
         assert_eq!(won, step_is_win(clause, record));
     }
 }
+
+/// A policy that errors still lands in the journal — the diary must show
+/// WHY a run ended, not just that it did.
+#[test]
+fn a_failing_policy_writes_a_policy_error_event() {
+    struct Boom;
+    impl aui_policy::BrowserPolicy for Boom {
+        fn name(&self) -> &'static str {
+            "boom"
+        }
+        fn decide(
+            &mut self,
+            _space: &aui_core::ActionSpace,
+            _goal: &aui_policy::AgentGoal,
+            _history: &[aui_policy::HistoryEntry],
+        ) -> Result<aui_policy::PolicyOutcome, aui_policy::PolicyError> {
+            Err(aui_policy::PolicyError::Internal("kaboom".to_owned()))
+        }
+    }
+
+    let page = manifold(
+        r#"
+        viewport w=800 h=600
+        region id=go role=button label="Continue" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+        "#,
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), Boom)
+        .max_steps(3)
+        .build("Continue");
+    assert!(agent.predict().is_err(), "the policy error propagates");
+
+    let journal = agent.take_journal();
+    let event = journal
+        .iter()
+        .find_map(|event| match event {
+            JournalEvent::PolicyError {
+                clause,
+                source,
+                error,
+                ..
+            } => Some((clause, source, error)),
+            _ => None,
+        })
+        .expect("a policy_error event was journaled");
+    assert_eq!(*event.0, "Continue");
+    assert_eq!(*event.1, "boom");
+    assert!(event.2.contains("kaboom"));
+}

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 /// Errors from reading or writing a battle diary.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DojoError {
     /// A filesystem operation failed.
     Io { path: PathBuf, message: String },

@@ -130,9 +130,10 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
     if !store.learned_diaries.insert(diary.to_owned()) {
         return;
     }
-    // Decision seq → its situation key, so steps bind to the situation
-    // that produced them (multi-clause runs change situations mid-run).
-    let mut decision_key: BTreeMap<u32, String> = BTreeMap::new();
+    // Decision seq → (clause, situation key), so steps and corrections
+    // bind to the situation that produced them (multi-clause runs change
+    // situations mid-run).
+    let mut decision_key: BTreeMap<u32, (String, String)> = BTreeMap::new();
     // Winning (clause, action) links in order, grouped by situation key.
     let mut moves_by_key: BTreeMap<String, Vec<MoveStep>> = BTreeMap::new();
 
@@ -140,7 +141,7 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
         match line {
             DiaryLine::Decision(d) => {
                 let key = context_key(d.site.as_ref(), &d.situation, &d.clause);
-                decision_key.insert(d.seq, key.clone());
+                decision_key.insert(d.seq, (d.clause.clone(), key.clone()));
                 let place = store.places.entry(key.clone()).or_default();
                 place.host = d.site.as_ref().and_then(|s: &SiteLine| s.host.clone());
                 place.path = d.site.as_ref().and_then(|s| s.path.clone());
@@ -163,7 +164,7 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
                 let Some(key) = decision_key
                     .range(..=s.seq)
                     .next_back()
-                    .map(|(_, k)| k.clone())
+                    .map(|(_, (_, k))| k.clone())
                 else {
                     continue;
                 };
@@ -202,13 +203,15 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
             }
             DiaryLine::Correction(c) => {
                 // The strongest signal: the policy's pick was wrong, the
-                // human's expectation is right — in every situation this
-                // clause appeared in. Bind to the run's first decision key
-                // for the clause (fallback: clause-only key via empty site).
+                // human's expectation is right. Bind to the LATEST
+                // decision about this clause — the correction was written
+                // against what the run most recently did, not its first
+                // decision. Fallback: clause-only key via empty site.
                 let key = decision_key
-                    .values()
-                    .next()
-                    .cloned()
+                    .iter()
+                    .rev()
+                    .find(|(_, (clause, _))| clause == &c.clause)
+                    .map(|(_, (_, k))| k.clone())
                     .unwrap_or_else(|| context_key(None, &Default::default(), &c.clause));
                 let trust_map = store.trust.entry(key).or_default();
                 let loss = trust_map.entry(c.chosen.clone()).or_default();
@@ -507,7 +510,7 @@ fn parse_trust(v: Option<&Value>) -> BTreeMap<String, BTreeMap<String, Trust>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::line::{DecisionLine, OfferedLine, StepLine};
+    use crate::line::{DecisionLine, OfferedLine, Situation, StepLine};
 
     fn decision(seq: u32, clause: &str) -> DiaryLine {
         DiaryLine::Decision(Box::new(DecisionLine {
@@ -639,5 +642,50 @@ mod tests {
             LessonStore::default()
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A correction targets the run's LATEST decision about its clause —
+    /// the page shape it was written against — not the first sighting.
+    #[test]
+    fn a_correction_binds_to_the_latest_decision_of_its_clause() {
+        let site = SiteLine {
+            url: Some("https://x.test/p".to_owned()),
+            title: Some("p".to_owned()),
+            host: Some("x.test".to_owned()),
+            path: Some("/p".to_owned()),
+        };
+        let decision_on = |seq: u32, clause: &str, front: bool| {
+            let mut line = decision(seq, clause);
+            if let DiaryLine::Decision(d) = &mut line {
+                d.situation.front_layer = front;
+            }
+            line
+        };
+        let lines = vec![
+            decision_on(1, "Click Go", false),
+            decision_on(2, "Click Go", true),
+            DiaryLine::Correction(crate::CorrectionLine {
+                clause: "Click Go".to_owned(),
+                expected: "Go".to_owned(),
+                chosen: "No".to_owned(),
+            }),
+        ];
+        let mut store = LessonStore::default();
+        learn_lines(&mut store, "1-run", 1000, &lines);
+
+        let situation = |front: bool| Situation {
+            front_layer: front,
+            ..Default::default()
+        };
+        let first_key = context_key(Some(&site), &situation(false), "Click Go");
+        let last_key = context_key(Some(&site), &situation(true), "Click Go");
+        assert_ne!(first_key, last_key, "different situations, different keys");
+        assert_eq!(store.trust[&last_key]["Go"].wins, 1);
+        assert_eq!(store.trust[&last_key]["No"].losses, 1);
+        let first = store.trust.get(&first_key);
+        assert!(
+            !first.is_some_and(|t| t.contains_key("Go") || t.contains_key("No")),
+            "the first decision's situation stays untouched"
+        );
     }
 }

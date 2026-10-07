@@ -34,6 +34,7 @@ pub struct Executed {
 
 /// Why the executor refused (nothing was dispatched) or dispatch failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExecError {
     /// Lease invalid: consumed, mismatched, or stale against the fresh world.
     Ticket(TicketInvalid),

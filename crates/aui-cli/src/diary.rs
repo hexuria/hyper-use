@@ -7,10 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use aui_agent::{AgentOutcome, JournalEvent};
-use aui_core::ElementState;
+use aui_core::{ActionSpace, ElementState};
 use aui_dojo::line::{
     ChoiceLine, ClauseLine, DecisionLine, DiaryLine, HistoryLine, OfferedLine, OfferedState,
-    OutcomeLine, RankedLine, RunLine, Situation, StaleLine, StepLine,
+    OutcomeLine, PolicyErrorLine, RankedLine, RunLine, Situation, StaleLine, StepLine,
 };
 use aui_dojo::DiaryWriter;
 use aui_policy::{PolicyOutcome, RankedAction};
@@ -31,9 +31,15 @@ pub fn write_diary(dir: &Path, events: &[JournalEvent]) -> Result<PathBuf, CliEr
         path: dir.display().to_string(),
         message: e.to_string(),
     })?;
+    // Steps inherit their action's observed input type from the decision
+    // that produced them — needed to keep passwords out of the file.
+    let mut last_space: Option<&ActionSpace> = None;
     for (seq, event) in events.iter().enumerate() {
+        if let JournalEvent::Decision { space, .. } = event {
+            last_space = Some(space);
+        }
         writer
-            .write(&map_event(event, seq as u32))
+            .write(&map_event(event, seq as u32, last_space))
             .map_err(|e| CliError::Io {
                 path: writer.path().display().to_string(),
                 message: e.to_string(),
@@ -42,7 +48,7 @@ pub fn write_diary(dir: &Path, events: &[JournalEvent]) -> Result<PathBuf, CliEr
     Ok(writer.path().to_path_buf())
 }
 
-fn map_event(event: &JournalEvent, seq: u32) -> DiaryLine {
+fn map_event(event: &JournalEvent, seq: u32, last_space: Option<&ActionSpace>) -> DiaryLine {
     match event {
         JournalEvent::Run {
             goal,
@@ -140,10 +146,31 @@ fn map_event(event: &JournalEvent, seq: u32) -> DiaryLine {
             kind: record.kind.as_str().to_owned(),
             label: record.label.clone(),
             input: (*input).to_owned(),
-            payload: record.payload.clone(),
+            // A payload bound for a password input is a secret — the
+            // diary keeps only that something was typed.
+            payload: if last_space
+                .and_then(|space| space.get(&record.action_id))
+                .is_some_and(|a| a.state().input_type.as_deref() == Some("password"))
+            {
+                record.payload.as_ref().map(|_| "[redacted]".to_owned())
+            } else {
+                record.payload.clone()
+            },
             verification: record.verification.as_str().to_owned(),
             stale_retries: record.stale_retries,
             won: *won,
+        }),
+        JournalEvent::PolicyError {
+            clause_index,
+            clause,
+            source,
+            error,
+        } => DiaryLine::PolicyError(PolicyErrorLine {
+            seq,
+            clause_index: *clause_index as u32,
+            clause: clause.clone(),
+            source: (*source).to_owned(),
+            error: error.clone(),
         }),
         JournalEvent::StaleDiscard { reason } => DiaryLine::StaleDiscard(StaleLine {
             seq,
@@ -203,5 +230,6 @@ fn offered_state(state: &ElementState) -> Option<OfferedState> {
         expanded: state.expanded,
         selected: state.selected.clone(),
         options: state.options.clone(),
+        input_type: state.input_type.clone(),
     })
 }

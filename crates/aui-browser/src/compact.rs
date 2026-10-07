@@ -171,6 +171,7 @@ function visit(el,doc,off){
       rec.h=hitAt(document,r[0]+r[2]/2,r[1]+r[3]/2);
       var name=el.nodeName.toUpperCase();
       var inputType=(el.getAttribute('type')||'text').toLowerCase();
+      if(name==='INPUT')rec.it=inputType;
       if((name==='INPUT'&&inputType!=='password'&&inputType!=='hidden'&&inputType!=='file'&&inputType!=='checkbox'&&inputType!=='radio')||name==='TEXTAREA'){
         rec.v=Array.from(String(el.value)).slice(0,200).join('');
       }
@@ -361,6 +362,7 @@ fn parse_element_state(record: &Value) -> ElementState {
         expanded: record.get("x").and_then(Value::as_bool),
         selected: record.get("sel").and_then(Value::as_str).map(str::to_owned),
         options,
+        input_type: record.get("it").and_then(Value::as_str).map(str::to_owned),
     }
 }
 
@@ -395,6 +397,7 @@ mod tests {
                 expanded: Some(false),
                 selected: Some("UTC, Asia/Manila".to_owned()),
                 options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
+                input_type: None,
             }
         );
     }

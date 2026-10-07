@@ -384,18 +384,30 @@ fn drive_dojo<T: CdpTransport>(
     }
     let mut agent = builder.build(args.goal.clone());
     let outcome = agent.run();
-    let diary = write_diary_line(&mut agent, args)?;
+    let diary_path = write_run_diary(&mut agent, args)?;
+    let diary = diary_path
+        .as_ref()
+        .map(|p| format!("diary: {}\n", p.display()));
     let mut out = with_diary(render(&agent, &outcome), diary.as_deref())?;
     let policy = agent.into_policy();
+    let credited = policy.credited_steps().to_vec();
+    let learned = policy.learned_count();
+    let mut store = policy.into_store();
+    // Steps credited live already hold their trust — mark them so an
+    // offline `lessons` distill of this diary never counts them twice.
+    if let Some(path) = diary_path.as_ref() {
+        let diary = aui_dojo::diary_id(path);
+        for seq in &credited {
+            store.seen_steps.insert(format!("{diary}:{seq}"));
+        }
+    }
     if let Some(path) = &args.lessons {
-        aui_dojo::save_lessons(&policy.into_store(), std::path::Path::new(path)).map_err(|e| {
-            CliError::Io {
-                path: path.clone(),
-                message: e.to_string(),
-            }
+        aui_dojo::save_lessons(&store, std::path::Path::new(path)).map_err(|e| CliError::Io {
+            path: path.clone(),
+            message: e.to_string(),
         })?;
         out.push_str(&format!("lessons {path}: store saved\n"));
-    } else if policy.learned_count() > 0 {
+    } else if learned > 0 {
         out.push_str("dojo: lessons grown in memory only (no --lessons store to save)\n");
     }
     Ok(out)
@@ -517,13 +529,13 @@ fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
     ))
 }
 
-/// Write the run's diary (when `--diary <dir>`) and return the output line
-/// `diary: <path>`; `None` without the flag. Written even when the run's
-/// outcome is Failed — the outcome line belongs in the diary too.
-fn write_diary_line<B, P, T>(
+/// Write the run's diary (when `--diary <dir>`) and return its path;
+/// `None` without the flag. Written even when the run's outcome is
+/// Failed — the outcome line belongs in the diary too.
+fn write_run_diary<B, P, T>(
     agent: &mut Agent<B, P, T>,
     args: &RunArgs,
-) -> Result<Option<String>, CliError>
+) -> Result<Option<std::path::PathBuf>, CliError>
 where
     B: BrowserRuntime,
     P: BrowserPolicy,
@@ -534,7 +546,20 @@ where
     };
     let events = agent.take_journal();
     let path = crate::diary::write_diary(std::path::Path::new(dir), &events)?;
-    Ok(Some(format!("diary: {}\n", path.display())))
+    Ok(Some(path))
+}
+
+/// [`write_run_diary`] rendered as the `diary: <path>` output line.
+fn write_diary_line<B, P, T>(
+    agent: &mut Agent<B, P, T>,
+    args: &RunArgs,
+) -> Result<Option<String>, CliError>
+where
+    B: BrowserRuntime,
+    P: BrowserPolicy,
+    T: TextResolver,
+{
+    Ok(write_run_diary(agent, args)?.map(|p| format!("diary: {}\n", p.display())))
 }
 
 /// Append the `diary: <path>` line to rendered output — including inside a

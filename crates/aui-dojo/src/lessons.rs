@@ -13,11 +13,13 @@
 //! Every lesson carries the diary ids that prove it. `load` rejects a
 //! different schema version rather than silently misreading it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
 use serde_json::{json, Map, Value};
+
+use aui_core::ActionKind;
 
 use crate::diary::read_diary;
 use crate::error::DojoError;
@@ -27,7 +29,7 @@ use crate::site::context_key;
 /// Lesson-store schema version. Bump on any layout change; `load` refuses
 /// other versions — a stale store is rebuilt from diaries, never migrated
 /// blindly.
-pub const LESSON_SCHEMA: u32 = 1;
+pub const LESSON_SCHEMA: u32 = 2;
 
 /// In this situation, `phrase` resolved to element `label`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -85,6 +87,13 @@ pub struct LessonStore {
     pub places: BTreeMap<String, Place>,
     pub moves: BTreeMap<String, Vec<Move>>,
     pub trust: BTreeMap<String, BTreeMap<String, Trust>>,
+    /// Diary ids already distilled — `learn_diary`/`learn_lines` is
+    /// idempotent, so a second pass over the same diary counts nothing.
+    pub learned_diaries: BTreeSet<String>,
+    /// `"<diary>:<step>"` already counted toward trust — the live dojo
+    /// policy writes its credited steps here so an offline distill of the
+    /// same diary never counts them again.
+    pub seen_steps: BTreeSet<String>,
 }
 
 /// The id of a diary file: its stem (`<millis>-<slug>`).
@@ -114,8 +123,13 @@ pub fn learn_diary(store: &mut LessonStore, path: &Path) -> Result<(), DojoError
     Ok(())
 }
 
-/// Distill parsed lines (testing seam).
+/// Distill parsed lines (testing seam). Idempotent: a diary already in
+/// `learned_diaries` counts nothing, and a step already in `seen_steps`
+/// (credited live by the dojo policy) is skipped.
 pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &[DiaryLine]) {
+    if !store.learned_diaries.insert(diary.to_owned()) {
+        return;
+    }
     // Decision seq → its situation key, so steps bind to the situation
     // that produced them (multi-clause runs change situations mid-run).
     let mut decision_key: BTreeMap<u32, String> = BTreeMap::new();
@@ -135,6 +149,17 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
                 push_diary(&mut place.diaries, diary);
             }
             DiaryLine::Step(s) => {
+                // Skip steps already credited live and kinds that carry no
+                // label evidence: control steps (scroll/wait/done/blocked)
+                // never resolve a clause target, and an unknown verdict is
+                // unreadable state, not a loss.
+                let step_key = format!("{diary}:{}", s.step);
+                if store.seen_steps.contains(&step_key)
+                    || ActionKind::parse(&s.kind).is_some_and(ActionKind::is_control)
+                    || s.verification == "unknown"
+                {
+                    continue;
+                }
                 let Some(key) = decision_key
                     .range(..=s.seq)
                     .next_back()
@@ -173,6 +198,7 @@ pub fn learn_lines(store: &mut LessonStore, diary: &str, stamp_ms: u64, lines: &
                 }
                 trust.last_seen_ms = trust.last_seen_ms.max(stamp_ms);
                 push_diary(&mut trust.diaries, diary);
+                store.seen_steps.insert(step_key);
             }
             DiaryLine::Correction(c) => {
                 // The strongest signal: the policy's pick was wrong, the
@@ -227,6 +253,8 @@ pub fn save(store: &LessonStore, path: &Path) -> Result<(), DojoError> {
         "places": places_json(&store.places),
         "moves": moves_json(&store.moves),
         "trust": trust_json(&store.trust),
+        "learned_diaries": store.learned_diaries,
+        "seen_steps": store.seen_steps,
     });
     let text = serde_json::to_string_pretty(&doc).unwrap_or_else(|_| doc.to_string());
     fs::write(path, format!("{text}\n")).map_err(|e| DojoError::Io {
@@ -267,6 +295,8 @@ pub fn load(path: &Path) -> Result<LessonStore, DojoError> {
         places: parse_places(obj.get("places")),
         moves: parse_moves(obj.get("moves")),
         trust: parse_trust(obj.get("trust")),
+        learned_diaries: str_list(obj.get("learned_diaries")).into_iter().collect(),
+        seen_steps: str_list(obj.get("seen_steps")).into_iter().collect(),
     })
 }
 
@@ -546,6 +576,30 @@ mod tests {
         assert_eq!(store.words[&key][0].label, "Go");
         assert_eq!(store.moves[&key].len(), 1);
         assert_eq!(store.moves[&key][0].steps[0].action_id, "CLICK:go");
+    }
+
+    #[test]
+    fn distilling_one_diary_twice_counts_nothing_twice() {
+        let mut store = LessonStore::default();
+        let lines = vec![decision(1, "Click Go"), step(2, "Click Go", true)];
+        learn_lines(&mut store, "1-run", 1000, &lines);
+        learn_lines(&mut store, "1-run", 1000, &lines);
+        let key = store.trust.keys().next().unwrap().clone();
+        assert_eq!(store.trust[&key]["Go"].wins, 1);
+        assert!(store.learned_diaries.contains("1-run"));
+        assert!(store.seen_steps.contains("1-run:2"));
+    }
+
+    #[test]
+    fn a_step_credited_live_is_skipped_offline() {
+        let mut store = LessonStore::default();
+        // The live dojo already folded step 2 into trust.
+        store.seen_steps.insert("1-run:2".to_owned());
+        let lines = vec![decision(1, "Click Go"), step(2, "Click Go", true)];
+        learn_lines(&mut store, "1-run", 1000, &lines);
+        assert!(store.trust.is_empty(), "no double credit");
+        assert!(store.moves.is_empty(), "no double move");
+        assert_eq!(store.places.len(), 1, "the situation itself still records");
     }
 
     #[test]

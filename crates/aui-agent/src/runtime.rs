@@ -269,7 +269,9 @@ impl MockBrowser {
         Self {
             manifold,
             focused: None,
-            page: PageState::blank(),
+            // A readable page by default — unknown URL/title is the
+            // exceptional live case; `with_page` simulates it.
+            page: PageState::new("https://mock.invalid/", "mock", None),
             on_press: None,
             on_press_page: None,
             scheduled: None,

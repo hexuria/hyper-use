@@ -112,15 +112,22 @@ pub(crate) fn fuse(
     ax_nodes: &[RawNode],
 ) -> Result<(InteractionManifold, BTreeMap<RegionId, NodeBinding>), BrowserError> {
     let mut used = vec![false; ax_nodes.len()];
+    // backend id -> ax indices, so the deterministic pass-1 join is a map
+    // lookup, not a linear scan per dom node.
+    let mut by_backend: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
+    for (index, ax) in ax_nodes.iter().enumerate() {
+        if let Some(backend) = ax.backend_node_id {
+            by_backend.entry(backend).or_default().push(index);
+        }
+    }
     let mut joined: Vec<Option<usize>> = vec![None; dom_nodes.len()];
     for (dom_index, dom) in dom_nodes.iter().enumerate() {
         let Some(backend) = dom.backend_node_id else {
             continue;
         };
-        if let Some(ax_index) = ax_nodes
-            .iter()
-            .enumerate()
-            .position(|(index, ax)| !used[index] && ax.backend_node_id == Some(backend))
+        if let Some(&ax_index) = by_backend
+            .get(&backend)
+            .and_then(|indices| indices.iter().find(|&&index| !used[index]))
         {
             used[ax_index] = true;
             joined[dom_index] = Some(ax_index);
@@ -226,9 +233,11 @@ fn merge(dom: &RawNode, ax: &RawNode) -> RawNode {
 }
 
 fn compatible(dom: &RawNode, ax: &RawNode) -> bool {
-    labels_compatible(&dom.label, &ax.label)
+    // Cheapest first: rect math and role equality reject most pairs before
+    // the allocating token_jaccard runs.
+    geometry_compatible(dom.rect, ax.rect)
         && roles_compatible(dom.role, ax.role)
-        && geometry_compatible(dom.rect, ax.rect)
+        && labels_compatible(&dom.label, &ax.label)
 }
 
 fn labels_compatible(left: &str, right: &str) -> bool {

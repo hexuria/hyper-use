@@ -567,14 +567,15 @@ where
             .collect();
         roles.sort_unstable();
         roles.dedup();
+        let front_layer = manifold
+            .regions()
+            .any(|region| blocker(&manifold, region).is_some());
         // Situational context for learning policies (the dojo); a no-op
         // for every other arm.
         self.policy.set_situation(&aui_policy::PolicyContext {
             site_url: site_url.clone(),
             site_title: site_title.clone(),
-            front_layer: manifold
-                .regions()
-                .any(|region| blocker(&manifold, region).is_some()),
+            front_layer,
             roles: roles.iter().map(|r| (*r).to_owned()).collect(),
         });
         let outcome = match self.policy.decide(&space, &self.goal, &self.policy_history) {
@@ -598,9 +599,7 @@ where
             source: self.policy.decision_source(),
             site_url,
             site_title,
-            front_layer: manifold
-                .regions()
-                .any(|region| blocker(&manifold, region).is_some()),
+            front_layer,
             roles,
             near: near_labels(&manifold, &space, &outcome),
             space: space.clone(),
@@ -827,17 +826,18 @@ where
                 self.browser.scroll(direction)?;
             }
             self.browser.settle();
-            // `observe()` mutably borrows the runtime, so `page()` cannot be
-            // called while `after` is alive — one owned manifold per scroll /
-            // wait is the cost of keeping the borrow scope tight.
-            let after = self.browser.observe()?.clone();
+            self.browser.observe()?;
+            // `last_observation` re-borrows the cached manifold — no clone.
+            let after = self.browser.last_observation().ok_or_else(|| {
+                AgentError::Browser("observe produced no manifold".into())
+            })?;
             let after_page = self.browser.page().cloned();
             let page_d = match (before_page.as_ref(), after_page.as_ref()) {
                 (Some(b), Some(a)) => Some(self.browser.page_delta_between(b, a)),
                 _ => None,
             };
             return Ok((
-                record(classify_delta(&predicted.manifold, &after, page_d.as_ref())),
+                record(classify_delta(&predicted.manifold, after, page_d.as_ref())),
                 input_name,
             ));
         }
@@ -922,19 +922,23 @@ where
         };
 
         self.browser.settle_after_input(&executed.target, &input);
-        let after = self.browser.observe()?.clone();
+        self.browser.observe()?;
         let after_page = self.browser.page().cloned();
         let page_d = match (executed.before_page.as_ref(), after_page.as_ref()) {
             (Some(b), Some(a)) => Some(self.browser.page_delta_between(b, a)),
             _ => None,
         };
+        // `read_value` takes `&mut` — take it before borrowing `after`.
+        let value = input
+            .payload()
+            .and_then(|_| self.browser.read_value(&executed.target));
+        let after = self.browser.last_observation().ok_or_else(|| {
+            AgentError::Browser("observe produced no manifold".into())
+        })?;
         let verification = match input.payload() {
-            Some(expected) => {
-                let value = self.browser.read_value(&executed.target);
-                classify_value(expected, value.as_ref())
-                    .unwrap_or_else(|| classify_delta(&executed.before, &after, page_d.as_ref()))
-            }
-            None => classify_delta(&executed.before, &after, page_d.as_ref()),
+            Some(expected) => classify_value(expected, value.as_ref())
+                .unwrap_or_else(|| classify_delta(&executed.before, after, page_d.as_ref())),
+            None => classify_delta(&executed.before, after, page_d.as_ref()),
         };
         Ok((record(verification), input_name))
     }
@@ -955,9 +959,12 @@ where
                 while_marker: Some(marker),
             } = self.mode.clone()
             {
-                let manifold = self.browser.observe()?.clone();
+                self.browser.observe()?;
                 self.reuse_observation = true;
-                let on_screen = marker_on_screen(&manifold, &marker);
+                let manifold = self.browser.last_observation().ok_or_else(|| {
+                    AgentError::Browser("observe produced no manifold".into())
+                })?;
+                let on_screen = marker_on_screen(manifold, &marker);
                 self.marker_seen |= on_screen;
                 // An ad can start a moment after the page loads: give an
                 // unseen marker a short grace before deciding there is none.
@@ -1228,8 +1235,11 @@ where
 
     /// One re-check of a `wait for X` clause. Never acts on the page.
     fn tick_wait_for(&mut self, target: &str) -> Result<TickResult, AgentError> {
-        let manifold = self.browser.observe()?.clone();
-        let space = Self::action_space(&manifold);
+        self.browser.observe()?;
+        let manifold = self.browser.last_observation().ok_or_else(|| {
+            AgentError::Browser("observe produced no manifold".into())
+        })?;
+        let space = Self::action_space(manifold);
         let present = space
             .actions()
             .filter(|action| action.target().is_some())

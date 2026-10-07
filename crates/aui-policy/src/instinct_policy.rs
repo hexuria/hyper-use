@@ -42,6 +42,10 @@ impl InstinctPolicy {
 }
 
 impl BrowserPolicy for InstinctPolicy {
+    fn name(&self) -> &'static str {
+        "instinct"
+    }
+
     fn decide(
         &mut self,
         space: &ActionSpace,

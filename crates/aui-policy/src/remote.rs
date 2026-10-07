@@ -50,13 +50,20 @@ pub trait RemoteTransport {
 pub struct RemotePolicy<T> {
     transport: T,
     calls: u32,
+    name: &'static str,
 }
 
 impl<T: RemoteTransport> RemotePolicy<T> {
     pub fn new(transport: T) -> Self {
+        Self::named("remote", transport)
+    }
+
+    /// A remote policy whose decisions are recorded under `name` in the diary.
+    pub fn named(name: &'static str, transport: T) -> Self {
         Self {
             transport,
             calls: 0,
+            name,
         }
     }
 
@@ -191,6 +198,10 @@ impl<T: RemoteTransport> BrowserPolicy for RemotePolicy<T> {
             .map_err(|e| PolicyError::Internal(format!("remote transport: {e}")))?;
         parse_reply(space, &reply)
     }
+
+    fn name(&self) -> &'static str {
+        self.name
+    }
 }
 
 /// Stub fallback: always abstains. The product builds and runs without a remote.
@@ -198,6 +209,10 @@ impl<T: RemoteTransport> BrowserPolicy for RemotePolicy<T> {
 pub struct UnconfiguredRemote;
 
 impl BrowserPolicy for UnconfiguredRemote {
+    fn name(&self) -> &'static str {
+        "unconfigured-remote"
+    }
+
     fn decide(
         &mut self,
         _space: &ActionSpace,

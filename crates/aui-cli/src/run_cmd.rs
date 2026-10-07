@@ -57,6 +57,8 @@ struct RunArgs {
     wait_secs: Option<u32>,
     text_model_cmd: Option<String>,
     policy: PolicyKind,
+    /// `--diary <dir>`: write the run's battle diary (schema v1 JSONL).
+    diary: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,6 +78,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
     let mut wait_secs = None;
     let mut text_model_cmd = None;
     let mut policy = None;
+    let mut diary = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -133,6 +136,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
                 })?;
                 set(&mut wait_secs, "--wait-secs", n)?;
             }
+            "--diary" => set(&mut diary, "--diary", value("--diary")?)?,
             "--cdp" => {
                 if cdp.is_some() {
                     return Err(CliError::DuplicateFlag("--cdp"));
@@ -175,6 +179,7 @@ fn parse(args: &[String]) -> Result<RunArgs, CliError> {
         policy: policy.unwrap_or(PolicyKind::Jev),
         #[cfg(not(feature = "jev"))]
         policy: policy.unwrap_or(PolicyKind::Instinct),
+        diary,
     })
 }
 
@@ -251,6 +256,9 @@ fn predict_once<P: BrowserPolicy>(
         Ok(None) => out.push_str(&format!("predict terminal {:?}\n", agent.state())),
         Err(err) => out.push_str(&format!("predict refused: {err}\n")),
     }
+    if let Some(line) = write_diary_line(&mut agent, args)? {
+        out.push_str(&line);
+    }
     Ok(out)
 }
 
@@ -263,7 +271,7 @@ fn predict_jev(
         .map_err(|err| CliError::Config(format!("typesafe: {err}")))?;
     predict_once(
         MockBrowser::new(manifold),
-        aui_policy::RemotePolicy::new(transport),
+        aui_policy::RemotePolicy::named("jev", transport),
         args,
     )
 }
@@ -286,9 +294,14 @@ fn predict_clef(
 ) -> Result<String, CliError> {
     let transport = crate::clef::ClefTransport::from_env(model)
         .map_err(|err| CliError::Config(format!("clef: {err}")))?;
+    let model_name: &'static str = if model == "clef-flash" {
+        "clef-flash"
+    } else {
+        "clef"
+    };
     predict_once(
         MockBrowser::new(manifold),
-        aui_policy::RemotePolicy::new(transport),
+        aui_policy::RemotePolicy::named(model_name, transport),
         args,
     )
 }
@@ -331,7 +344,8 @@ fn drive_with<T: CdpTransport, P: BrowserPolicy>(
     }
     let mut agent = builder.build(args.goal.clone());
     let outcome = agent.run();
-    render(&agent, &outcome)
+    let diary = write_diary_line(&mut agent, args)?;
+    with_diary(render(&agent, &outcome), diary.as_deref())
 }
 
 #[cfg(feature = "jev")]
@@ -341,7 +355,11 @@ fn drive_jev<T: CdpTransport>(
 ) -> Result<String, CliError> {
     let transport = crate::typesafe::TypesafeTransport::from_env()
         .map_err(|err| CliError::Config(format!("typesafe: {err}")))?;
-    drive_with(session, aui_policy::RemotePolicy::new(transport), args)
+    drive_with(
+        session,
+        aui_policy::RemotePolicy::named("jev", transport),
+        args,
+    )
 }
 
 #[cfg(not(feature = "jev"))]
@@ -362,7 +380,16 @@ fn drive_clef<T: CdpTransport>(
 ) -> Result<String, CliError> {
     let transport = crate::clef::ClefTransport::from_env(model)
         .map_err(|err| CliError::Config(format!("clef: {err}")))?;
-    drive_with(session, aui_policy::RemotePolicy::new(transport), args)
+    let model_name: &'static str = if model == "clef-flash" {
+        "clef-flash"
+    } else {
+        "clef"
+    };
+    drive_with(
+        session,
+        aui_policy::RemotePolicy::named(model_name, transport),
+        args,
+    )
 }
 
 #[cfg(not(feature = "clef"))]
@@ -390,7 +417,8 @@ fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
         "text resolver model (command) calls={}\n",
         agent.text_resolver().model_calls()
     );
-    match render(&agent, &outcome) {
+    let diary = write_diary_line(&mut agent, args)?;
+    match with_diary(render(&agent, &outcome), diary.as_deref()) {
         Ok(rendered) => {
             out.push_str(&rendered);
             Ok(out)
@@ -412,6 +440,39 @@ fn drive_model_text<B: BrowserRuntime, P: BrowserPolicy>(
     Err(CliError::UnknownFlag(
         "--text-model-cmd requires building with --features model-text".into(),
     ))
+}
+
+/// Write the run's diary (when `--diary <dir>`) and return the output line
+/// `diary: <path>`; `None` without the flag. Written even when the run's
+/// outcome is Failed — the outcome line belongs in the diary too.
+fn write_diary_line<B, P, T>(
+    agent: &mut Agent<B, P, T>,
+    args: &RunArgs,
+) -> Result<Option<String>, CliError>
+where
+    B: BrowserRuntime,
+    P: BrowserPolicy,
+    T: TextResolver,
+{
+    let Some(dir) = args.diary.as_deref() else {
+        return Ok(None);
+    };
+    let events = agent.take_journal();
+    let path = crate::diary::write_diary(std::path::Path::new(dir), &events)?;
+    Ok(Some(format!("diary: {}\n", path.display())))
+}
+
+/// Append the `diary: <path>` line to rendered output — including inside a
+/// `CliError::Agent` transcript, so a failed run still records its path.
+fn with_diary(rendered: Result<String, CliError>, diary: Option<&str>) -> Result<String, CliError> {
+    let Some(diary) = diary else {
+        return rendered;
+    };
+    match rendered {
+        Ok(text) => Ok(format!("{text}{diary}")),
+        Err(CliError::Agent(text)) => Err(CliError::Agent(format!("{text}{diary}"))),
+        Err(other) => Err(other),
+    }
 }
 
 fn render<B, P, T>(agent: &Agent<B, P, T>, outcome: &AgentOutcome) -> Result<String, CliError>

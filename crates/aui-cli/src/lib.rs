@@ -172,7 +172,7 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 pub fn usage() -> &'static str {
-    "ultra-instinct run|observe|locate|inspect|guard|verify|diff|mcp\nrun --goal <text> (--cdp [url] [--url <page>] | --fixture <replay.cdp.json|page.manifold>) [--max-steps N] [--wait-secs N] [--text-model-cmd <program>]\n  goal clauses: `click X if present` acts when X shows up (else skipped); `wait for X` waits for X; both wait up to --wait-secs (default 30)\n  owned agent loop: observe -> Instinct -> gate -> ticket -> execute -> verify (no LLM, no MCP)\n  --cdp with --url opens a background tab and closes it at exit; without --url drives the first existing tab\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
+    "ultra-instinct run|observe|locate|inspect|guard|verify|diff|mcp\nrun --goal <text> (--cdp [url] [--url <page>] | --fixture <replay.cdp.json|page.manifold>) [--max-steps N] [--wait-secs N] [--text-model-cmd <program>] [--policy instinct|jev|clef|clef-flash] [--diary <dir>]\n  goal clauses: `click X if present` acts when X shows up (else skipped); `wait for X` waits for X; both wait up to --wait-secs (default 30)\n  owned agent loop: observe -> Instinct -> gate -> ticket -> execute -> verify (no LLM, no MCP)\n  --cdp with --url opens a background tab and closes it at exit; without --url drives the first existing tab\n  --diary <dir> writes the battle diary (schema v1 JSONL): every decision, step, and outcome\nmcp serves newline-delimited JSON-RPC on stdin.\nguard [--fixture <path> | --cdp [url]] --target <label> [--role button] [--proposed <id>] [--json]\nact is a deprecated alias of guard and never clicks.\nlocate [--fixture <path>] [text] [--role ...] [--matcher weighted] [--json]\nverify (--expect-text <text> | --expect-absent <id>) [--fixture <path>]\nDefault matcher: weighted. HGRA is experimental.\n"
 }
 
 /// Run one invocation. `args` does not include the program name.
@@ -433,6 +433,7 @@ fn json_escape(text: &str) -> String {
 }
 
 mod compare;
+pub(crate) mod diary;
 pub(crate) mod run_cmd;
 pub(crate) mod session_cmd;
 

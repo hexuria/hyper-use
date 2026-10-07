@@ -9,9 +9,11 @@
 mod agent;
 mod error;
 mod executor;
+mod journal;
 mod outcome;
 mod runtime;
 mod verify_map;
+mod win;
 
 pub use agent::{
     region_action, Agent, AgentBuilder, AgentState, Predicted, TickResult, DEFAULT_MAX_WAIT,
@@ -19,6 +21,8 @@ pub use agent::{
 };
 pub use error::AgentError;
 pub use executor::{execute_ticketed, ExecError, Executed};
+pub use journal::JournalEvent;
 pub use outcome::{AgentOutcome, StepRecord, VerificationKind};
 pub use runtime::{BrowserRuntime, FieldValue, Input, MockBrowser};
 pub use verify_map::{classify_delta, classify_value};
+pub use win::step_is_win;

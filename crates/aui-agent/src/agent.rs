@@ -22,7 +22,7 @@
 
 use aui_browser::ScrollDirection;
 use aui_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
-use aui_guard::{gate, with_front_layer, TicketLedger};
+use aui_guard::{blocker, gate, neighborhood_of, with_front_layer, TicketLedger};
 use aui_policy::{
     ground_select, label_covers_target, label_names_target, split_sequential_clauses, AgentGoal,
     BrowserPolicy, DeterministicTextResolver, HistoryEntry, PolicyDecision, PolicyOutcome,
@@ -33,9 +33,11 @@ use aui_policy::{ModelTextResolver, TextModel};
 
 use crate::error::AgentError;
 use crate::executor::{execute_ticketed, ExecError};
+use crate::journal::JournalEvent;
 use crate::outcome::{AgentOutcome, StepRecord, VerificationKind};
 use crate::runtime::{BrowserRuntime, Input};
 use crate::verify_map::{classify_delta, classify_value};
+use crate::win::step_is_win;
 
 /// Abstains re-decided on a fresh observation after a step before the
 /// abstain is final.
@@ -133,6 +135,35 @@ fn is_target_abstain(reason: &str) -> bool {
     reason == "target abstain" || reason.starts_with("no viable targets")
 }
 
+/// Labels of the chosen (or top-ranked) target's neighborhood: ancestors,
+/// siblings, children, nearby peers — the "situation" half of a lesson key.
+/// Bounded at 8 labels; the target's own label is excluded.
+fn near_labels(
+    manifold: &InteractionManifold,
+    space: &ActionSpace,
+    outcome: &PolicyOutcome,
+) -> Vec<String> {
+    let target_id = match outcome {
+        PolicyOutcome::Choice(decision) => Some(&decision.action_id),
+        PolicyOutcome::Abstain { target_ranked, .. } => {
+            target_ranked.first().map(|ranked| &ranked.id)
+        }
+    };
+    let Some(action) = target_id.and_then(|id| space.get(id)) else {
+        return Vec::new();
+    };
+    let Some(region) = action.target() else {
+        return Vec::new();
+    };
+    neighborhood_of(manifold, region)
+        .iter()
+        .filter(|id| *id != region)
+        .filter_map(|id| manifold.get(id))
+        .take(8)
+        .map(|region| region.label().to_owned())
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentState {
     Ready,
@@ -203,6 +234,10 @@ pub struct Agent<B, P, T = DeterministicTextResolver> {
     consecutive_no_effect: u32,
     consecutive_stale: u32,
     stale_total: u32,
+    /// The battle journal: owned snapshots of every decision, step,
+    /// discard, clause advance, and outcome. Drained once by the host via
+    /// [`Self::take_journal`]; `aui-cli` maps it to the `aui-dojo` diary.
+    journal: Vec<JournalEvent>,
 }
 
 pub struct AgentBuilder<B, P, T = DeterministicTextResolver> {
@@ -296,17 +331,21 @@ impl<B, P, T> AgentBuilder<B, P, T> {
         self
     }
 
-    pub fn build(self, goal: impl Into<String>) -> Agent<B, P, T> {
+    pub fn build(self, goal: impl Into<String>) -> Agent<B, P, T>
+    where
+        P: BrowserPolicy,
+    {
         let raw = goal.into();
         let clauses = split_sequential_clauses(&raw);
         let active = clauses.first().cloned().unwrap_or_default();
         let (active, mode) = clause_mode(&active);
-        Agent {
+        let goal_text = raw.clone();
+        let mut agent = Agent {
             browser: self.browser,
             policy: self.policy,
             text: self.text,
             goal: AgentGoal::new(active),
-            clauses,
+            clauses: clauses.clone(),
             clause_index: 0,
             clause_effect: false,
             abstain_retries: 0,
@@ -332,7 +371,14 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             consecutive_no_effect: 0,
             consecutive_stale: 0,
             stale_total: 0,
-        }
+            journal: Vec::new(),
+        };
+        agent.journal.push(JournalEvent::Run {
+            goal: goal_text,
+            clauses,
+            policy: agent.policy.name(),
+        });
+        agent
     }
 }
 
@@ -384,6 +430,24 @@ where
         self.clause_index
     }
 
+    /// Drain the battle journal. Call once after the run; the host maps
+    /// these events to `aui-dojo` diary lines (schema v1).
+    pub fn take_journal(&mut self) -> Vec<JournalEvent> {
+        std::mem::take(&mut self.journal)
+    }
+
+    /// How the active clause runs, for the diary.
+    fn mode_name(&self) -> &'static str {
+        match &self.mode {
+            ClauseMode::Act => "act",
+            ClauseMode::Optional { while_marker: None } => "optional",
+            ClauseMode::Optional {
+                while_marker: Some(_),
+            } => "optional-while",
+            ClauseMode::WaitFor(_) => "wait-for",
+        }
+    }
+
     /// Advance to the next `then` clause, if any. Returns true when advanced.
     fn advance_clause(&mut self) -> bool {
         let next = self.clause_index + 1;
@@ -394,6 +458,10 @@ where
         let (goal, mode) = clause_mode(&self.clauses[next]);
         self.goal = AgentGoal::new(goal);
         self.mode = mode;
+        self.journal.push(JournalEvent::ClauseAdvanced {
+            clause_index: next,
+            clause: self.goal.as_str().to_owned(),
+        });
         self.wait_polls = 0;
         self.wait_started = None;
         self.marker_seen = false;
@@ -478,6 +546,39 @@ where
             .policy
             .decide(&space, &self.goal, &self.policy_history)
             .map_err(|e| AgentError::Policy(e.to_string()))?;
+
+        let (site_url, site_title) = self
+            .browser
+            .page()
+            .map(|page| {
+                (
+                    page.url().map(str::to_owned),
+                    page.title().map(str::to_owned),
+                )
+            })
+            .unwrap_or_default();
+        let mut roles: Vec<&'static str> = manifold
+            .regions()
+            .map(|region| region.role().as_str())
+            .collect();
+        roles.sort_unstable();
+        roles.dedup();
+        self.journal.push(JournalEvent::Decision {
+            clause_index: self.clause_index,
+            clause: self.goal.as_str().to_owned(),
+            mode: self.mode_name(),
+            source: self.policy.decision_source(),
+            site_url,
+            site_title,
+            front_layer: manifold
+                .regions()
+                .any(|region| blocker(&manifold, region).is_some()),
+            roles,
+            near: near_labels(&manifold, &space, &outcome),
+            space: space.clone(),
+            outcome: outcome.clone(),
+            history: self.policy_history.clone(),
+        });
 
         let decision = match outcome {
             PolicyOutcome::Abstain { reason, .. } => return Err(AgentError::Abstain(reason)),
@@ -598,11 +699,14 @@ where
             .ok_or(AgentError::InvalidState("missing prediction"))?;
         self.state = AgentState::Ready;
 
-        let record = match self.try_act_once(&predicted) {
-            Ok(record) => record,
+        let (record, input_name) = match self.try_act_once(&predicted) {
+            Ok(pair) => pair,
             Err(AgentError::Stale(msg)) => {
                 self.consecutive_stale += 1;
                 self.stale_total += 1;
+                self.journal.push(JournalEvent::StaleDiscard {
+                    reason: msg.clone(),
+                });
                 return Err(AgentError::Stale(msg));
             }
             Err(e) => return Err(e),
@@ -620,6 +724,13 @@ where
         }
         self.abstain_retries = 0;
         self.history.push(record.clone());
+        self.journal.push(JournalEvent::Step {
+            clause_index: self.clause_index,
+            clause: self.goal.as_str().to_owned(),
+            input: input_name,
+            won: step_is_win(self.goal.as_str(), &record),
+            record: record.clone(),
+        });
         self.policy_history.push(HistoryEntry {
             step: record.step,
             action_id: record.action_id.clone(),
@@ -641,7 +752,10 @@ where
         Ok(record)
     }
 
-    fn try_act_once(&mut self, predicted: &Predicted) -> Result<StepRecord, AgentError> {
+    fn try_act_once(
+        &mut self,
+        predicted: &Predicted,
+    ) -> Result<(StepRecord, &'static str), AgentError> {
         let kind = predicted.decision.kind;
         let step = self.steps_taken + 1;
         let stale_retries = self.consecutive_stale;
@@ -664,6 +778,11 @@ where
         if scroll.is_some() || kind == ActionKind::Wait {
             let before = predicted.manifold.clone();
             let before_page = self.browser.page().cloned();
+            let input_name = match kind {
+                ActionKind::ScrollUp => "scroll-up",
+                ActionKind::ScrollDown => "scroll-down",
+                _ => "wait",
+            };
             if let Some(direction) = scroll {
                 self.browser.scroll(direction)?;
             }
@@ -674,7 +793,10 @@ where
                 (Some(b), Some(a)) => Some(self.browser.page_delta_between(b, a)),
                 _ => None,
             };
-            return Ok(record(classify_delta(&before, &after, page_d.as_ref())));
+            return Ok((
+                record(classify_delta(&before, &after, page_d.as_ref())),
+                input_name,
+            ));
         }
 
         let action = region_action(kind)
@@ -737,6 +859,12 @@ where
             _ => unreachable!("region_action filtered kinds"),
         };
 
+        let input_name = match &input {
+            Input::Click => "click",
+            Input::PointerClick => "pointer",
+            Input::Type(_) => "type",
+            Input::Select(_) => "select",
+        };
         let executed = match execute_ticketed(&mut self.browser, &mut self.ledger, &ticket, &input)
         {
             Ok(executed) => executed,
@@ -763,7 +891,7 @@ where
             }
             None => classify_delta(&executed.before, &after, page_d.as_ref()),
         };
-        Ok(record(verification))
+        Ok((record(verification), input_name))
     }
 
     /// One predict+act cycle.
@@ -987,27 +1115,45 @@ where
     }
 
     pub fn run(&mut self) -> AgentOutcome {
+        let started = std::time::Instant::now();
         loop {
             if self.steps_taken >= self.max_steps {
-                return AgentOutcome::Failed {
+                let outcome = AgentOutcome::Failed {
                     steps: self.history.clone(),
                     error: AgentError::MaxSteps.to_string(),
                 };
+                self.finish_journal(outcome.clone(), started);
+                return outcome;
             }
             match self.tick() {
-                Ok(TickResult::Finished(outcome)) => return outcome,
+                Ok(TickResult::Finished(outcome)) => {
+                    self.finish_journal(outcome.clone(), started);
+                    return outcome;
+                }
                 Ok(TickResult::Stepped(_))
                 | Ok(TickResult::StaleDiscarded { .. })
                 | Ok(TickResult::ClauseAdvanced { .. })
                 | Ok(TickResult::Rethink) => continue,
                 Err(e) => {
-                    return AgentOutcome::Failed {
+                    let outcome = AgentOutcome::Failed {
                         steps: self.history.clone(),
                         error: e.to_string(),
                     };
+                    self.finish_journal(outcome.clone(), started);
+                    return outcome;
                 }
             }
         }
+    }
+
+    /// The last journal line of a run: outcome kind, budgets, wall time.
+    fn finish_journal(&mut self, outcome: AgentOutcome, started: std::time::Instant) {
+        self.journal.push(JournalEvent::Finished {
+            outcome,
+            policy_calls: self.policy_calls,
+            stale_discards: self.stale_total,
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        });
     }
 
     /// The waiting clause still has re-checks and wall-clock time left.

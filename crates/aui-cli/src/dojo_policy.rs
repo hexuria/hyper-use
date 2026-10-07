@@ -167,10 +167,12 @@ impl DojoPolicy {
     ) -> Option<PolicyDecision> {
         let moves = self.store.moves.get(key)?;
         let trust_table = self.store.trust.get(key);
-        // First qualifying step wins — distilled lessons sit earlier in
-        // the Vec than in-run learned ones, so proven moves outrank fresh.
+        // Higher belts replay first; ties keep store order (distilled
+        // lessons sit earlier than in-run learned ones).
+        let mut ranked: Vec<&aui_dojo::Move> = moves.iter().collect();
+        ranked.sort_by_key(|mv| std::cmp::Reverse(aui_dojo::move_belt(&self.store, key, mv)));
         let mut best: Option<&MoveStep> = None;
-        for mv in moves {
+        for mv in ranked {
             for step in &mv.steps {
                 if step.clause != goal.as_str() {
                     continue;

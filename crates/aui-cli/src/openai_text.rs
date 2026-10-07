@@ -242,4 +242,137 @@ mod tests {
         assert!(!is_deepseek_api("https://deepseek.com"));
         assert!(!is_deepseek_api("https://evil.test/?x=api.deepseek.com/"));
     }
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{channel, Receiver};
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> (String, String) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        let headers_end = loop {
+            let n = stream.read(&mut chunk).expect("read");
+            assert!(n > 0, "connection closed mid-headers");
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buf[..headers_end]).to_string();
+        let content_length: usize = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                (name.trim().eq_ignore_ascii_case("content-length"))
+                    .then(|| value.trim().parse().ok())
+                    .flatten()
+            })
+            .expect("content-length header");
+        let mut body = buf[headers_end + 4..].to_vec();
+        while body.len() < content_length {
+            let n = stream.read(&mut chunk).expect("read");
+            assert!(n > 0, "connection closed mid-body");
+            body.extend_from_slice(&chunk[..n]);
+        }
+        (headers, String::from_utf8(body).expect("utf8 body"))
+    }
+
+    /// Serve `responses` in order, one per connection; each request's
+    /// (headers, body) arrives on the returned channel.
+    fn serve(responses: Vec<String>) -> (u16, Receiver<(String, String)>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            for response in responses {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                tx.send(request).expect("send");
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
+            }
+        });
+        (port, rx)
+    }
+
+    fn chat_reply(content_json: &str) -> String {
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": content_json}}]
+        })
+        .to_string();
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+    }
+
+    fn model_at(port: u16) -> OpenAiTextModel {
+        OpenAiTextModel {
+            http: Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .expect("client"),
+            url: format!("http://127.0.0.1:{port}/v1/chat/completions"),
+            api_key: "k".into(),
+            model: "m".into(),
+            reasoning: serde_json::json!({}),
+        }
+    }
+
+    fn ask() -> TextModelRequest {
+        TextModelRequest {
+            goal: "type tokyo into Destination".into(),
+            field_label: "Destination".into(),
+            field_role: "text_field".into(),
+            context_fingerprint: 42,
+            max_chars: 60,
+        }
+    }
+
+    #[test]
+    fn wire_request_and_string_fingerprint_echo() {
+        let (port, rx) = serve(vec![chat_reply(
+            r#"{"text":"tokyo","context_fingerprint":"42"}"#,
+        )]);
+        let mut model = model_at(port);
+        let reply = model.complete(&ask()).expect("complete");
+        assert_eq!(reply.text, "tokyo");
+        assert_eq!(reply.context_fingerprint, 42);
+
+        let (headers, body) = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("request received");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("authorization: bearer k"),
+            "{headers}"
+        );
+        let outer: Value = serde_json::from_str(&body).expect("request json");
+        assert_eq!(outer["model"], Value::from("m"));
+        let inner: Value =
+            serde_json::from_str(outer["messages"][1]["content"].as_str().expect("prompt"))
+                .expect("prompt json");
+        // The fingerprint travels as a decimal string — the one thing a
+        // language model can echo back without corrupting it.
+        assert_eq!(inner["context_fingerprint"], Value::from("42"));
+    }
+
+    #[test]
+    fn retries_once_on_retryable_status() {
+        let (port, rx) = serve(vec![
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_owned(),
+            chat_reply(r#"{"text":"tokyo","context_fingerprint":42}"#),
+        ]);
+        let mut model = model_at(port);
+        let reply = model.complete(&ask()).expect("complete");
+        assert_eq!(reply.text, "tokyo");
+        for _ in 0..2 {
+            rx.recv_timeout(Duration::from_secs(5))
+                .expect("two attempts");
+        }
+    }
 }

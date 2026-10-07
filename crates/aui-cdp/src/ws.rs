@@ -200,13 +200,12 @@ fn connect_socket(ws_url: &str) -> Result<Socket, CdpError> {
         .map_err(|err| CdpError::Transport {
             message: err.to_string(),
         })?;
-    let (socket, _response) = tungstenite::client(
-        ws_url,
-        tungstenite::stream::MaybeTlsStream::Plain(stream),
-    )
-    .map_err(|err| CdpError::Transport {
-        message: err.to_string(),
-    })?;
+    let (socket, _response) =
+        tungstenite::client(ws_url, tungstenite::stream::MaybeTlsStream::Plain(stream)).map_err(
+            |err| CdpError::Transport {
+                message: err.to_string(),
+            },
+        )?;
     Ok(socket)
 }
 
@@ -332,7 +331,10 @@ fn close_owned_target(target: &OwnedTarget) {
         Ok::<(), CdpError>(())
     })();
     if let Err(err) = result {
-        eprintln!("cdp: closing owned target {} failed: {err}", target.target_id);
+        eprintln!(
+            "cdp: closing owned target {} failed: {err}",
+            target.target_id
+        );
     }
 }
 

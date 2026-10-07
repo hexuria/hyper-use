@@ -1232,7 +1232,11 @@ where
         let started = *self
             .wait_started
             .get_or_insert_with(std::time::Instant::now);
-        self.waited_ms() < u64::from(self.max_wait_polls) * WAIT_POLL_MS
+        // The poll budget is in the active clause's own period — a `while`
+        // clause polls at WHILE_POLL_MS, so bounding it by WAIT_POLL_MS would
+        // quietly grant 4x the intended poll slots. `max_wait` is still the
+        // wall-clock cap.
+        self.waited_ms() < u64::from(self.max_wait_polls) * self.poll_ms()
             && started.elapsed() < self.max_wait
     }
 

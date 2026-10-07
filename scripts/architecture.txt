@@ -10,9 +10,10 @@
 #   3. no banned crate appears anywhere in its resolved dependency closure (incl. dev-deps).
 #
 # The product path is blocking and single-threaded by design (AGENTS.md anti-drift #10):
-# no async runtime, HTTP client, or model SDK below aui-cli. typesafe-sdk is allowed
-# only in aui-cli's closure (the optional `jev` example leg), so tokio / reqwest /
-# hyper reach the workspace exclusively through that crate's gated edge.
+# no async runtime, HTTP client, or model SDK below aui-cli. typesafe-sdk and reqwest
+# are allowed only in aui-cli's closure (the optional `jev`, `clef`, and `model-text`
+# legs), so tokio / reqwest / hyper reach the workspace exclusively through those
+# gated edges.
 aui-core:
     | tokio axum sqlx reqwest hyper typesafe-sdk
 aui-geometry: aui-core

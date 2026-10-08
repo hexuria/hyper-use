@@ -294,6 +294,19 @@ impl ActionSpace {
     pub fn contains_kind(&self, kind: ActionKind) -> bool {
         self.actions.values().any(|a| a.kind == kind)
     }
+
+    /// This space minus every action of `kind` (same capture time).
+    pub fn without_kind(&self, kind: ActionKind) -> Self {
+        Self {
+            captured_at_ms: self.captured_at_ms,
+            actions: self
+                .actions
+                .iter()
+                .filter(|(_, a)| a.kind != kind)
+                .map(|(id, a)| (id.clone(), a.clone()))
+                .collect(),
+        }
+    }
 }
 
 fn region_is_viable_target(region: &InteractionRegion) -> bool {

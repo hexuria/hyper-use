@@ -26,7 +26,7 @@ use aui_guard::{blocker, gate, neighborhood_of, with_front_layer, TicketLedger};
 use aui_policy::{
     ground_select, label_covers_target, label_names_target, split_sequential_clauses, AgentGoal,
     BrowserPolicy, DeterministicTextResolver, HistoryEntry, PolicyDecision, PolicyOutcome,
-    TextContext, TextError, TextResolver,
+    TextContext, TextError, TextResolver, TARGET_AMBIGUOUS,
 };
 #[cfg(feature = "model-text")]
 use aui_policy::{ModelTextResolver, TextModel};
@@ -130,6 +130,42 @@ fn marker_on_screen(manifold: &InteractionManifold, marker: &str) -> bool {
     })
 }
 
+/// Abstain reason when the policy picked TYPE_TEXT but the clause carries
+/// no text value; the agent re-decides once without TYPE_TEXT targets.
+const NO_TEXT_VALUE: &str = "text: no text value found in goal/context";
+
+/// Lowercase, whitespace-collapsed label for duplicate checks.
+fn fold_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Other regions anywhere on the observed page (offscreen included) that
+/// carry `target`'s label and one of its action claims — the look-alikes a
+/// scroll moved out of view.
+fn page_twins(manifold: &InteractionManifold, target: &RegionId) -> usize {
+    let Some(region) = manifold.get(target) else {
+        return 0;
+    };
+    let label = fold_label(region.label());
+    if label.is_empty() {
+        return 0;
+    }
+    manifold
+        .regions()
+        .filter(|other| other.id() != target)
+        .filter(|other| {
+            let flags = other.flags();
+            !flags.hidden() && !flags.disabled() && !other.rect().is_zero_area()
+        })
+        .filter(|other| other.actions().iter().any(|a| region.actions().contains(a)))
+        .filter(|other| fold_label(other.label()) == label)
+        .count()
+}
+
 /// Abstains about *which* target, not about the operation.
 fn is_target_abstain(reason: &str) -> bool {
     reason == "target abstain" || reason.starts_with("no viable targets")
@@ -211,6 +247,8 @@ pub struct Agent<B, P, T = DeterministicTextResolver> {
     abstain_retries: u32,
     /// Scrolls taken looking for the active clause's target.
     find_scrolls: u32,
+    /// The active clause has no text value: TYPE_TEXT is not offered.
+    no_text_value: bool,
     /// How the active clause runs (act, optional act, wait for a target).
     mode: ClauseMode,
     /// Re-checks spent waiting in the active clause.
@@ -353,6 +391,7 @@ impl<B, P, T> AgentBuilder<B, P, T> {
             clause_effect: false,
             abstain_retries: 0,
             find_scrolls: 0,
+            no_text_value: false,
             mode,
             wait_polls: 0,
             max_wait_polls: self.max_wait_polls,
@@ -475,12 +514,17 @@ where
         self.clause_effect = false;
         self.abstain_retries = 0;
         self.find_scrolls = 0;
+        self.no_text_value = false;
         true
     }
 
     /// The payload resolver (e.g. to inspect a model resolver's last source).
     pub fn text_resolver(&self) -> &T {
         &self.text
+    }
+
+    pub fn browser(&self) -> &B {
+        &self.browser
     }
 
     pub fn browser_mut(&mut self) -> &mut B {
@@ -548,7 +592,11 @@ where
             }
         };
         let focused = self.browser.focused();
-        let space = std::sync::Arc::new(Self::action_space(&manifold));
+        let mut space = Self::action_space(&manifold);
+        if self.no_text_value {
+            space = space.without_kind(ActionKind::TypeText);
+        }
+        let space = std::sync::Arc::new(space);
         self.policy_calls += 1;
 
         let (site_url, site_title) = self
@@ -623,6 +671,19 @@ where
                 decision.kind
             )));
         }
+        // A target found only after scrolling must be the page's only one:
+        // scrolling until a single look-alike is on screen is not a choice.
+        if self.find_scrolls > 0 {
+            if let Some(target) = offered.target() {
+                let twins = page_twins(&manifold, target);
+                if twins > 0 {
+                    return Err(AgentError::Abstain(format!(
+                        "{TARGET_AMBIGUOUS}: {} matches on the page",
+                        twins + 1
+                    )));
+                }
+            }
+        }
         match decision.kind {
             ActionKind::Done => {
                 self.state = AgentState::Done;
@@ -696,6 +757,11 @@ where
                 // A resolver that declines (model refused, no fallback value)
                 // abstains like Instinct: nothing typed, never a guessed value.
                 TextError::Abstain(reason) => AgentError::Abstain(format!("text: {reason}")),
+                // No value to type (a remote policy picked a search box on
+                // a click goal): abstain, and the loop re-plans without it.
+                TextError::Missing if decision.kind == ActionKind::TypeText => {
+                    AgentError::Abstain(NO_TEXT_VALUE.to_owned())
+                }
                 other => AgentError::Text(other.to_string()),
             })?;
             if resolution.context_fingerprint != ctx.fingerprint() {
@@ -1090,6 +1156,10 @@ where
                 // effect is satisfied even when its target left the action
                 // space (a dialog took the front layer): advance, never act.
                 Err(AgentError::Abstain(reason)) => {
+                    if reason == NO_TEXT_VALUE && !self.no_text_value {
+                        self.no_text_value = true;
+                        return Ok(TickResult::Rethink);
+                    }
                     if self.clause_effect {
                         if self.advance_clause() {
                             return Ok(TickResult::ClauseAdvanced {

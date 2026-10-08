@@ -110,15 +110,35 @@ const LEADING_VERBS: &[&str] = &[
 /// Connectives dropped right after a stripped verb or quoted payload.
 const CONNECTIVES: &[&str] = &["into", "in", "on", "to", "the", "a", "an", "from", "as"];
 
+/// Leading verbs whose quoted text names the target, not a payload:
+/// `Click "Learn more"` clicks the link labelled Learn more.
+const CLICK_VERBS: &[&str] = &["click", "press", "tap", "open"];
+
 /// The goal with quoted payloads, a leading operation verb, and the
 /// connectives that followed them removed. `None` when nothing is left.
+/// After a click verb, quotes only delimit the target name and are unwrapped.
 pub fn target_phrase(goal: &str) -> Option<String> {
+    let names_target = goal
+        .split_whitespace()
+        .next()
+        .is_some_and(|first| CLICK_VERBS.iter().any(|v| first.eq_ignore_ascii_case(v)));
     // Drop quoted segments ("…" or '…'), marking where they were.
     let mut unquoted = String::with_capacity(goal.len());
     let mut chars = goal.chars();
     while let Some(c) = chars.next() {
         if c == '"' || c == '\u{201c}' {
             let close = if c == '"' { '"' } else { '\u{201d}' };
+            if names_target {
+                unquoted.push(' ');
+                for d in chars.by_ref() {
+                    if d == close {
+                        break;
+                    }
+                    unquoted.push(d);
+                }
+                unquoted.push(' ');
+                continue;
+            }
             for d in chars.by_ref() {
                 if d == close {
                     break;
@@ -450,6 +470,10 @@ mod tests {
     #[test]
     fn target_phrase_strips_verb_payload_and_connectives() {
         assert_eq!(target_phrase("Click Go").as_deref(), Some("Go"));
+        assert_eq!(
+            target_phrase(r#"Click "Learn more""#).as_deref(),
+            Some("Learn more")
+        );
         assert_eq!(
             target_phrase(r#"Type "rust ownership" into Search"#).as_deref(),
             Some("Search")

@@ -12,7 +12,7 @@
 //! ```
 //!
 //! Live mode with `--url` opens an owned background tab; it closes when the run
-//! ends. Without `--url`, it drives the first existing Chrome page. The loop is
+//! ends, after the output records the page's `final_url`. Without `--url`, it drives the first existing Chrome page. The loop is
 //! observe → policy → gate → ticket → executor (revalidate + consume) → input →
 //! observe → verify, until DONE, BLOCKED, abstain, or a bound. With the `jev`
 //! feature the default policy is JEV (System One). `--policy instinct` is the
@@ -625,6 +625,9 @@ where
         agent.policy_calls(),
         agent.stale_discards()
     ));
+    if let Some(url) = agent.browser().page().and_then(|page| page.url()) {
+        out.push_str(&format!("final_url {url}\n"));
+    }
     if matches!(outcome, AgentOutcome::Failed { .. }) {
         return Err(CliError::Agent(out));
     }

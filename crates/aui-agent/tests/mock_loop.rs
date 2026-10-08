@@ -814,3 +814,117 @@ fn long_skip_wait_is_not_cut_short_by_the_policy_call_budget() {
     let outcome = agent.run();
     assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
 }
+
+const ONE_EDIT_IN_VIEW: &str = r#"
+    viewport w=800 h=600
+    region id=e1 role=link label="edit" x=10 y=900 w=40 h=24 actions=click sources=dom,accessibility flags=offscreen
+    region id=e2 role=link label="edit" x=10 y=300 w=40 h=24 actions=click sources=dom,accessibility
+    "#;
+
+#[test]
+fn twin_found_after_scrolling_abstains_instead_of_clicking_the_survivor() {
+    let mut browser = MockBrowser::new(results_page(false));
+    browser.schedule_swap(1, manifold(ONE_EDIT_IN_VIEW));
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click edit");
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Abstained { reason, .. } => {
+            assert!(reason.contains("target ambiguous"), "{reason}")
+        }
+        other => panic!("expected ambiguity abstain, got {other:?}"),
+    }
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+#[test]
+fn visible_twins_abstain_without_scrolling() {
+    let page = manifold(
+        r#"
+        viewport w=800 h=600
+        region id=e1 role=link label="edit" x=10 y=100 w=40 h=24 actions=click sources=dom,accessibility
+        region id=e2 role=link label="edit" x=10 y=300 w=40 h=24 actions=click sources=dom,accessibility
+        "#,
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click edit");
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Abstained { reason, .. } => {
+            assert!(reason.contains("target ambiguous"), "{reason}")
+        }
+        other => panic!("expected ambiguity abstain, got {other:?}"),
+    }
+    let browser = agent.browser_mut();
+    assert!(browser.press_log().is_empty());
+    assert!(
+        browser.scroll_log().is_empty(),
+        "{:?}",
+        browser.scroll_log()
+    );
+}
+
+/// A remote policy that picks the search box whenever TYPE_TEXT is offered.
+struct PrefersTyping;
+
+impl BrowserPolicy for PrefersTyping {
+    fn decide(
+        &mut self,
+        space: &ActionSpace,
+        _goal: &AgentGoal,
+        history: &[HistoryEntry],
+    ) -> Result<PolicyOutcome, PolicyError> {
+        let action = if !history.is_empty() {
+            space.get_str(ActionKind::Done.as_str())
+        } else if let Some(typing) = space.targets_of(ActionKind::TypeText).next() {
+            Some(typing)
+        } else {
+            space
+                .targets_of(ActionKind::Click)
+                .find(|a| a.label() == "Learn more")
+        };
+        let action = action.expect("an offered action");
+        Ok(PolicyOutcome::Choice(PolicyDecision {
+            action_id: action.id().clone(),
+            kind: action.kind(),
+            target_label: action.label().to_owned(),
+            confidence_millis: 0,
+            operation_ranked: Vec::new(),
+            target_ranked: Vec::new(),
+        }))
+    }
+}
+
+#[test]
+fn payloadless_type_text_choice_replans_without_typing() {
+    let page = manifold(
+        r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+        region id=learn role=link label="Learn more" x=10 y=60 w=100 h=24 actions=click sources=dom,accessibility
+        "#,
+    );
+    let mut browser = MockBrowser::new(page.clone());
+    browser.set_on_press(page);
+    let mut agent = AgentBuilder::new(browser, PrefersTyping)
+        .max_steps(3)
+        .build("Click Learn more");
+    let outcome = agent.run();
+    assert!(
+        !matches!(outcome, AgentOutcome::Failed { .. }),
+        "{outcome:?}"
+    );
+    let browser = agent.browser_mut();
+    assert!(
+        browser.input_log().iter().all(|(id, _)| id.as_str() != "q"),
+        "{:?}",
+        browser.input_log()
+    );
+    let first = browser
+        .press_log()
+        .first()
+        .map(|(id, _)| id.as_str().to_owned());
+    assert_eq!(first.as_deref(), Some("learn"));
+}

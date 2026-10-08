@@ -35,7 +35,7 @@ pub const TOOL_DIFF: &str = "diff";
 pub const TOOL_VERIFY: &str = "verify";
 
 #[allow(deprecated)]
-pub const TOOLS: [&str; 29] = [
+pub const TOOLS: [&str; 44] = [
     TOOL_OBSERVE,
     TOOL_LOCATE,
     TOOL_INSPECT,
@@ -55,7 +55,22 @@ pub const TOOLS: [&str; 29] = [
     "browser_scroll",
     "browser_scroll_to",
     "browser_click",
+    "browser_right_click",
+    "browser_middle_click",
+    "browser_double_click",
+    "browser_triple_click",
+    "browser_hover",
+    "browser_drag",
     "browser_type",
+    "browser_form_input",
+    "browser_send_key",
+    "browser_hold_key",
+    "browser_file_upload",
+    "browser_save_as_pdf",
+    "browser_get_dropdown_options",
+    "browser_select_dropdown",
+    "browser_search",
+    "browser_zoom",
     "browser_find",
     "browser_list_tabs",
     "browser_switch_tab",

@@ -650,6 +650,168 @@ impl<T: CdpTransport> BrowserSession<T> {
             .unwrap_or(serde_json::Value::Null))
     }
 
+    /// Trusted `Input.dispatchMouseEvent` press/release at the region's center
+    /// for any button (`"left"`, `"right"`, `"middle"`) and click count.
+    ///
+    /// Same coordinate tier as `pointer_click`: the caller gates and tickets
+    /// first (`consume_ticket_once` revalidates before the press runs).
+    #[doc(hidden)]
+    pub fn button_click(
+        &mut self,
+        id: &RegionId,
+        button: &str,
+        click_count: u32,
+    ) -> Result<ActMechanism, BrowserError> {
+        let binding = self.binding_for(id)?;
+        self.stale = true;
+        self.call(
+            "Input.dispatchMouseEvent",
+            &json!({"type": "mouseMoved", "x": binding.center_x, "y": binding.center_y})
+                .to_string(),
+        )?;
+        for kind in ["mousePressed", "mouseReleased"] {
+            let params = json!({
+                "type": kind,
+                "x": binding.center_x,
+                "y": binding.center_y,
+                "button": button,
+                "clickCount": click_count,
+            });
+            self.call("Input.dispatchMouseEvent", &params.to_string())?;
+        }
+        Ok(ActMechanism::Coordinate)
+    }
+
+    /// Move the trusted pointer to the region's center without pressing.
+    pub fn hover(&mut self, id: &RegionId) -> Result<(), BrowserError> {
+        let binding = self.binding_for(id)?;
+        self.call(
+            "Input.dispatchMouseEvent",
+            &json!({"type": "mouseMoved", "x": binding.center_x, "y": binding.center_y})
+                .to_string(),
+        )?;
+        Ok(())
+    }
+
+    /// Press at `from`'s center, drag to `to`'s center, release (element drag).
+    pub fn drag(&mut self, from: &RegionId, to: &RegionId) -> Result<(), BrowserError> {
+        let a = self.binding_for(from)?;
+        let b = self.binding_for(to)?;
+        self.stale = true;
+        self.call(
+            "Input.dispatchMouseEvent",
+            &json!({"type": "mouseMoved", "x": a.center_x, "y": a.center_y}).to_string(),
+        )?;
+        self.call(
+            "Input.dispatchMouseEvent",
+            &json!({"type": "mousePressed", "x": a.center_x, "y": a.center_y, "button": "left", "clickCount": 1})
+                .to_string(),
+        )?;
+        self.call(
+            "Input.dispatchMouseEvent",
+            &json!({"type": "mouseMoved", "x": b.center_x, "y": b.center_y, "button": "left"})
+                .to_string(),
+        )?;
+        self.call(
+            "Input.dispatchMouseEvent",
+            &json!({"type": "mouseReleased", "x": b.center_x, "y": b.center_y, "button": "left", "clickCount": 1})
+                .to_string(),
+        )?;
+        Ok(())
+    }
+
+    /// Page zoom (`Emulation.setPageScaleFactor`; 1.0 = 100%). Mutates render.
+    pub fn zoom(&mut self, factor: f64) -> Result<(), BrowserError> {
+        if !factor.is_finite() || factor <= 0.0 || factor > 10.0 {
+            return Err(BrowserError::Navigation(format!(
+                "zoom factor {factor} out of range (0, 10]"
+            )));
+        }
+        self.stale = true;
+        self.call(
+            "Emulation.setPageScaleFactor",
+            &json!({"pageScaleFactor": factor}).to_string(),
+        )?;
+        Ok(())
+    }
+
+    /// `Page.printToPDF` → base64 PDF data.
+    pub fn save_pdf(
+        &mut self,
+        landscape: bool,
+        print_background: bool,
+        scale: f64,
+    ) -> Result<String, BrowserError> {
+        let params = json!({
+            "landscape": landscape,
+            "printBackground": print_background,
+            "scale": scale.clamp(0.1, 2.0),
+        });
+        let body = self.call("Page.printToPDF", &params.to_string())?;
+        let value: Value = serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+            message: err.to_string(),
+        })?;
+        value
+            .get("data")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| CdpError::BadJson {
+                message: "printToPDF result missing data".to_owned(),
+            })
+            .map_err(BrowserError::Cdp)
+    }
+
+    /// One trusted key event (`Input.dispatchKeyEvent` down/up, optional hold).
+    ///
+    /// `key` is a DOM `KeyboardEvent.key` name (`"Enter"`, `"Tab"`, `"a"`, ...)
+    /// — page-level input like browser-use's `key` / `hold_key`.
+    pub fn key_event(&mut self, key: &str, hold_ms: u64) -> Result<(), BrowserError> {
+        let (k, c, v, text) = key_params(key)
+            .ok_or_else(|| BrowserError::Navigation(format!("unsupported key `{key}`")))?;
+        self.stale = true;
+        let down = json!({
+            "type": "keyDown",
+            "key": k,
+            "code": c,
+            "windowsVirtualKeyCode": v,
+            "nativeVirtualKeyCode": v,
+            "text": text,
+        });
+        self.call("Input.dispatchKeyEvent", &down.to_string())?;
+        if hold_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(hold_ms.min(10_000)));
+        }
+        let up = json!({
+            "type": "keyUp",
+            "key": k,
+            "code": c,
+            "windowsVirtualKeyCode": v,
+            "nativeVirtualKeyCode": v,
+        });
+        self.call("Input.dispatchKeyEvent", &up.to_string())?;
+        Ok(())
+    }
+
+    /// `DOM.setFileInputFiles` on the observed file input — absolute paths
+    /// resolvable by the Chrome process. Page-side mutation; ticket first.
+    #[doc(hidden)]
+    pub fn set_files(&mut self, id: &RegionId, files: &[String]) -> Result<(), BrowserError> {
+        if files.is_empty() {
+            return Err(BrowserError::InputRejected(
+                "set_files needs at least one path".to_owned(),
+            ));
+        }
+        let binding = self.binding_for(id)?;
+        self.stale = true;
+        let params = match (binding.dom_node_id, binding.backend_node_id) {
+            (Some(node_id), _) => json!({"files": files, "nodeId": node_id}),
+            (None, Some(backend)) => json!({"files": files, "backendNodeId": backend}),
+            (None, None) => return Err(BrowserError::TargetUnresolved),
+        };
+        self.call("DOM.setFileInputFiles", &params.to_string())?;
+        Ok(())
+    }
+
     /// Scroll `pages` viewport heights (0.5 = half page, 10 ≈ to the end)
     /// down or up. The host surface's scroll tool.
     pub fn scroll_pages(&mut self, down: bool, pages: f64) -> Result<(), BrowserError> {
@@ -970,4 +1132,100 @@ fn focused_region(
         })
         .map(|(id, _)| id.clone())
         .min()
+}
+
+/// DOM key name → (key, code, virtual key code, text). Named keys and single
+/// printable characters; anything else fails closed (no key guessing).
+fn key_params(key: &str) -> Option<(String, String, i64, String)> {
+    let named: (&str, &str, i64) = match key {
+        "Enter" | "Return" => ("Enter", "Enter", 13),
+        "Tab" => ("Tab", "Tab", 9),
+        "Escape" | "Esc" => ("Escape", "Escape", 27),
+        "Backspace" => ("Backspace", "Backspace", 8),
+        "Delete" => ("Delete", "Delete", 46),
+        "ArrowLeft" | "Left" => ("ArrowLeft", "ArrowLeft", 37),
+        "ArrowUp" | "Up" => ("ArrowUp", "ArrowUp", 38),
+        "ArrowRight" | "Right" => ("ArrowRight", "ArrowRight", 39),
+        "ArrowDown" | "Down" => ("ArrowDown", "ArrowDown", 40),
+        "Home" => ("Home", "Home", 36),
+        "End" => ("End", "End", 35),
+        "PageUp" => ("PageUp", "PageUp", 33),
+        "PageDown" => ("PageDown", "PageDown", 34),
+        " " | "Space" | "Spacebar" => (" ", "Space", 32),
+        "Shift" => ("Shift", "ShiftLeft", 16),
+        "Control" => ("Control", "ControlLeft", 17),
+        "Alt" => ("Alt", "AltLeft", 18),
+        "Meta" | "Command" => ("Meta", "MetaLeft", 91),
+        "CapsLock" => ("CapsLock", "CapsLock", 20),
+        _ => return key_char_params(key),
+    };
+    Some((
+        named.0.to_owned(),
+        named.1.to_owned(),
+        named.2,
+        String::new(),
+    ))
+}
+
+/// Single printable character → CDP key fields (letters, digits, punctuation).
+fn key_char_params(key: &str) -> Option<(String, String, i64, String)> {
+    let mut chars = key.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    let (code, vkey): (String, i64) = match ch {
+        'a'..='z' => (
+            format!("Key{}", ch.to_ascii_uppercase()),
+            ch.to_ascii_uppercase() as i64,
+        ),
+        'A'..='Z' => (format!("Key{ch}"), ch as i64),
+        '0'..='9' => (format!("Digit{ch}"), ch as i64),
+        ',' => ("Comma".to_owned(), 188),
+        '.' => ("Period".to_owned(), 190),
+        '/' => ("Slash".to_owned(), 191),
+        '-' => ("Minus".to_owned(), 189),
+        '=' => ("Equal".to_owned(), 187),
+        '[' => ("BracketLeft".to_owned(), 219),
+        ']' => ("BracketRight".to_owned(), 221),
+        '\\' => ("Backslash".to_owned(), 220),
+        ';' => ("Semicolon".to_owned(), 186),
+        '\'' => ("Quote".to_owned(), 222),
+        '`' => ("Backquote".to_owned(), 192),
+        _ => return None,
+    };
+    Some((ch.to_string(), code, vkey, ch.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_params;
+
+    #[test]
+    fn key_params_covers_named_keys_chars_and_fail_closed() {
+        let (key, code, vkey, text) = key_params("Enter").unwrap();
+        assert_eq!(
+            (key.as_str(), code.as_str(), vkey, text.as_str()),
+            ("Enter", "Enter", 13, "")
+        );
+
+        let (key, code, vkey, text) = key_params("a").unwrap();
+        assert_eq!(
+            (key.as_str(), code.as_str(), vkey, text.as_str()),
+            ("a", "KeyA", 65, "a")
+        );
+
+        let (key, code, vkey, _) = key_params("5").unwrap();
+        assert_eq!((key.as_str(), code.as_str(), vkey), ("5", "Digit5", 53));
+
+        let (_, code, vkey, _) = key_params(".").unwrap();
+        assert_eq!((code.as_str(), vkey), ("Period", 190));
+
+        let (_, code, _, _) = key_params("ArrowDown").unwrap();
+        assert_eq!(code, "ArrowDown");
+
+        assert!(key_params("Foo").is_none());
+        assert!(key_params("ab").is_none());
+        assert!(key_params("é").is_none());
+    }
 }

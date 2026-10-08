@@ -201,7 +201,13 @@ Coordinate clicks are deliberately not offered. Diagnostics:
 `browser_read_console`/`browser_read_network` (CDP events buffered by the
 transport, domains enabled lazily, drained per read). The `CdpTransport`
 trait gains `drain_events` (default empty); the ws transport buffers
-unsolicited frames.
+unsolicited frames. Advanced input: `browser_right_click` /
+`browser_middle_click` / `browser_double_click` / `browser_triple_click` /
+`browser_file_upload` go gate → ticket → `consume_ticket_once` before the
+press runs; `browser_hover`, `browser_drag` (index→index), `browser_zoom`,
+`browser_send_key`/`browser_hold_key`, `browser_save_as_pdf`,
+`browser_get_dropdown_options`/`browser_select_dropdown`,
+`browser_search`, `browser_form_input` (type alias).
 
 ## Signals
 

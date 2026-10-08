@@ -15,6 +15,9 @@ pub struct ElementState {
     /// INPUT's `type` attribute, lowercased. Evidence only — it marks
     /// sensitive fields (`password`) without ever reading their value.
     pub input_type: Option<String>,
+    /// A element's resolved `href`, ≤ 500 chars. Evidence only — two links
+    /// with one label and one destination are the same choice.
+    pub href: Option<String>,
 }
 
 impl ElementState {
@@ -25,5 +28,6 @@ impl ElementState {
             && self.selected.is_none()
             && self.options.is_empty()
             && self.input_type.is_none()
+            && self.href.is_none()
     }
 }

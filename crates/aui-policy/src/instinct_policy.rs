@@ -184,8 +184,13 @@ impl BrowserPolicy for InstinctPolicy {
         let (chosen, target_ranked) = choose_targets(&target_scores, history, self.profile)?;
 
         let Some(action) = chosen else {
+            let reason = if is_ambiguous(&target_ranked, self.profile) {
+                TARGET_AMBIGUOUS
+            } else {
+                "target abstain"
+            };
             return Ok(PolicyOutcome::Abstain {
-                reason: "target abstain".to_owned(),
+                reason: reason.to_owned(),
                 operation_ranked: op_ranked,
                 target_ranked,
             });
@@ -222,6 +227,26 @@ impl BrowserPolicy for InstinctPolicy {
             target_ranked,
         }))
     }
+}
+
+/// Abstain reason when two or more targets clear the confidence bar but no
+/// winner clears the margin: the page itself is ambiguous. Agents treat it
+/// as terminal — scrolling until one look-alike is left would bypass it.
+pub const TARGET_AMBIGUOUS: &str = "target ambiguous";
+
+/// The top two ranked targets both clear `min_confidence` but sit within
+/// `min_margin` of each other.
+fn is_ambiguous(ranked: &[RankedAction], profile: Profile) -> bool {
+    let [top, second, ..] = ranked else {
+        return false;
+    };
+    let t = profile.thresholds();
+    top.confidence_millis >= t.min_confidence.get()
+        && second.confidence_millis >= t.min_confidence.get()
+        && top
+            .confidence_millis
+            .saturating_sub(second.confidence_millis)
+            < t.min_margin.get()
 }
 
 fn chosen_kind_is_terminal(kind: ActionKind) -> bool {
@@ -525,6 +550,87 @@ mod tests {
         assert_eq!(choice.target_label, "Sign in");
         assert_eq!(choice.action_id.as_str(), "CLICK:signin");
         assert!(choice.confidence_millis >= 750);
+    }
+
+    #[test]
+    fn quoted_click_target_matches_like_unquoted() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=learn role=link label="Learn more" x=10 y=10 w=80 h=24 actions=click sources=dom,accessibility
+            region id=signin role=button label="Sign in" x=10 y=50 w=80 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        for goal in [r#"Click "Learn more""#, "Click \u{201c}Learn more\u{201d}"] {
+            let mut policy = InstinctPolicy::default();
+            let outcome = policy.decide(&space, &AgentGoal::new(goal), &[]).unwrap();
+            let choice = outcome.as_choice().expect("expected choice");
+            assert_eq!(choice.action_id.as_str(), "CLICK:learn", "{goal}");
+        }
+    }
+
+    fn ranked(confidences: &[i16]) -> Vec<RankedAction> {
+        confidences
+            .iter()
+            .enumerate()
+            .map(|(i, &confidence_millis)| RankedAction {
+                id: aui_core::ActionId::try_new(format!("CLICK:r{i}")).unwrap(),
+                kind: ActionKind::Click,
+                label: format!("r{i}"),
+                confidence_millis,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn is_ambiguous_needs_two_confident_targets_within_the_margin() {
+        let p = Profile::Standard;
+        assert!(is_ambiguous(&ranked(&[900, 900]), p));
+        assert!(
+            is_ambiguous(&ranked(&[900, 751]), p),
+            "gap 149 < margin 150"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[900, 750]), p),
+            "gap == margin is decisive"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[900, 700]), p),
+            "second below min_confidence"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[700, 700]), p),
+            "both below min_confidence"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[749, 900]), p),
+            "top below min_confidence"
+        );
+        assert!(
+            is_ambiguous(&ranked(&[750, 750]), p),
+            "exactly min_confidence counts"
+        );
+        assert!(!is_ambiguous(&ranked(&[900]), p));
+        assert!(!is_ambiguous(&[], p));
+    }
+
+    #[test]
+    fn equal_twins_abstain_as_ambiguous() {
+        let space = space_from(
+            r#"
+            viewport w=800 h=600
+            region id=a role=link label="edit" x=10 y=10 w=40 h=24 actions=click sources=dom,accessibility
+            region id=b role=link label="edit" x=10 y=50 w=40 h=24 actions=click sources=dom,accessibility
+            "#,
+        );
+        let mut policy = InstinctPolicy::default();
+        match policy
+            .decide(&space, &AgentGoal::new("Click edit"), &[])
+            .unwrap()
+        {
+            PolicyOutcome::Abstain { reason, .. } => assert_eq!(reason, TARGET_AMBIGUOUS),
+            other => panic!("expected abstain, got {other:?}"),
+        }
     }
 
     #[test]

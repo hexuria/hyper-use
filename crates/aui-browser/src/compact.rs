@@ -49,7 +49,7 @@ use crate::error::BrowserError;
 /// `[x,y,w,h]` or null, `s` the computed-style name/value pairs
 /// `style_from_computed` consumes, and `h` the `data-hu-k` of the element
 /// under the content center (null when nothing is there). `s`, `h`, and
-/// control state (`v`, `c`, `x`, `sel`, `o`) are collected only for boxed
+/// control state (`v`, `c`, `x`, `sel`, `o`, `it`, `hr`) are collected only for boxed
 /// elements that can become regions (the JS mirror of `extract::keep_element`).
 /// An absent `s` or `h` means "not collected" and the consumer falls back to
 /// the per-node call.
@@ -172,6 +172,10 @@ function visit(el,doc,off){
       var name=el.nodeName.toUpperCase();
       var inputType=(el.getAttribute('type')||'text').toLowerCase();
       if(name==='INPUT')rec.it=inputType;
+      // A destination only for real navigations: not `javascript:`, not `#`/`` back to this page.
+      if(name==='A'&&el.href&&/^https?:$/.test(el.protocol)&&!(el.hash===''&&el.href.split('#')[0]===location.href.split('#')[0])){
+        rec.hr=Array.from(String(el.href)).slice(0,500).join('');
+      }
       if((name==='INPUT'&&inputType!=='password'&&inputType!=='hidden'&&inputType!=='file'&&inputType!=='checkbox'&&inputType!=='radio')||name==='TEXTAREA'){
         rec.v=Array.from(String(el.value)).slice(0,200).join('');
       }
@@ -363,6 +367,10 @@ fn parse_element_state(record: &Value) -> ElementState {
         selected: record.get("sel").and_then(Value::as_str).map(str::to_owned),
         options,
         input_type: record.get("it").and_then(Value::as_str).map(str::to_owned),
+        href: record
+            .get("hr")
+            .and_then(Value::as_str)
+            .map(|href| truncate_chars(href, 500)),
     }
 }
 
@@ -388,7 +396,8 @@ mod tests {
                 "c":true,
                 "x":false,
                 "sel":"UTC, Asia/Manila",
-                "o":["UTC", "Asia/Manila"]
+                "o":["UTC", "Asia/Manila"],
+                "hr":"https://example.com/a"
             }))
             .unwrap(),
             ElementState {
@@ -398,6 +407,7 @@ mod tests {
                 selected: Some("UTC, Asia/Manila".to_owned()),
                 options: vec!["UTC".to_owned(), "Asia/Manila".to_owned()],
                 input_type: None,
+                href: Some("https://example.com/a".to_owned()),
             }
         );
     }

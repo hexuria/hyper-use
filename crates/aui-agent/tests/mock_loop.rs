@@ -1,7 +1,7 @@
 //! Offline e2e: goal → observe → Instinct → guard → ticket → press → verify.
 
 use aui_agent::{AgentBuilder, AgentOutcome, MockBrowser, TickResult, VerificationKind};
-use aui_core::{parse_fixture, Action, ActionKind, ActionSpace, InteractionManifold};
+use aui_core::{parse_fixture, Action, ActionKind, ActionSpace, ElementState, InteractionManifold};
 use aui_policy::{
     AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
     PolicyOutcome,
@@ -813,4 +813,337 @@ fn long_skip_wait_is_not_cut_short_by_the_policy_call_budget() {
         .build("click Skip if present while Sponsored");
     let outcome = agent.run();
     assert!(matches!(outcome, AgentOutcome::Done { .. }), "{outcome:?}");
+}
+
+const ONE_EDIT_IN_VIEW: &str = r#"
+    viewport w=800 h=600
+    region id=e1 role=link label="edit" x=10 y=900 w=40 h=24 actions=click sources=dom,accessibility flags=offscreen
+    region id=e2 role=link label="edit" x=10 y=300 w=40 h=24 actions=click sources=dom,accessibility
+    "#;
+
+#[test]
+fn twin_found_after_scrolling_abstains_instead_of_clicking_the_survivor() {
+    let mut browser = MockBrowser::new(results_page(false));
+    browser.schedule_swap(1, manifold(ONE_EDIT_IN_VIEW));
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click edit");
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Abstained { reason, .. } => {
+            assert!(reason.contains("target ambiguous"), "{reason}")
+        }
+        other => panic!("expected ambiguity abstain, got {other:?}"),
+    }
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+#[test]
+fn visible_twins_abstain_without_scrolling() {
+    let page = manifold(
+        r#"
+        viewport w=800 h=600
+        region id=e1 role=link label="edit" x=10 y=100 w=40 h=24 actions=click sources=dom,accessibility
+        region id=e2 role=link label="edit" x=10 y=300 w=40 h=24 actions=click sources=dom,accessibility
+        "#,
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click edit");
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Abstained { reason, .. } => {
+            assert!(reason.contains("target ambiguous"), "{reason}")
+        }
+        other => panic!("expected ambiguity abstain, got {other:?}"),
+    }
+    let browser = agent.browser_mut();
+    assert!(browser.press_log().is_empty());
+    assert!(
+        browser.scroll_log().is_empty(),
+        "{:?}",
+        browser.scroll_log()
+    );
+}
+
+/// A remote policy that picks the search box whenever TYPE_TEXT is offered.
+struct PrefersTyping;
+
+impl BrowserPolicy for PrefersTyping {
+    fn decide(
+        &mut self,
+        space: &ActionSpace,
+        _goal: &AgentGoal,
+        history: &[HistoryEntry],
+    ) -> Result<PolicyOutcome, PolicyError> {
+        let action = if !history.is_empty() {
+            space.get_str(ActionKind::Done.as_str())
+        } else if let Some(typing) = space.targets_of(ActionKind::TypeText).next() {
+            Some(typing)
+        } else {
+            space
+                .targets_of(ActionKind::Click)
+                .find(|a| a.label() == "Learn more")
+        };
+        let action = action.expect("an offered action");
+        Ok(PolicyOutcome::Choice(PolicyDecision {
+            action_id: action.id().clone(),
+            kind: action.kind(),
+            target_label: action.label().to_owned(),
+            confidence_millis: 0,
+            operation_ranked: Vec::new(),
+            target_ranked: Vec::new(),
+        }))
+    }
+}
+
+#[test]
+fn payloadless_type_text_choice_replans_without_typing() {
+    let page = manifold(
+        r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+        region id=learn role=link label="Learn more" x=10 y=60 w=100 h=24 actions=click sources=dom,accessibility
+        "#,
+    );
+    let mut browser = MockBrowser::new(page.clone());
+    browser.set_on_press(page);
+    let mut agent = AgentBuilder::new(browser, PrefersTyping)
+        .max_steps(3)
+        .build("Click Learn more");
+    let outcome = agent.run();
+    assert!(
+        !matches!(outcome, AgentOutcome::Failed { .. }),
+        "{outcome:?}"
+    );
+    let browser = agent.browser_mut();
+    assert!(
+        browser.input_log().iter().all(|(id, _)| id.as_str() != "q"),
+        "{:?}",
+        browser.input_log()
+    );
+    let first = browser
+        .press_log()
+        .first()
+        .map(|(id, _)| id.as_str().to_owned());
+    assert_eq!(first.as_deref(), Some("learn"));
+}
+
+#[test]
+fn visible_target_with_offscreen_twin_abstains_without_scrolling() {
+    let mut agent = AgentBuilder::new(
+        MockBrowser::new(manifold(ONE_EDIT_IN_VIEW)),
+        InstinctPolicy::default(),
+    )
+    .max_steps(3)
+    .build("Click edit");
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Abstained { reason, .. } => {
+            assert!(reason.contains("target ambiguous"), "{reason}")
+        }
+        other => panic!("expected ambiguity abstain, got {other:?}"),
+    }
+    let browser = agent.browser_mut();
+    assert!(browser.press_log().is_empty());
+    assert!(
+        browser.scroll_log().is_empty(),
+        "{:?}",
+        browser.scroll_log()
+    );
+}
+
+fn with_hrefs(src: &str, hrefs: &[(&str, &str)]) -> InteractionManifold {
+    let mut m = manifold(src);
+    for (id, href) in hrefs {
+        let region = m.get_str(id).unwrap().clone().with_state(ElementState {
+            href: Some((*href).to_owned()),
+            ..ElementState::default()
+        });
+        m.replace(region);
+    }
+    m
+}
+
+const ONE_ARRAY_IN_VIEW: &str = r#"
+    viewport w=800 h=600
+    region id=a1 role=link label="Array" x=10 y=300 w=60 h=24 actions=click sources=dom,accessibility
+    region id=a2 role=link label="Array" x=300 y=2600 w=60 h=24 actions=click sources=dom,accessibility flags=offscreen
+    "#;
+
+#[test]
+fn offscreen_twin_to_the_same_href_is_not_ambiguous() {
+    let page = with_hrefs(
+        ONE_ARRAY_IN_VIEW,
+        &[
+            ("a1", "https://x.test/Array"),
+            ("a2", "https://x.test/Array"),
+        ],
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click Array");
+    agent.run();
+    let presses = agent.browser_mut().press_log();
+    assert!(!presses.is_empty());
+    assert!(
+        presses
+            .iter()
+            .all(|(id, action)| id.as_str() == "a1" && *action == Action::Click),
+        "{presses:?}"
+    );
+}
+
+#[test]
+fn offscreen_twin_to_a_different_href_abstains() {
+    let page = with_hrefs(
+        ONE_ARRAY_IN_VIEW,
+        &[
+            ("a1", "https://x.test/Array"),
+            ("a2", "https://x.test/Array#section"),
+        ],
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click Array");
+    let outcome = agent.run();
+    assert!(
+        matches!(&outcome, AgentOutcome::Abstained { reason, .. } if reason.contains("target ambiguous")),
+        "{outcome:?}"
+    );
+    assert!(agent.browser_mut().press_log().is_empty());
+}
+
+fn pressed(browser: &MockBrowser) -> Vec<String> {
+    browser
+        .press_log()
+        .iter()
+        .map(|(id, _)| id.as_str().to_owned())
+        .collect()
+}
+
+fn run_static(src: &str, goal: &str, max_steps: u32) -> (AgentOutcome, Vec<String>, MockBrowser) {
+    let page = manifold(src);
+    let mut browser = MockBrowser::new(page.clone());
+    browser.set_on_press(page);
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
+        .max_steps(max_steps)
+        .build(goal);
+    let outcome = agent.run();
+    let presses = pressed(agent.browser_mut());
+    (outcome, presses, agent.into_browser())
+}
+
+#[test]
+fn optional_clause_with_twins_is_skipped_not_fatal() {
+    let (outcome, presses, _) = run_static(
+        r#"
+        viewport w=800 h=600
+        region id=a1 role=button label="Accept" x=10 y=100 w=80 h=24 actions=click sources=dom,accessibility
+        region id=a2 role=button label="Accept" x=10 y=200 w=80 h=24 actions=click sources=dom,accessibility
+        region id=home role=link label="Home" x=10 y=300 w=80 h=24 actions=click sources=dom,accessibility
+        "#,
+        "Click Accept if present then click Home",
+        4,
+    );
+    assert!(!presses.iter().any(|p| p.starts_with('a')), "{presses:?}");
+    assert_eq!(
+        presses.first().map(String::as_str),
+        Some("home"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn modal_button_with_buried_offscreen_page_twin_is_clicked() {
+    let (outcome, presses, _) = run_static(
+        r#"
+        viewport w=1440 h=900
+        region id=page role=generic label="Files" x=0 y=0 w=1440 h=2000 actions=focus sources=dom
+        region id=page-delete role=button label="Delete" x=1200 y=1780 w=160 h=36 actions=click,focus parent=page sources=dom,accessibility flags=offscreen
+        region id=confirm role=dialog label="Delete file?" x=520 y=300 w=400 h=240 actions=focus sources=dom,accessibility flags=modal
+        region id=confirm-cancel role=button label="Cancel" x=560 y=480 w=100 h=36 actions=click,focus parent=confirm sources=dom,accessibility
+        region id=confirm-delete role=button label="Delete" x=780 y=480 w=100 h=36 actions=click,focus parent=confirm sources=dom,accessibility
+        "#,
+        "Click Delete",
+        2,
+    );
+    assert_eq!(
+        presses.first().map(String::as_str),
+        Some("confirm-delete"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn modal_confirm_fixture_click_cancel() {
+    let (outcome, presses, _) = run_static(
+        include_str!("../../../fixtures/modal-confirm.manifold"),
+        "Click Cancel",
+        2,
+    );
+    assert_eq!(
+        presses.first().map(String::as_str),
+        Some("confirm-cancel"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn type_into_field_ignores_offscreen_same_label_button() {
+    let (outcome, _, browser) = run_static(
+        r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+        region id=go role=button label="Search" x=10 y=900 w=80 h=24 actions=click sources=dom,accessibility flags=offscreen
+        "#,
+        r#"Type "rust" into Search"#,
+        2,
+    );
+    assert!(
+        browser
+            .input_log()
+            .iter()
+            .any(|(id, i)| id.as_str() == "q" && i.payload() == Some("rust")),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn hidden_disabled_or_zero_area_offscreen_twins_do_not_count() {
+    for twin in [
+        r#"region id=e1 role=link label="edit" x=10 y=900 w=40 h=24 actions=click sources=dom,accessibility flags=offscreen,hidden"#,
+        r#"region id=e1 role=link label="edit" x=10 y=900 w=40 h=24 actions=click sources=dom,accessibility flags=offscreen,disabled"#,
+        r#"region id=e1 role=link label="edit" x=10 y=900 w=0 h=0 actions=click sources=dom,accessibility flags=offscreen"#,
+    ] {
+        let src = format!(
+            "viewport w=800 h=600\n{twin}\nregion id=e2 role=link label=\"edit\" x=10 y=300 w=40 h=24 actions=click sources=dom,accessibility\n"
+        );
+        let (outcome, presses, _) = run_static(&src, "Click edit", 1);
+        assert_eq!(
+            presses.first().map(String::as_str),
+            Some("e2"),
+            "{twin}: {outcome:?}"
+        );
+    }
+}
+
+#[test]
+fn placeholder_hrefs_are_not_one_destination() {
+    for href in [
+        "https://x.test/rows#",
+        "javascript:void(0)",
+        "JavaScript:del()",
+    ] {
+        let page = with_hrefs(ONE_ARRAY_IN_VIEW, &[("a1", href), ("a2", href)]);
+        let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+            .max_steps(3)
+            .build("Click Array");
+        let outcome = agent.run();
+        assert!(
+            matches!(&outcome, AgentOutcome::Abstained { reason, .. } if reason.contains("target ambiguous")),
+            "{href}: {outcome:?}"
+        );
+        assert!(agent.browser_mut().press_log().is_empty(), "{href}");
+    }
 }

@@ -72,8 +72,9 @@ fn type_text_without_resolvable_value_never_types() {
         .max_steps(3)
         .build("type into Search");
     let outcome = agent.run();
+    // No value: TYPE_TEXT is withdrawn and the re-plan abstains (issue #70).
     assert!(
-        matches!(outcome, AgentOutcome::Failed { .. }),
+        matches!(outcome, AgentOutcome::Abstained { .. }),
         "{outcome:?}"
     );
     assert!(agent.browser_mut().input_log().is_empty());

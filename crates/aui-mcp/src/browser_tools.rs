@@ -14,11 +14,11 @@
 
 use serde_json::{json, Value};
 
-use aui_agent::{execute_ticketed, Input};
+use aui_agent::{execute_ticketed, ExecError, Input};
 use aui_browser::BrowserError;
 use aui_cdp::{activate_target, close_target, create_target, page_targets, DEFAULT_CDP_HTTP};
-use aui_core::{Action, ActionSpace, InteractionManifold, InteractionRegion, RegionId};
-use aui_guard::{consume_ticket_once, gate};
+use aui_core::{Action, ActionSpace, InteractionManifold, InteractionRegion, RegionId, Role};
+use aui_guard::{consume_ticket_once, gate, ConsumeError};
 
 use crate::error::ToolError;
 use crate::server::Server;
@@ -177,6 +177,26 @@ fn browser_err(err: impl ToString) -> ToolError {
     ToolError::Browser(err.to_string())
 }
 
+/// Executor failures: ticket/gate refusals are `TicketInvalid` (not stale,
+/// never silently retried); observe/dispatch/page-rejection are `Browser`.
+fn exec_error(err: ExecError) -> ToolError {
+    match err {
+        ExecError::Ticket(_) | ExecError::Gate(_) => ToolError::TicketInvalid(err.to_string()),
+        ExecError::Observe(_) | ExecError::Rejected(_) | ExecError::Dispatch(_) => browser_err(err),
+        other => browser_err(other),
+    }
+}
+
+/// Host-side consume failures: invalid lease → `TicketInvalid`, page-side
+/// press failure → `Browser` (the ticket is already consumed either way).
+fn consume_error(err: ConsumeError<BrowserError>) -> ToolError {
+    match err {
+        ConsumeError::Invalid(_) => ToolError::TicketInvalid(err.to_string()),
+        ConsumeError::Press(e) => browser_err(e),
+        other => browser_err(other),
+    }
+}
+
 /// The page-websocket key a `cdp` endpoint currently drives.
 fn session_key(server: &Server, endpoint: &str) -> String {
     server
@@ -299,8 +319,12 @@ fn get_state(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
     let key = session_key(server, &endpoint);
     let mut session = take(server, &key)?;
     let outcome = (|| {
+        session.observe().map_err(browser_err)?;
+        // `page()` is written inside `observe` — read it after, not before.
         let page = session.page().cloned();
-        let manifold = session.observe().map_err(browser_err)?;
+        let manifold = session
+            .manifold()
+            .ok_or_else(|| browser_err(BrowserError::NotObserved))?;
         let order = interactive_index(manifold);
         let elements: Vec<Value> = order
             .iter()
@@ -400,8 +424,11 @@ fn gated_input(
     let key = session_key(server, &endpoint);
     let mut session = take(server, &key)?;
     let outcome = (|| {
+        session.observe().map_err(browser_err)?;
         let focused = session.page().and_then(|p| p.focused().cloned());
-        let manifold = session.observe().map_err(browser_err)?;
+        let manifold = session
+            .manifold()
+            .ok_or_else(|| browser_err(BrowserError::NotObserved))?;
         let order = interactive_index(manifold);
         let region_id = order.get(index.wrapping_sub(1)).cloned().ok_or_else(|| {
             ToolError::InvalidArguments(format!(
@@ -418,8 +445,8 @@ fn gated_input(
         )
         .map_err(|reason| ToolError::TicketInvalid(reason.to_string()))?;
         let mut ledger = server.take_ledger(&key);
-        let executed = execute_ticketed(&mut session, &mut ledger, &ticket, &input)
-            .map_err(|err| ToolError::TicketInvalid(err.to_string()));
+        let executed =
+            execute_ticketed(&mut session, &mut ledger, &ticket, &input).map_err(exec_error);
         server.keep_ledger(&key, ledger);
         executed.map(|done| {
             json!({
@@ -443,7 +470,12 @@ fn type_text(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
 
 /// Gate → ticket → `consume_ticket_once` → `press` on the fresh manifold.
 /// Same consume-before-press order as `execute_ticketed` for inputs the
-/// executor does not carry (right/middle/double/triple click, file upload).
+/// executor does not carry (right/middle/double/triple click, file upload,
+/// drag). Weaker staleness guarantee than `execute_ticketed`: the ticket is
+/// minted and consumed on the same observe, so `revalidate` cannot fire —
+/// the unguarded window is the CPU-only span between index resolution and
+/// press (no I/O), strictly smaller than the executor's mint→re-observe
+/// window. A second observe would buy executor parity at ~2× observe cost.
 fn gated_press_at(
     server: &mut Server,
     arguments: &Value,
@@ -458,8 +490,8 @@ fn gated_press_at(
     let key = session_key(server, &endpoint);
     let mut session = take(server, &key)?;
     let outcome = (|| {
-        let focused = session.page().and_then(|p| p.focused().cloned());
         let manifold = session.observe().map_err(browser_err)?.clone();
+        let focused = session.page().and_then(|p| p.focused().cloned());
         let order = interactive_index(&manifold);
         let region_id = order.get(index - 1).cloned().ok_or_else(|| {
             ToolError::InvalidArguments(format!(
@@ -486,7 +518,7 @@ fn gated_press_at(
         server.keep_ledger(&key, ledger);
         result
             .map(|_| json!({"acted": true, "index": index}))
-            .map_err(|err| ToolError::TicketInvalid(err.to_string()))
+            .map_err(consume_error)
     })();
     keep(server, &key, session);
     outcome
@@ -557,10 +589,29 @@ fn drag(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
         };
         let from_id = resolve(from)?;
         let to_id = resolve(to)?;
-        session
-            .drag(&from_id, &to_id)
+        let focused = session.page().and_then(|p| p.focused().cloned());
+        // Drag is a mutation: the source goes through the same
+        // gate → ticket → consume-before-press path as clicks.
+        let ticket = gate(
+            &manifold,
+            &from_id,
+            Action::Click,
+            focused.clone(),
+            manifold.captured_at_ms(),
+        )
+        .map_err(|reason| ToolError::TicketInvalid(reason.to_string()))?;
+        let mut ledger = server.take_ledger(&key);
+        let result = consume_ticket_once(
+            &mut ledger,
+            &ticket,
+            &manifold,
+            focused,
+            |target: &RegionId, _action: Action| session.drag(target, &to_id),
+        );
+        server.keep_ledger(&key, ledger);
+        result
             .map(|_| json!({"dragged": {"from": from, "to": to}}))
-            .map_err(browser_err)
+            .map_err(consume_error)
     })();
     keep(server, &key, session);
     outcome
@@ -655,6 +706,12 @@ fn get_dropdown_options(server: &mut Server, arguments: &Value) -> Result<Value,
         let region = manifold.get(&region_id).ok_or_else(|| {
             ToolError::InvalidArguments(format!("element {index} resolved to a stale region"))
         })?;
+        if region.role() != Role::ComboBox {
+            return Err(ToolError::InvalidArguments(format!(
+                "element {index} is a {:?}, not a dropdown",
+                region.role()
+            )));
+        }
         let state = region.state();
         Ok::<Value, ToolError>(json!({
             "index": index,
@@ -724,14 +781,34 @@ fn list_tabs(arguments: &Value) -> Result<Value, ToolError> {
     Ok(json!({"tabs": tabs}))
 }
 
+/// Resolve `tab_id` to exactly one target: an exact id match, else a
+/// non-empty prefix that matches exactly one tab. `""` and ambiguous
+/// prefixes refuse rather than silently picking the first tab.
+fn find_tab<'a>(
+    targets: &'a [aui_cdp::PageTarget],
+    tab_id: &str,
+) -> Result<&'a aui_cdp::PageTarget, ToolError> {
+    if let Some(t) = targets.iter().find(|t| t.target_id == tab_id) {
+        return Ok(t);
+    }
+    if tab_id.is_empty() {
+        return Err(ToolError::InvalidArguments("empty `tab_id`".into()));
+    }
+    let mut hits = targets.iter().filter(|t| t.target_id.starts_with(tab_id));
+    match (hits.next(), hits.next()) {
+        (Some(t), None) => Ok(t),
+        (None, _) => Err(ToolError::InvalidArguments(format!("no tab `{tab_id}`"))),
+        (Some(_), Some(_)) => Err(ToolError::InvalidArguments(format!(
+            "`tab_id` `{tab_id}` is ambiguous"
+        ))),
+    }
+}
+
 fn switch_tab(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     let endpoint = endpoint_of(arguments)?;
     let tab_id = req_str(arguments, "tab_id")?;
-    let target = page_targets(&endpoint)
-        .map_err(browser_err)?
-        .into_iter()
-        .find(|t| t.target_id == tab_id || t.target_id.starts_with(tab_id))
-        .ok_or_else(|| ToolError::InvalidArguments(format!("no tab `{tab_id}`")))?;
+    let targets = page_targets(&endpoint).map_err(browser_err)?;
+    let target = find_tab(&targets, tab_id)?;
     activate_target(&endpoint, &target.target_id).map_err(browser_err)?;
     server.set_current_tab(&endpoint, &target.ws_url);
     Ok(json!({"active_tab": target.target_id, "url": target.url}))
@@ -741,23 +818,20 @@ fn close_tab(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
     let endpoint = endpoint_of(arguments)?;
     let tab_id = req_str(arguments, "tab_id")?;
     let targets = page_targets(&endpoint).map_err(browser_err)?;
-    let target = targets
-        .iter()
-        .find(|t| t.target_id == tab_id || t.target_id.starts_with(tab_id))
-        .ok_or_else(|| ToolError::InvalidArguments(format!("no tab `{tab_id}`")))?;
+    let target = find_tab(&targets, tab_id)?;
     let closed = close_target(&endpoint, &target.target_id).map_err(browser_err)?;
+    // The closed tab's ws state is dead regardless of binding: drop its
+    // session, ledger, events, and domain bits.
+    server.drop_session(&target.ws_url);
     // If the closed tab was bound, fall back to any remaining page target.
-    if let Some(bound) = server.current_tab(&endpoint).map(str::to_owned) {
-        if bound == target.ws_url {
-            server.drop_session(&bound);
-            match page_targets(&endpoint)
-                .map_err(browser_err)?
-                .first()
-                .map(|t| t.ws_url.clone())
-            {
-                Some(next) => server.set_current_tab(&endpoint, &next),
-                None => server.clear_current_tab(&endpoint),
-            }
+    if server.current_tab(&endpoint) == Some(target.ws_url.as_str()) {
+        match page_targets(&endpoint)
+            .map_err(browser_err)?
+            .first()
+            .map(|t| t.ws_url.clone())
+        {
+            Some(next) => server.set_current_tab(&endpoint, &next),
+            None => server.clear_current_tab(&endpoint),
         }
     }
     Ok(json!({"closed": closed, "tab_id": target.target_id}))
@@ -829,13 +903,9 @@ fn scroll_to(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
                 order.len()
             ))
         })?;
-        let js = format!(
-            "document.querySelector('[data-hu-k=\"{}\"]')?.scrollIntoView({{block:'center',inline:'nearest'}}) ?? false",
-            region_id.as_str()
-        );
         session
-            .evaluate(&js)
-            .map(|scrolled| json!({"scrolled": scrolled, "index": index}))
+            .scroll_into_view(&region_id)
+            .map(|_| json!({"scrolled": true, "index": index}))
             .map_err(browser_err)
     })();
     keep(server, &key, session);
@@ -931,7 +1001,7 @@ fn read_console(server: &mut Server, arguments: &Value) -> Result<Value, ToolErr
     if !rest.is_empty() {
         server.push_events(&key, rest);
     }
-    Ok(json!({"entries": entries}))
+    Ok(json!({"entries": entries, "dropped": server.dropped_events(&key)}))
 }
 
 /// One console/log entry, when the event is one.
@@ -1011,14 +1081,21 @@ fn read_network(server: &mut Server, arguments: &Value) -> Result<Value, ToolErr
         match event.method.as_str() {
             "Network.requestWillBeSent" => {
                 let request = event.params.get("request").cloned().unwrap_or(Value::Null);
-                order.push(id.clone());
-                requests.insert(
-                    id,
-                    json!({
-                        "url": request.get("url").and_then(Value::as_str).unwrap_or(""),
-                        "method": request.get("method").and_then(Value::as_str).unwrap_or("GET"),
-                    }),
-                );
+                if !requests.contains_key(&id) {
+                    order.push(id.clone());
+                }
+                let entry = requests.entry(id.clone()).or_insert_with(|| json!({}));
+                entry["url"] = json!(request.get("url").and_then(Value::as_str).unwrap_or(""));
+                entry["method"] = json!(request
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("GET"));
+                if let Some(redirect) = event.params.get("redirectResponse") {
+                    entry["redirect_from"] = json!({
+                        "url": redirect.get("url").and_then(Value::as_str).unwrap_or(""),
+                        "status": redirect.get("status").cloned().unwrap_or(Value::Null),
+                    });
+                }
             }
             "Network.responseReceived" => {
                 let entry = requests.entry(id.clone()).or_insert_with(|| {
@@ -1032,17 +1109,22 @@ fn read_network(server: &mut Server, arguments: &Value) -> Result<Value, ToolErr
                 }
             }
             "Network.loadingFailed" => {
-                if let Some(entry) = requests.get_mut(&id) {
-                    entry["error"] = event
-                        .params
-                        .get("errorText")
-                        .cloned()
-                        .unwrap_or(Value::Null);
-                }
+                // Orphan failures still surface — a requestId with no prior
+                // requestWillBeSent becomes an error-only row, not silence.
+                let entry = requests.entry(id.clone()).or_insert_with(|| {
+                    order.push(id.clone());
+                    json!({})
+                });
+                entry["error"] = event
+                    .params
+                    .get("errorText")
+                    .cloned()
+                    .unwrap_or(Value::Null);
             }
             _ => rest.push(event),
         }
     }
+    let dropped = server.dropped_events(&key);
     if !rest.is_empty() {
         server.push_events(&key, rest);
     }
@@ -1054,7 +1136,7 @@ fn read_network(server: &mut Server, arguments: &Value) -> Result<Value, ToolErr
                 .map(|e| json!({"requestId": id, "entry": e}))
         })
         .collect();
-    Ok(json!({"entries": entries}))
+    Ok(json!({"entries": entries, "dropped": dropped}))
 }
 
 /// Tool spec fragments shared by every `browser_*` tool.
@@ -1129,9 +1211,9 @@ pub(crate) fn spec(name: &str) -> (String, serde_json::Map<String, Value>, Vec<&
             "Filter the interactive index by label text and/or role; returns matching elements with their indexes."
         }
         "browser_exec" | "browser_javascript_exec" => {
+            // `script` and `expression` are aliases; either satisfies the call.
             props.insert("script".into(), json!({"type": "string"}));
             props.insert("expression".into(), json!({"type": "string"}));
-            required.push("script");
             "Evaluate JavaScript in the tab (Runtime.evaluate, awaitPromise, returnByValue) and return the result."
         }
         "browser_extract_content" => {

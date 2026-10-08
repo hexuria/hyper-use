@@ -393,16 +393,48 @@ fn zoom_sets_page_scale_factor() {
 
 #[test]
 fn scroll_to_scrolls_the_indexed_element_into_view() {
-    let (mut server, _log) = server(ScriptBuilder::new().observe_compact(&page()).call(
-        "Runtime.evaluate",
-        json!({"result": {"type": "boolean", "value": true}}),
-    ));
+    let (mut server, _log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .call("DOM.scrollIntoViewIfNeeded", json!({})),
+    );
     let out = call(
         &mut server,
         "browser_scroll_to",
         json!({"cdp": CDP, "index": 2}),
     );
     assert_eq!(out["scrolled"], true, "{out}");
+}
+
+#[test]
+fn go_back_uses_current_index_not_entry_id() {
+    // Entry ids are opaque (101/102 do not match positions 0/1). The tool
+    // must navigate to entries[currentIndex - 1], not entries.find(id == 0).
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .call(
+                "Page.getNavigationHistory",
+                json!({"currentIndex": 1, "entries": [
+                    {"id": 101, "url": "http://127.0.0.1/a", "title": "A"},
+                    {"id": 102, "url": "http://127.0.0.1/b", "title": "B"},
+                ]}),
+            )
+            .call("Page.navigateToHistoryEntry", json!({})),
+    );
+    let out = call(&mut server, "browser_go_back", json!({"cdp": CDP}));
+    assert_eq!(out["went_back"], true, "{out}");
+    assert!(log
+        .borrow()
+        .iter()
+        .any(|m| m == "Page.navigateToHistoryEntry"));
+}
+
+#[test]
+fn get_state_reports_url_and_title_after_observe() {
+    let (mut server, _log) = server(ScriptBuilder::new().observe_compact(&page()));
+    let out = call(&mut server, "browser_get_state", json!({"cdp": CDP}));
+    assert_eq!(out["url"], "http://127.0.0.1/form", "{out}");
+    assert_eq!(out["title"], "Form", "{out}");
 }
 
 #[test]

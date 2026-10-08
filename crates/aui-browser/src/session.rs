@@ -600,17 +600,11 @@ impl<T: CdpTransport> BrowserSession<T> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let previous = entries
-            .iter()
-            .find(|entry| entry.get("id").and_then(serde_json::Value::as_i64) == Some(current - 1))
-            .or_else(|| {
-                entries.iter().rfind(|entry| {
-                    entry
-                        .get("id")
-                        .and_then(serde_json::Value::as_i64)
-                        .is_some_and(|id| id < current)
-                })
-            })
+        // `currentIndex` is an array index into `entries`; entry `id` values
+        // are opaque and must not be matched against it.
+        let previous = (current > 0)
+            .then(|| entries.get((current - 1) as usize))
+            .flatten()
             .ok_or_else(|| BrowserError::Navigation("no earlier history entry".into()))?;
         let entry_id = previous
             .get("id")
@@ -685,6 +679,8 @@ impl<T: CdpTransport> BrowserSession<T> {
     /// Move the trusted pointer to the region's center without pressing.
     pub fn hover(&mut self, id: &RegionId) -> Result<(), BrowserError> {
         let binding = self.binding_for(id)?;
+        // `:hover` can mutate the DOM — mark stale like every pointer move.
+        self.stale = true;
         self.call(
             "Input.dispatchMouseEvent",
             &json!({"type": "mouseMoved", "x": binding.center_x, "y": binding.center_y})
@@ -812,6 +808,19 @@ impl<T: CdpTransport> BrowserSession<T> {
         Ok(())
     }
 
+    /// Scroll the bound node into view (`DOM.scrollIntoViewIfNeeded` on
+    /// `nodeId`/`backendNodeId`). No press — reveals state, mutates nothing.
+    pub fn scroll_into_view(&mut self, id: &RegionId) -> Result<(), BrowserError> {
+        let binding = self.binding_for(id)?;
+        let params = match (binding.dom_node_id, binding.backend_node_id) {
+            (Some(node_id), _) => json!({"nodeId": node_id}),
+            (None, Some(backend)) => json!({"backendNodeId": backend}),
+            (None, None) => return Err(BrowserError::TargetUnresolved),
+        };
+        self.call("DOM.scrollIntoViewIfNeeded", &params.to_string())?;
+        Ok(())
+    }
+
     /// Scroll `pages` viewport heights (0.5 = half page, 10 ≈ to the end)
     /// down or up. The host surface's scroll tool.
     pub fn scroll_pages(&mut self, down: bool, pages: f64) -> Result<(), BrowserError> {
@@ -821,7 +830,7 @@ impl<T: CdpTransport> BrowserSession<T> {
             .ok_or(BrowserError::NotObserved)?
             .viewport();
         let height = viewport.height();
-        let delta = (height * SCROLL_VIEWPORT_FRACTION * pages.max(0.05)).round();
+        let delta = (height * SCROLL_VIEWPORT_FRACTION * pages.clamp(0.05, 100.0)).round();
         let delta_y = if down { delta } else { -delta };
         self.stale = true;
         let params = json!({
@@ -1159,12 +1168,13 @@ fn key_params(key: &str) -> Option<(String, String, i64, String)> {
         "CapsLock" => ("CapsLock", "CapsLock", 20),
         _ => return key_char_params(key),
     };
-    Some((
-        named.0.to_owned(),
-        named.1.to_owned(),
-        named.2,
-        String::new(),
-    ))
+    // Named keys carry no text — except the spacebar, whose text IS a space.
+    let text = if named.0 == " " {
+        " ".to_owned()
+    } else {
+        String::new()
+    };
+    Some((named.0.to_owned(), named.1.to_owned(), named.2, text))
 }
 
 /// Single printable character → CDP key fields (letters, digits, punctuation).

@@ -3,14 +3,17 @@
 `ultra-instinct mcp` exposes a `browser_*` tool surface mirroring
 [browser-use](https://docs.browser-use.com) (toolsets-for-claude and the
 browser-use MCP server). 37 tools, alongside the seven product tools
-(`observe`, `guard`, `verify`, `locate`, `inspect`, `diff`, `navigate`).
+(`observe`, `guard`, `verify`, `locate`, `inspect`, `diff`, `act`).
 
 **The edge over browser-use:** browser-use presses what the model says.
-Element-mutating `browser_*` tools here resolve a 1-based index on a fresh
-observe, run the hard `gate`, take an `ActionTicket`, and revalidate before
-the press (`execute_ticketed`, or `consume_ticket_once` for inputs the
-executor does not carry). A page that moved under the index discards the
-press instead of clicking the wrong node.
+Every element-mutating `browser_*` tool here resolves a 1-based index on a
+fresh observe, runs the hard `gate`, and takes an `ActionTicket` before the
+press. Click / type / select route through `execute_ticketed`, which
+re-observes and revalidates the ticket against fresh page state. Inputs the
+executor does not carry (right / middle / double / triple click, file
+upload, drag) route through `consume_ticket_once` — same consume-before-
+press order and ledger, revalidated on the gate's own observation (a
+CPU-only gap; no drift barrier between mint and press).
 
 ## Indexing contract
 
@@ -26,18 +29,18 @@ resolve. Coordinate clicks are deliberately not offered: indices only.
 |---|---|---|
 | `navigate` | `browser_navigate` | direct `Page.navigate`; `new_tab: true` opens a tab instead |
 | `new_tab` | `browser_new_tab` | browser-level `Target.createTarget` + rebinding |
-| `list_tabs` | `browser_list_tabs` | `Target.getTargets` filtered to pages |
-| `switch_tab` | `browser_switch_tab` | rebinds the session's tab (target id or index) |
+| `list_tabs` | `browser_list_tabs` | HTTP `/json/list` filtered to pages |
+| `switch_tab` | `browser_switch_tab` | rebinds the session's tab (exact id or unique non-empty prefix) |
 | `close_tab` | `browser_close_tab` | falls back to a remaining page target |
 | `go_back` | `browser_go_back` | `Page.getNavigationHistory` + `navigateToHistoryEntry` |
-| `wait` | `browser_wait` | sleeps `seconds` (cap 30) |
+| `wait` | `browser_wait` | sleeps `seconds` (cap 60; blocks the single-threaded server) |
 | `read_page` / state | `browser_get_state` | full observe → indexed `elements[]` |
 | `get_page_text` | `browser_get_page_text`, `browser_get_text` | `innerText` via evaluate |
 | `get_html` | `browser_get_html` | `outerHTML` via evaluate |
 | `find` | `browser_find` | label and/or `role` filter over the index |
 | `screenshot` | `browser_screenshot` | `Page.captureScreenshot` → base64 png |
-| `scroll` | `browser_scroll` | `window.scrollBy` by `pages` |
-| `scroll_to` | `browser_scroll_to` | index → `scrollIntoView` via `data-hu-k` |
+| `scroll` | `browser_scroll` | `Input.dispatchMouseEvent` mouseWheel by `pages` (clamped 0.05–100) |
+| `scroll_to` | `browser_scroll_to` | index → `DOM.scrollIntoViewIfNeeded` on the region's node |
 | `left_click` | `browser_click` | **index only** — gate → ticket → executor reobserve → DOM press |
 | `right_click` | `browser_right_click` | gate → ticket → `consume_ticket_once` → press |
 | `middle_click` | `browser_middle_click` | same ticketed path |
@@ -46,8 +49,8 @@ resolve. Coordinate clicks are deliberately not offered: indices only.
 | `hover` | `browser_hover` | pointer move, no press — no ticket needed |
 | `mouse_move` | — | covered by `browser_hover` (element-indexed) |
 | `left_mouse_down/up` | — | covered by `browser_drag` |
-| `left_click_drag` | `browser_drag` | element→element (`from_index`/`to_index`) |
-| `type` | `browser_type` | index + `text` → gate → ticket → DOM `insertText` |
+| `left_click_drag` | `browser_drag` | element→element; source gated+ticketed like clicks |
+| `type` | `browser_type` | index + `text` → gate → ticket → `DOM_TYPE_FUNCTION` value-setter |
 | `form_input` | `browser_form_input` | alias of `browser_type` |
 | `key` | `browser_send_key` | `Input.dispatchKeyEvent` down+up; named keys + printable chars |
 | `hold_key` | `browser_hold_key` | same, `hold_ms` between down and up (cap 10 s) |
@@ -76,8 +79,12 @@ next call's read — there is no passive event stream, and none is claimed.
 
 ## Tests
 
-`crates/aui-mcp/tests/browser_tools.rs` drives every tool through the CDP
+`crates/aui-mcp/tests/browser_tools.rs` drives most tools through the CDP
 replay harness (`ScriptBuilder` + `ReplayTransport`): call sequence, index
 resolution, gate→ticket→press order, observed-option grounding, and
-refusals (unobserved option, out-of-range index) are all pinned without a
-live Chrome.
+refusals (unobserved option, out-of-range index) are pinned without a live
+Chrome. Not yet covered at wire level: `browser_type`, the tab tools
+(HTTP-driven), `browser_wait`, `browser_scroll`, `browser_hold_key`,
+`browser_middle_click` / `browser_triple_click`, `browser_get_html` /
+`browser_get_text`, `browser_screenshot`, `browser_search`, and
+`browser_navigate`'s `new_tab` path.

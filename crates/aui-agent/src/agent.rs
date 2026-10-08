@@ -21,7 +21,7 @@
 //! instead of finishing. See that function's docs for the connective limits.
 
 use aui_browser::ScrollDirection;
-use aui_core::{Action, ActionKind, ActionSpace, InteractionManifold, RegionId};
+use aui_core::{Action, ActionKind, ActionSpace, InteractionManifold, InteractionRegion, RegionId};
 use aui_guard::{blocker, gate, neighborhood_of, with_front_layer, TicketLedger};
 use aui_policy::{
     ground_select, label_covers_target, label_names_target, split_sequential_clauses, AgentGoal,
@@ -167,7 +167,13 @@ fn page_twins(manifold: &InteractionManifold, target: &RegionId) -> usize {
         })
         .filter(|other| other.actions().iter().any(|a| region.actions().contains(a)))
         .filter(|other| fold_label(other.label()) == label)
+        .filter(|other| !same_destination(region, other))
         .count()
+}
+
+/// Two links to one resolved `href`: clicking either has one consequence.
+fn same_destination(a: &InteractionRegion, b: &InteractionRegion) -> bool {
+    matches!((&a.state().href, &b.state().href), (Some(x), Some(y)) if x == y)
 }
 
 /// Abstains about *which* target, not about the operation.

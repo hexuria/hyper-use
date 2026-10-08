@@ -1,7 +1,7 @@
 //! Offline e2e: goal → observe → Instinct → guard → ticket → press → verify.
 
 use aui_agent::{AgentBuilder, AgentOutcome, MockBrowser, TickResult, VerificationKind};
-use aui_core::{parse_fixture, Action, ActionKind, ActionSpace, InteractionManifold};
+use aui_core::{parse_fixture, Action, ActionKind, ActionSpace, ElementState, InteractionManifold};
 use aui_policy::{
     AgentGoal, BrowserPolicy, HistoryEntry, InstinctPolicy, PolicyDecision, PolicyError,
     PolicyOutcome,
@@ -951,4 +951,65 @@ fn visible_target_with_offscreen_twin_abstains_without_scrolling() {
         "{:?}",
         browser.scroll_log()
     );
+}
+
+fn with_hrefs(src: &str, hrefs: &[(&str, &str)]) -> InteractionManifold {
+    let mut m = manifold(src);
+    for (id, href) in hrefs {
+        let region = m.get_str(id).unwrap().clone().with_state(ElementState {
+            href: Some((*href).to_owned()),
+            ..ElementState::default()
+        });
+        m.replace(region);
+    }
+    m
+}
+
+const ONE_ARRAY_IN_VIEW: &str = r#"
+    viewport w=800 h=600
+    region id=a1 role=link label="Array" x=10 y=300 w=60 h=24 actions=click sources=dom,accessibility
+    region id=a2 role=link label="Array" x=300 y=2600 w=60 h=24 actions=click sources=dom,accessibility flags=offscreen
+    "#;
+
+#[test]
+fn offscreen_twin_to_the_same_href_is_not_ambiguous() {
+    let page = with_hrefs(
+        ONE_ARRAY_IN_VIEW,
+        &[
+            ("a1", "https://x.test/Array"),
+            ("a2", "https://x.test/Array"),
+        ],
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click Array");
+    agent.run();
+    let presses = agent.browser_mut().press_log();
+    assert!(!presses.is_empty());
+    assert!(
+        presses
+            .iter()
+            .all(|(id, action)| id.as_str() == "a1" && *action == Action::Click),
+        "{presses:?}"
+    );
+}
+
+#[test]
+fn offscreen_twin_to_a_different_href_abstains() {
+    let page = with_hrefs(
+        ONE_ARRAY_IN_VIEW,
+        &[
+            ("a1", "https://x.test/Array"),
+            ("a2", "https://x.test/Array#section"),
+        ],
+    );
+    let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+        .max_steps(3)
+        .build("Click Array");
+    let outcome = agent.run();
+    assert!(
+        matches!(&outcome, AgentOutcome::Abstained { reason, .. } if reason.contains("target ambiguous")),
+        "{outcome:?}"
+    );
+    assert!(agent.browser_mut().press_log().is_empty());
 }

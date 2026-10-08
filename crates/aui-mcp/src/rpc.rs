@@ -130,7 +130,7 @@ fn initialize_result() -> Value {
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": {"tools": {"listChanged": false}},
         "serverInfo": {"name": "ultra-instinct", "version": env!("CARGO_PKG_VERSION")},
-        "instructions": "ultra-instinct is an action firewall: observe, guard, verify. Allow returns an ActionTicket. The host must revalidate that ticket against a fresh observation before clicking the exact target. Ultra-Instinct never clicks. Never guess coordinates. There is no navigate tool."
+        "instructions": "ultra-instinct is an action firewall plus a browser-use-compatible tool surface. Firewall tools: observe, guard (Allow returns an ActionTicket the host must revalidate before clicking the exact target), verify — these never click. browser_* tools drive a live CDP endpoint like browser-use's MCP server (browser_navigate, browser_get_state, browser_click, browser_type, browser_scroll, browser_screenshot, tabs): element indexes come from browser_get_state in reading order, and click/type go through the ticketed executor — they re-observe and refuse on drift instead of clicking the wrong element. Never guess coordinates."
     })
 }
 
@@ -141,6 +141,14 @@ fn tools_list() -> Value {
 }
 
 fn tool_spec(name: &str) -> Value {
+    if name.starts_with("browser_") {
+        let (description, properties, required) = crate::browser_tools::spec(name);
+        return json!({
+            "name": name,
+            "description": description,
+            "inputSchema": {"type": "object", "properties": properties, "required": required},
+        });
+    }
     let (description, properties, required) = match name {
         "observe" => (
             "Read a CDP fixture or an optional live CDP endpoint into regions. Returns id, role, label, parent, state (availability enabled or disabled; visibility visible, occluded, offscreen, or hidden; a region behind an open dialog reads occluded), focused (region id or null), front_layer (open dialogs), and a snapshot id for diff. Does not click and does not choose the next capability.",

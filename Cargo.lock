@@ -129,7 +129,9 @@ dependencies = [
 name = "aui-mcp"
 version = "0.1.0"
 dependencies = [
+ "aui-agent",
  "aui-browser",
+ "aui-cdp",
  "aui-core",
  "aui-guard",
  "aui-observe",

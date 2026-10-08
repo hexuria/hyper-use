@@ -188,6 +188,15 @@ A5 / A6 bench arms, runs `gate::check` before Allow, and issues `of_target`
 tickets like the agent. MCP never bypasses tickets and is never required to
 run the agent.
 
+`browser_*` tools are the browser-use-compatible host surface (drop-in MCP
+names: `browser_navigate`, `browser_get_state`, `browser_click`,
+`browser_type`, `browser_scroll`, `browser_screenshot`, tab tools). Element
+indexes come from `browser_get_state` in reading order; `browser_click` /
+`browser_type` issue an `of_target` ticket and run `execute_ticketed`, so a
+stale page refuses instead of clicking the wrong element. Page-level calls
+(navigate, scroll, screenshot, tabs) are plain CDP like browser-use's.
+Coordinate clicks are deliberately not offered.
+
 ## Signals
 
 Signals (`no-op`, `loop-detected`, `repeated_query`) are data for the MCP host

@@ -48,19 +48,12 @@ impl WebSocketTransport {
 
     fn open_tab_inner(endpoint: &str) -> Result<Self, CdpError> {
         let http = http_endpoint(endpoint)?.to_owned();
-        let version = http_get(&format!("{http}/json/version"))?;
-        let browser_url = version_websocket_url(&version)?;
-        let mut browser = Self {
-            socket: connect_socket(&browser_url)?,
-            next_id: 1,
-            owned: None,
-        };
-        let result = browser.call(
+        let result = browser_ws_call(
+            &http,
             "Target.createTarget",
             &json!({"url": "about:blank", "background": true}).to_string(),
         )?;
         let target_id = created_target_id(&result)?;
-        drop(browser);
 
         let owned = OwnedTarget {
             http: http.clone(),
@@ -93,6 +86,115 @@ impl WebSocketTransport {
 
 pub fn open_tab(endpoint: &str) -> Result<WebSocketTransport, CdpError> {
     WebSocketTransport::open_tab_inner(endpoint)
+}
+
+/// One `"type": "page"` entry from `/json/list` — a tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageTarget {
+    /// Chrome target id (also the last path segment of `ws_url`).
+    pub target_id: String,
+    /// Document URL the tab currently shows.
+    pub url: String,
+    /// Tab title.
+    pub title: String,
+    /// Page-level websocket URL for driving this tab.
+    pub ws_url: String,
+}
+
+/// Page targets at an `http://` debugging endpoint, in `/json/list` order.
+pub fn page_targets(endpoint: &str) -> Result<Vec<PageTarget>, CdpError> {
+    let http = http_endpoint(endpoint)?;
+    let body = http_get(&format!("{http}/json/list"))?;
+    let value: Value = serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+        message: err.to_string(),
+    })?;
+    Ok(value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|target| target.get("type").and_then(Value::as_str) == Some("page"))
+        .filter_map(|target| {
+            Some(PageTarget {
+                target_id: target.get("id").and_then(Value::as_str)?.to_owned(),
+                url: target
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                title: target
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                ws_url: target
+                    .get("webSocketDebuggerUrl")
+                    .and_then(Value::as_str)?
+                    .to_owned(),
+            })
+        })
+        .collect())
+}
+
+/// Page-level websocket URL for a target id on an `http://` endpoint.
+pub fn page_ws_url(endpoint: &str, target_id: &str) -> Result<String, CdpError> {
+    page_socket_url(endpoint, target_id)
+}
+
+/// One CDP call on the browser target (`Target.*`, `Browser.*` domains).
+fn browser_ws_call(endpoint: &str, method: &str, params: &str) -> Result<String, CdpError> {
+    let http = http_endpoint(endpoint)?;
+    let version = http_get(&format!("{http}/json/version"))?;
+    let browser_url = version_websocket_url(&version)?;
+    let mut browser = WebSocketTransport {
+        socket: connect_socket(&browser_url)?,
+        next_id: 1,
+        owned: None,
+    };
+    browser.call(method, params)
+}
+
+/// Bring a page target to the front (`Target.activateTarget`).
+pub fn activate_target(endpoint: &str, target_id: &str) -> Result<(), CdpError> {
+    browser_ws_call(
+        endpoint,
+        "Target.activateTarget",
+        &json!({"targetId": target_id}).to_string(),
+    )?;
+    Ok(())
+}
+
+/// Close a page target (`Target.closeTarget`). Returns the target's
+/// reported closure flag, false when the browser refused.
+pub fn close_target(endpoint: &str, target_id: &str) -> Result<bool, CdpError> {
+    let body = browser_ws_call(
+        endpoint,
+        "Target.closeTarget",
+        &json!({"targetId": target_id}).to_string(),
+    )?;
+    let value: Value = serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+        message: err.to_string(),
+    })?;
+    Ok(value
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(true))
+}
+
+/// Create a page target showing `url`; returns its id and ws url.
+/// `activate` brings it to the front (`Target.createTarget`).
+pub fn create_target(endpoint: &str, url: &str, activate: bool) -> Result<PageTarget, CdpError> {
+    let body = browser_ws_call(
+        endpoint,
+        "Target.createTarget",
+        &json!({"url": url, "background": !activate}).to_string(),
+    )?;
+    let target_id = created_target_id(&body)?;
+    Ok(PageTarget {
+        ws_url: page_socket_url(endpoint, &target_id)?,
+        target_id,
+        url: url.to_owned(),
+        title: String::new(),
+    })
 }
 
 impl Drop for WebSocketTransport {
@@ -315,21 +417,7 @@ fn page_socket_url(endpoint: &str, target_id: &str) -> Result<String, CdpError> 
 }
 
 fn close_owned_target(target: &OwnedTarget) {
-    let result = (|| {
-        let version = http_get(&format!("{}/json/version", target.http))?;
-        let browser_url = version_websocket_url(&version)?;
-        let socket = connect_socket(&browser_url)?;
-        let mut browser = WebSocketTransport {
-            socket,
-            next_id: 1,
-            owned: None,
-        };
-        browser.call(
-            "Target.closeTarget",
-            &json!({"targetId": target.target_id}).to_string(),
-        )?;
-        Ok::<(), CdpError>(())
-    })();
+    let result = close_target(&target.http, &target.target_id).map(|_| ());
     if let Err(err) = result {
         eprintln!(
             "cdp: closing owned target {} failed: {err}",

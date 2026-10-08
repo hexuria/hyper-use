@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 
 use aui_browser::{BrowserSession, CdpError, CdpTransport, PageState, WebSocketTransport};
 use aui_core::InteractionManifold;
+use aui_guard::TicketLedger;
 use aui_observe::history::{
     detect, HistoryError, SignedSnapshot, SnapshotId, SnapshotRing, StateSignature, TemporalSignal,
 };
@@ -38,7 +39,7 @@ pub(crate) struct Snapshot {
 /// Opens the CDP transport for one endpoint.
 pub type CdpConnector = Box<dyn FnMut(&str) -> Result<Box<dyn CdpTransport>, CdpError>>;
 
-type LiveSession = BrowserSession<Box<dyn CdpTransport>>;
+pub(crate) type LiveSession = BrowserSession<Box<dyn CdpTransport>>;
 
 pub struct Server {
     connector: CdpConnector,
@@ -46,6 +47,10 @@ pub struct Server {
     session_order: Vec<String>,
     history: SnapshotRing<Snapshot>,
     locate_repeats: LocateRepeats,
+    /// Endpoint → page-websocket url of the tab `browser_*` tools drive.
+    tab_binding: BTreeMap<String, String>,
+    /// Session key → one-shot ticket ledger for ticketed browser inputs.
+    ledgers: BTreeMap<String, TicketLedger>,
 }
 
 impl SignedSnapshot for Snapshot {
@@ -78,6 +83,8 @@ impl Server {
             session_order: Vec::new(),
             history: SnapshotRing::default(),
             locate_repeats: LocateRepeats::default(),
+            tab_binding: BTreeMap::new(),
+            ledgers: BTreeMap::new(),
         }
     }
 
@@ -173,6 +180,38 @@ impl Server {
         self.session_order.retain(|key| key != url);
         self.session_order.push(url.to_owned());
         self.sessions.insert(url.to_owned(), session);
+    }
+
+    /// Drop a kept session without keeping a replacement.
+    pub(crate) fn drop_session(&mut self, url: &str) {
+        self.sessions.remove(url);
+        self.session_order.retain(|key| key != url);
+    }
+
+    /// Page-websocket url `browser_*` tools drive for `endpoint`, when bound.
+    pub(crate) fn current_tab(&self, endpoint: &str) -> Option<&str> {
+        self.tab_binding.get(endpoint).map(String::as_str)
+    }
+
+    /// Point `browser_*` calls on `endpoint` at this tab's websocket.
+    pub(crate) fn set_current_tab(&mut self, endpoint: &str, ws_url: &str) {
+        self.tab_binding
+            .insert(endpoint.to_owned(), ws_url.to_owned());
+    }
+
+    /// Unbind `endpoint` (falls back to the endpoint's default page target).
+    pub(crate) fn clear_current_tab(&mut self, endpoint: &str) {
+        self.tab_binding.remove(endpoint);
+    }
+
+    /// The ticket ledger for a session key, fresh when absent.
+    pub(crate) fn take_ledger(&mut self, key: &str) -> TicketLedger {
+        self.ledgers.remove(key).unwrap_or_default()
+    }
+
+    /// Put the ledger back after a ticketed input.
+    pub(crate) fn keep_ledger(&mut self, key: &str, ledger: TicketLedger) {
+        self.ledgers.insert(key.to_owned(), ledger);
     }
 }
 

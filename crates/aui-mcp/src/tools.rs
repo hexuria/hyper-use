@@ -152,6 +152,9 @@ pub(crate) fn dispatch(
     {
         return Err(ToolError::CoordinatesNotAccepted);
     }
+    if name.starts_with("browser_") {
+        return crate::browser_tools::call(server, name, arguments);
+    }
     match name {
         "navigate" => Err(ToolError::GoalNotAccepted),
         "observe" => observe(server, arguments),

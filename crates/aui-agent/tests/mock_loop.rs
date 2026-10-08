@@ -928,3 +928,27 @@ fn payloadless_type_text_choice_replans_without_typing() {
         .map(|(id, _)| id.as_str().to_owned());
     assert_eq!(first.as_deref(), Some("learn"));
 }
+
+#[test]
+fn visible_target_with_offscreen_twin_abstains_without_scrolling() {
+    let mut agent = AgentBuilder::new(
+        MockBrowser::new(manifold(ONE_EDIT_IN_VIEW)),
+        InstinctPolicy::default(),
+    )
+    .max_steps(3)
+    .build("Click edit");
+    let outcome = agent.run();
+    match &outcome {
+        AgentOutcome::Abstained { reason, .. } => {
+            assert!(reason.contains("target ambiguous"), "{reason}")
+        }
+        other => panic!("expected ambiguity abstain, got {other:?}"),
+    }
+    let browser = agent.browser_mut();
+    assert!(browser.press_log().is_empty());
+    assert!(
+        browser.scroll_log().is_empty(),
+        "{:?}",
+        browser.scroll_log()
+    );
+}

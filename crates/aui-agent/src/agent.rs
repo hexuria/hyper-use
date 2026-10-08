@@ -671,17 +671,15 @@ where
                 decision.kind
             )));
         }
-        // A target found only after scrolling must be the page's only one:
-        // scrolling until a single look-alike is on screen is not a choice.
-        if self.find_scrolls > 0 {
-            if let Some(target) = offered.target() {
-                let twins = page_twins(&manifold, target);
-                if twins > 0 {
-                    return Err(AgentError::Abstain(format!(
-                        "{TARGET_AMBIGUOUS}: {} matches on the page",
-                        twins + 1
-                    )));
-                }
+        // The target must be the page's only one, offscreen included: one
+        // look-alike on screen (by viewport size or by scrolling) is not a choice.
+        if let Some(target) = offered.target() {
+            let twins = page_twins(&manifold, target);
+            if twins > 0 {
+                return Err(AgentError::Abstain(format!(
+                    "{TARGET_AMBIGUOUS}: {} matches on the page",
+                    twins + 1
+                )));
             }
         }
         match decision.kind {

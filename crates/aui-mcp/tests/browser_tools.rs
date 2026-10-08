@@ -1,0 +1,422 @@
+//! browser_* tools over the replay harness: a scripted Chrome drives the
+//! same `Server::call_tool` path a live session takes. Each test pins the
+//! CDP call sequence a tool emits — navigation, observe, gate → ticket →
+//! press for mutations, one-shot diagnostics.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use aui_browser::script::{Control, PageSpec, ScriptBuilder};
+use aui_browser::{CdpError, CdpTransport, ReplayTransport};
+use aui_mcp::Server;
+use serde_json::{json, Value};
+
+const CDP: &str = "http://127.0.0.1:9222";
+
+struct Logged {
+    inner: ReplayTransport,
+    log: Rc<RefCell<Vec<String>>>,
+}
+
+impl CdpTransport for Logged {
+    fn call(&mut self, method: &str, params_json: &str) -> Result<String, CdpError> {
+        self.log.borrow_mut().push(method.to_owned());
+        self.inner.call(method, params_json)
+    }
+
+    fn drain_events(&mut self) -> Vec<aui_cdp::CdpEvent> {
+        self.inner.drain_events()
+    }
+}
+
+fn server(script: ScriptBuilder) -> (Server, Rc<RefCell<Vec<String>>>) {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let shared = Rc::clone(&log);
+    let mut script = Some(script);
+    let server = Server::with_connector(move |_url| {
+        let script = script.take().ok_or_else(|| CdpError::Transport {
+            message: "one connect per test".into(),
+        })?;
+        Ok(Box::new(Logged {
+            inner: ReplayTransport::parse(&script.to_json())?,
+            log: Rc::clone(&shared),
+        }) as Box<dyn CdpTransport>)
+    });
+    (server, log)
+}
+
+fn call(server: &mut Server, tool: &str, arguments: Value) -> Value {
+    server
+        .call_tool(tool, &arguments)
+        .unwrap_or_else(|err| panic!("{tool} {arguments}: {err:?}"))
+}
+
+/// Interactive index of a control in [`page`]: reading order
+/// `(floor(y/20), x, id)` — Email y=20 → 1, Sign in y=80 → 2, Country y=140 → 3.
+fn page() -> PageSpec {
+    let select = Control {
+        tag: "SELECT",
+        role: "combobox",
+        ..Control::combobox(12, 102, "Country", (20.0, 140.0, 200.0, 28.0))
+    };
+    let mut page = PageSpec::of(
+        &[
+            Control::text_field(10, 100, "Email", (20.0, 20.0, 300.0, 28.0)),
+            Control::button(11, 101, "Sign in", (20.0, 80.0, 120.0, 28.0)),
+            select,
+        ],
+        "http://127.0.0.1/form",
+        "Form",
+    );
+    page.dom[2] = page.dom[2]
+        .clone()
+        .with_compact_state(json!({"o": ["Canada", "France"], "sel": "Canada"}));
+    page
+}
+
+#[test]
+fn navigate_sends_page_navigate() {
+    let (mut server, _log) =
+        server(ScriptBuilder::new().call("Page.navigate", json!({"frameId": "F1"})));
+    let out = call(
+        &mut server,
+        "browser_navigate",
+        json!({"cdp": CDP, "url": "http://127.0.0.1/next"}),
+    );
+    assert_eq!(out["navigated"], "http://127.0.0.1/next", "{out}");
+}
+
+#[test]
+fn get_state_indexes_elements_in_reading_order() {
+    let (mut server, _log) = server(ScriptBuilder::new().observe_compact(&page()));
+    let out = call(&mut server, "browser_get_state", json!({"cdp": CDP}));
+    let elements = out["elements"].as_array().expect("elements");
+    assert_eq!(elements.len(), 3, "{elements:?}");
+    assert_eq!(elements[0]["label"], "Email");
+    assert_eq!(elements[1]["label"], "Sign in");
+    assert_eq!(elements[2]["label"], "Country");
+}
+
+#[test]
+fn find_matches_by_label() {
+    let (mut server, _log) = server(ScriptBuilder::new().observe_compact(&page()));
+    let out = call(
+        &mut server,
+        "browser_find",
+        json!({"cdp": CDP, "query": "Sign"}),
+    );
+    let matches = out["matches"].as_array().expect("matches");
+    assert_eq!(matches.len(), 1, "{matches:?}");
+    assert_eq!(matches[0]["label"], "Sign in");
+}
+
+#[test]
+fn exec_returns_evaluate_result() {
+    let (mut server, _log) = server(ScriptBuilder::new().call(
+        "Runtime.evaluate",
+        json!({"result": {"type": "number", "value": 42}}),
+    ));
+    let out = call(
+        &mut server,
+        "browser_exec",
+        json!({"cdp": CDP, "expression": "1+1"}),
+    );
+    assert_eq!(out["result"], 42, "{out}");
+}
+
+#[test]
+fn extract_content_returns_markdown() {
+    let (mut server, _log) = server(ScriptBuilder::new().call(
+        "Runtime.evaluate",
+        json!({"result": {"type": "string", "value": "# Title\nbody"}}),
+    ));
+    let out = call(&mut server, "browser_extract_content", json!({"cdp": CDP}));
+    assert_eq!(out["content"], "# Title\nbody", "{out}");
+}
+
+#[test]
+fn read_console_enables_domains_and_drains() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .call("Runtime.enable", json!({}))
+            .call("Log.enable", json!({})),
+    );
+    let out = call(&mut server, "browser_read_console", json!({"cdp": CDP}));
+    assert_eq!(out["entries"], json!([]), "{out}");
+    // A second read must not re-enable — domains are tracked per session key.
+    let out = call(&mut server, "browser_read_console", json!({"cdp": CDP}));
+    assert_eq!(out["entries"], json!([]), "{out}");
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|m| *m == "Runtime.enable")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn read_network_enables_and_drains() {
+    let (mut server, _log) = server(ScriptBuilder::new().call("Network.enable", json!({})));
+    let out = call(&mut server, "browser_read_network", json!({"cdp": CDP}));
+    assert_eq!(out["entries"], json!([]), "{out}");
+}
+
+#[test]
+fn click_gates_tickets_and_presses_dom_side() {
+    // get_state's observe → gated click's fresh executor observe → press.
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .observe_compact(&page())
+            .dom_click(11),
+    );
+    let out = call(
+        &mut server,
+        "browser_click",
+        json!({"cdp": CDP, "index": 2}),
+    );
+    assert_eq!(out["acted"], "click", "{out}");
+    assert!(
+        log.borrow().iter().any(|m| m == "DOM.resolveNode"),
+        "DOM-tier press expected: {:?}",
+        log.borrow()
+    );
+}
+
+#[test]
+fn double_click_tickets_then_dispatches_press_release() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({})),
+    );
+    let out = call(
+        &mut server,
+        "browser_double_click",
+        json!({"cdp": CDP, "index": 2}),
+    );
+    assert_eq!(out["acted"], true, "{out}");
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|m| *m == "Input.dispatchMouseEvent")
+            .count(),
+        3,
+        "moved + pressed + released"
+    );
+}
+
+#[test]
+fn right_click_dispatches_with_right_button() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({})),
+    );
+    let out = call(
+        &mut server,
+        "browser_right_click",
+        json!({"cdp": CDP, "index": 2}),
+    );
+    assert_eq!(out["acted"], true, "{out}");
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|m| *m == "Input.dispatchMouseEvent")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn hover_moves_pointer_without_ticket() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .call("Input.dispatchMouseEvent", json!({})),
+    );
+    let out = call(
+        &mut server,
+        "browser_hover",
+        json!({"cdp": CDP, "index": 2}),
+    );
+    assert_eq!(out["hovered"], 2, "{out}");
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|m| *m == "Input.dispatchMouseEvent")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn drag_dispatches_move_press_move_release() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({}))
+            .call("Input.dispatchMouseEvent", json!({})),
+    );
+    let out = call(
+        &mut server,
+        "browser_drag",
+        json!({"cdp": CDP, "from_index": 1, "to_index": 2}),
+    );
+    assert_eq!(out["dragged"], json!({"from": 1, "to": 2}), "{out}");
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|m| *m == "Input.dispatchMouseEvent")
+            .count(),
+        4
+    );
+}
+
+#[test]
+fn send_key_dispatches_down_and_up() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .call("Input.dispatchKeyEvent", json!({}))
+            .call("Input.dispatchKeyEvent", json!({})),
+    );
+    let out = call(
+        &mut server,
+        "browser_send_key",
+        json!({"cdp": CDP, "key": "Enter"}),
+    );
+    assert_eq!(out["key"], "Enter", "{out}");
+    assert_eq!(
+        log.borrow()
+            .iter()
+            .filter(|m| *m == "Input.dispatchKeyEvent")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn select_dropdown_grounds_choice_in_observed_options() {
+    // observe → fresh executor observe → DOM select.
+    let (mut server, _log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .observe_compact(&page())
+            .dom_input(12),
+    );
+    let out = call(
+        &mut server,
+        "browser_select_dropdown",
+        json!({"cdp": CDP, "index": 3, "text": "France"}),
+    );
+    assert_eq!(out["acted"], "select", "{out}");
+}
+
+#[test]
+fn select_dropdown_rejects_unobserved_option() {
+    let (mut server, _log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .observe_compact(&page()),
+    );
+    let err = server
+        .call_tool(
+            "browser_select_dropdown",
+            &json!({"cdp": CDP, "index": 3, "text": "Atlantis"}),
+        )
+        .expect_err("unobserved option must not press");
+    let _ = err;
+}
+
+#[test]
+fn get_dropdown_options_reads_observed_state() {
+    let (mut server, _log) = server(ScriptBuilder::new().observe_compact(&page()));
+    let out = call(
+        &mut server,
+        "browser_get_dropdown_options",
+        json!({"cdp": CDP, "index": 3}),
+    );
+    assert_eq!(out["options"], json!(["Canada", "France"]), "{out}");
+    assert_eq!(out["selected"], "Canada");
+}
+
+#[test]
+fn file_upload_sets_files_on_the_bound_node() {
+    let (mut server, log) = server(
+        ScriptBuilder::new()
+            .observe_compact(&page())
+            .call("DOM.setFileInputFiles", json!({})),
+    );
+    let out = call(
+        &mut server,
+        "browser_file_upload",
+        json!({"cdp": CDP, "index": 2, "path": "/tmp/f.pdf"}),
+    );
+    assert_eq!(out["acted"], true, "{out}");
+    assert!(
+        log.borrow().iter().any(|m| m == "DOM.setFileInputFiles"),
+        "{:?}",
+        log.borrow()
+    );
+}
+
+#[test]
+fn save_as_pdf_returns_base64() {
+    let (mut server, _log) =
+        server(ScriptBuilder::new().call("Page.printToPDF", json!({"data": "JVBERi0="})));
+    let out = call(&mut server, "browser_save_as_pdf", json!({"cdp": CDP}));
+    assert_eq!(out["data"], "JVBERi0=", "{out}");
+}
+
+#[test]
+fn zoom_sets_page_scale_factor() {
+    let (mut server, log) =
+        server(ScriptBuilder::new().call("Emulation.setPageScaleFactor", json!({})));
+    let out = call(
+        &mut server,
+        "browser_zoom",
+        json!({"cdp": CDP, "factor": 1.5}),
+    );
+    assert_eq!(out["zoomed"], 1.5, "{out}");
+    assert!(log
+        .borrow()
+        .iter()
+        .any(|m| m == "Emulation.setPageScaleFactor"));
+}
+
+#[test]
+fn scroll_to_scrolls_the_indexed_element_into_view() {
+    let (mut server, _log) = server(ScriptBuilder::new().observe_compact(&page()).call(
+        "Runtime.evaluate",
+        json!({"result": {"type": "boolean", "value": true}}),
+    ));
+    let out = call(
+        &mut server,
+        "browser_scroll_to",
+        json!({"cdp": CDP, "index": 2}),
+    );
+    assert_eq!(out["scrolled"], true, "{out}");
+}
+
+#[test]
+fn missing_index_is_an_argument_error_not_a_press() {
+    let (mut server, log) = server(ScriptBuilder::new().observe_compact(&page()));
+    let err = server
+        .call_tool("browser_click", &json!({"cdp": CDP, "index": 99}))
+        .expect_err("index out of range");
+    let _ = err;
+    assert!(
+        log.borrow()
+            .iter()
+            .all(|m| m != "DOM.resolveNode" && m != "Input.dispatchMouseEvent"),
+        "no press may be dispatched: {:?}",
+        log.borrow()
+    );
+}

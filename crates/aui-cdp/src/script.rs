@@ -657,6 +657,13 @@ impl ScriptBuilder {
         self
     }
 
+    /// Append an arbitrary `method → result` step (generic escape for tools
+    /// the named helpers do not cover, e.g. diagnostics or page input).
+    pub fn call(mut self, method: &str, value: Value) -> Self {
+        self.calls.push(result(method, value));
+        self
+    }
+
     /// Number of scripted CDP calls so far.
     pub fn len(&self) -> usize {
         self.calls.len()

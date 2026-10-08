@@ -569,6 +569,51 @@ mod tests {
         }
     }
 
+    fn ranked(confidences: &[i16]) -> Vec<RankedAction> {
+        confidences
+            .iter()
+            .enumerate()
+            .map(|(i, &confidence_millis)| RankedAction {
+                id: aui_core::ActionId::try_new(format!("CLICK:r{i}")).unwrap(),
+                kind: ActionKind::Click,
+                label: format!("r{i}"),
+                confidence_millis,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn is_ambiguous_needs_two_confident_targets_within_the_margin() {
+        let p = Profile::Standard;
+        assert!(is_ambiguous(&ranked(&[900, 900]), p));
+        assert!(
+            is_ambiguous(&ranked(&[900, 751]), p),
+            "gap 149 < margin 150"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[900, 750]), p),
+            "gap == margin is decisive"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[900, 700]), p),
+            "second below min_confidence"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[700, 700]), p),
+            "both below min_confidence"
+        );
+        assert!(
+            !is_ambiguous(&ranked(&[749, 900]), p),
+            "top below min_confidence"
+        );
+        assert!(
+            is_ambiguous(&ranked(&[750, 750]), p),
+            "exactly min_confidence counts"
+        );
+        assert!(!is_ambiguous(&ranked(&[900]), p));
+        assert!(!is_ambiguous(&[], p));
+    }
+
     #[test]
     fn equal_twins_abstain_as_ambiguous() {
         let space = space_from(

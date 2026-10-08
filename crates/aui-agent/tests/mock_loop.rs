@@ -1013,3 +1013,117 @@ fn offscreen_twin_to_a_different_href_abstains() {
     );
     assert!(agent.browser_mut().press_log().is_empty());
 }
+
+fn pressed(browser: &MockBrowser) -> Vec<String> {
+    browser
+        .press_log()
+        .iter()
+        .map(|(id, _)| id.as_str().to_owned())
+        .collect()
+}
+
+fn run_static(src: &str, goal: &str, max_steps: u32) -> (AgentOutcome, Vec<String>, MockBrowser) {
+    let page = manifold(src);
+    let mut browser = MockBrowser::new(page.clone());
+    browser.set_on_press(page);
+    let mut agent = AgentBuilder::new(browser, InstinctPolicy::default())
+        .max_steps(max_steps)
+        .build(goal);
+    let outcome = agent.run();
+    let presses = pressed(agent.browser_mut());
+    (outcome, presses, agent.into_browser())
+}
+
+#[test]
+fn optional_clause_with_twins_is_skipped_not_fatal() {
+    let (outcome, presses, _) = run_static(
+        r#"
+        viewport w=800 h=600
+        region id=a1 role=button label="Accept" x=10 y=100 w=80 h=24 actions=click sources=dom,accessibility
+        region id=a2 role=button label="Accept" x=10 y=200 w=80 h=24 actions=click sources=dom,accessibility
+        region id=home role=link label="Home" x=10 y=300 w=80 h=24 actions=click sources=dom,accessibility
+        "#,
+        "Click Accept if present then click Home",
+        4,
+    );
+    assert!(!presses.iter().any(|p| p.starts_with('a')), "{presses:?}");
+    assert_eq!(
+        presses.first().map(String::as_str),
+        Some("home"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn modal_button_with_buried_offscreen_page_twin_is_clicked() {
+    let (outcome, presses, _) = run_static(
+        r#"
+        viewport w=1440 h=900
+        region id=page role=generic label="Files" x=0 y=0 w=1440 h=2000 actions=focus sources=dom
+        region id=page-delete role=button label="Delete" x=1200 y=1780 w=160 h=36 actions=click,focus parent=page sources=dom,accessibility flags=offscreen
+        region id=confirm role=dialog label="Delete file?" x=520 y=300 w=400 h=240 actions=focus sources=dom,accessibility flags=modal
+        region id=confirm-cancel role=button label="Cancel" x=560 y=480 w=100 h=36 actions=click,focus parent=confirm sources=dom,accessibility
+        region id=confirm-delete role=button label="Delete" x=780 y=480 w=100 h=36 actions=click,focus parent=confirm sources=dom,accessibility
+        "#,
+        "Click Delete",
+        2,
+    );
+    assert_eq!(
+        presses.first().map(String::as_str),
+        Some("confirm-delete"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn modal_confirm_fixture_click_cancel() {
+    let (outcome, presses, _) = run_static(
+        include_str!("../../../fixtures/modal-confirm.manifold"),
+        "Click Cancel",
+        2,
+    );
+    assert_eq!(
+        presses.first().map(String::as_str),
+        Some("confirm-cancel"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn type_into_field_ignores_offscreen_same_label_button() {
+    let (outcome, _, browser) = run_static(
+        r#"
+        viewport w=800 h=600
+        region id=q role=text_field label="Search" x=10 y=10 w=300 h=24 actions=click,type sources=dom,accessibility
+        region id=go role=button label="Search" x=10 y=900 w=80 h=24 actions=click sources=dom,accessibility flags=offscreen
+        "#,
+        r#"Type "rust" into Search"#,
+        2,
+    );
+    assert!(
+        browser
+            .input_log()
+            .iter()
+            .any(|(id, i)| id.as_str() == "q" && i.payload() == Some("rust")),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn hidden_disabled_or_zero_area_offscreen_twins_do_not_count() {
+    for twin in [
+        r#"region id=e1 role=link label="edit" x=10 y=900 w=40 h=24 actions=click sources=dom,accessibility flags=offscreen,hidden"#,
+        r#"region id=e1 role=link label="edit" x=10 y=900 w=40 h=24 actions=click sources=dom,accessibility flags=offscreen,disabled"#,
+        r#"region id=e1 role=link label="edit" x=10 y=900 w=0 h=0 actions=click sources=dom,accessibility flags=offscreen"#,
+    ] {
+        let src = format!(
+            "viewport w=800 h=600\n{twin}\nregion id=e2 role=link label=\"edit\" x=10 y=300 w=40 h=24 actions=click sources=dom,accessibility\n"
+        );
+        let (outcome, presses, _) = run_static(&src, "Click edit", 1);
+        assert_eq!(
+            presses.first().map(String::as_str),
+            Some("e2"),
+            "{twin}: {outcome:?}"
+        );
+    }
+}

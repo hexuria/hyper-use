@@ -143,11 +143,13 @@ fn fold_label(label: &str) -> String {
         .join(" ")
 }
 
-/// Offscreen regions that carry `target`'s label and one of its action
-/// claims: look-alikes the policy never saw (they are not in the action
-/// space), whether the viewport or a scroll put them out of view. On-screen
-/// twins are in the menu, so choosing between them stays the policy's call.
-fn page_twins(manifold: &InteractionManifold, target: &RegionId) -> usize {
+/// Offscreen regions that carry `target`'s label and offer `kind`: look-alikes
+/// the policy never saw (they are not in the action space), whether the
+/// viewport or a scroll put them out of view. On-screen twins are in the
+/// menu, so choosing between them stays the policy's call. Regions behind the
+/// front layer (a modal) are not choices either, and two links to one `href`
+/// are one choice.
+fn page_twins(manifold: &InteractionManifold, target: &RegionId, kind: ActionKind) -> usize {
     let Some(region) = manifold.get(target) else {
         return 0;
     };
@@ -155,17 +157,24 @@ fn page_twins(manifold: &InteractionManifold, target: &RegionId) -> usize {
     if label.is_empty() {
         return 0;
     }
-    manifold
+    let front = with_front_layer(manifold);
+    front
         .regions()
         .filter(|other| other.id() != target)
         .filter(|other| {
             let flags = other.flags();
             flags.offscreen()
+                && !flags.occluded()
                 && !flags.hidden()
                 && !flags.disabled()
                 && !other.rect().is_zero_area()
         })
-        .filter(|other| other.actions().iter().any(|a| region.actions().contains(a)))
+        .filter(|other| {
+            other
+                .actions()
+                .iter()
+                .any(|claim| ActionKind::from_claim(*claim) == Some(kind))
+        })
         .filter(|other| fold_label(other.label()) == label)
         .filter(|other| !same_destination(region, other))
         .count()
@@ -684,7 +693,7 @@ where
         // No offscreen look-alike may exist: one twin on screen (by viewport
         // size or by scrolling) is not a choice the policy could make.
         if let Some(target) = offered.target() {
-            let twins = page_twins(&manifold, target);
+            let twins = page_twins(&manifold, target, decision.kind);
             if twins > 0 {
                 return Err(AgentError::Abstain(format!(
                     "{TARGET_AMBIGUOUS}: {} matches on the page",
@@ -1189,7 +1198,7 @@ where
                     // An optional clause waits for its target instead of
                     // scrolling, then is skipped when it never shows up.
                     if matches!(self.mode, ClauseMode::Optional { .. })
-                        && is_target_abstain(&reason)
+                        && (is_target_abstain(&reason) || reason.starts_with(TARGET_AMBIGUOUS))
                     {
                         if self.may_wait() {
                             self.wait_polls += 1;

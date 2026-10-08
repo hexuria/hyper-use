@@ -122,7 +122,7 @@ pub fn target_phrase(goal: &str) -> Option<String> {
         .split_whitespace()
         .next()
         .is_some_and(|first| CLICK_VERBS.iter().any(|v| first.eq_ignore_ascii_case(v)));
-    // Drop quoted segments ("…" or '…'), marking where they were.
+    // Drop quoted segments ("…" or “…”), marking where they were.
     let mut unquoted = String::with_capacity(goal.len());
     let mut chars = goal.chars();
     while let Some(c) = chars.next() {

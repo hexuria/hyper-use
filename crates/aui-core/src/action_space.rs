@@ -39,6 +39,11 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
+    /// The agent operation a region claim offers (`None` for focus/hover/scroll).
+    pub const fn from_claim(claim: Action) -> Option<Self> {
+        map_region_claim(claim)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Click => "CLICK",
@@ -320,7 +325,7 @@ fn region_is_viable_target(region: &InteractionRegion) -> bool {
     true
 }
 
-fn map_region_claim(claim: Action) -> Option<ActionKind> {
+const fn map_region_claim(claim: Action) -> Option<ActionKind> {
     match claim {
         Action::Click | Action::Toggle => Some(ActionKind::Click),
         Action::Type => Some(ActionKind::TypeText),
@@ -370,6 +375,24 @@ mod tests {
     use crate::{
         InteractionManifold, Rect, RegionFlags, RegionParts, Role, SourceMask, UnitInterval,
     };
+
+    #[test]
+    fn without_kind_drops_only_that_kind() {
+        let space = ActionSpace::from_manifold(
+            &parse_fixture(
+                r#"
+                viewport w=800 h=600
+                region id=q role=text_field label="Search" x=10 y=10 w=200 h=24 actions=click,type sources=dom,accessibility
+                "#,
+            )
+            .unwrap(),
+        );
+        let trimmed = space.without_kind(ActionKind::TypeText);
+        assert!(trimmed.targets_of(ActionKind::TypeText).next().is_none());
+        assert_eq!(trimmed.targets_of(ActionKind::Click).count(), 1);
+        assert_eq!(trimmed.len(), space.len() - 1);
+        assert_eq!(trimmed.captured_at_ms(), space.captured_at_ms());
+    }
 
     #[test]
     fn action_kind_round_trips() {

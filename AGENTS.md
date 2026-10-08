@@ -195,7 +195,13 @@ indexes come from `browser_get_state` in reading order; `browser_click` /
 `browser_type` issue an `of_target` ticket and run `execute_ticketed`, so a
 stale page refuses instead of clicking the wrong element. Page-level calls
 (navigate, scroll, screenshot, tabs) are plain CDP like browser-use's.
-Coordinate clicks are deliberately not offered.
+Coordinate clicks are deliberately not offered. Diagnostics:
+`browser_exec`/`browser_javascript_exec` (Runtime.evaluate),
+`browser_extract_content` (deterministic DOM→markdown, no model call),
+`browser_read_console`/`browser_read_network` (CDP events buffered by the
+transport, domains enabled lazily, drained per read). The `CdpTransport`
+trait gains `drain_events` (default empty); the ws transport buffers
+unsolicited frames.
 
 ## Signals
 

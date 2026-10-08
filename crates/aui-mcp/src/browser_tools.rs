@@ -26,7 +26,7 @@ use crate::server::Server;
 const MAX_WAIT_SECS: u64 = 60;
 
 /// All `browser_*` tool names this module serves.
-pub const BROWSER_TOOLS: [&str; 14] = [
+pub const BROWSER_TOOLS: [&str; 22] = [
     "browser_navigate",
     "browser_new_tab",
     "browser_go_back",
@@ -34,14 +34,26 @@ pub const BROWSER_TOOLS: [&str; 14] = [
     "browser_get_state",
     "browser_get_html",
     "browser_get_text",
+    "browser_get_page_text",
     "browser_screenshot",
     "browser_scroll",
+    "browser_scroll_to",
     "browser_click",
     "browser_type",
+    "browser_find",
     "browser_list_tabs",
     "browser_switch_tab",
     "browser_close_tab",
+    "browser_exec",
+    "browser_javascript_exec",
+    "browser_extract_content",
+    "browser_read_console",
+    "browser_read_network",
 ];
+
+/// Diagnostic-domain bits in `Server::enabled_domains`.
+const CONSOLE_BIT: u8 = 0b01;
+const NETWORK_BIT: u8 = 0b10;
 
 /// Run one `browser_*` tool against this server's state.
 pub(crate) fn call(server: &mut Server, name: &str, arguments: &Value) -> Result<Value, ToolError> {
@@ -52,14 +64,20 @@ pub(crate) fn call(server: &mut Server, name: &str, arguments: &Value) -> Result
         "browser_wait" => wait(arguments),
         "browser_get_state" => get_state(server, arguments),
         "browser_get_html" => get_html(server, arguments),
-        "browser_get_text" => get_text(server, arguments),
+        "browser_get_text" | "browser_get_page_text" => get_text(server, arguments),
         "browser_screenshot" => screenshot(server, arguments),
         "browser_scroll" => scroll(server, arguments),
+        "browser_scroll_to" => scroll_to(server, arguments),
         "browser_click" => click(server, arguments),
         "browser_type" => type_text(server, arguments),
+        "browser_find" => find(server, arguments),
         "browser_list_tabs" => list_tabs(arguments),
         "browser_switch_tab" => switch_tab(server, arguments),
         "browser_close_tab" => close_tab(server, arguments),
+        "browser_exec" | "browser_javascript_exec" => exec(server, arguments),
+        "browser_extract_content" => extract_content(server, arguments),
+        "browser_read_console" => read_console(server, arguments),
+        "browser_read_network" => read_network(server, arguments),
         other => Err(ToolError::UnknownTool(other.to_owned())),
     }
 }
@@ -142,7 +160,13 @@ fn take(server: &mut Server, key: &str) -> Result<crate::server::LiveSession, To
     server.take_session(key)
 }
 
-fn keep(server: &mut Server, key: &str, session: crate::server::LiveSession) {
+fn keep(server: &mut Server, key: &str, mut session: crate::server::LiveSession) {
+    // Events that arrived during the call are buffered for the diagnostics
+    // tools (browser_read_console / browser_read_network).
+    let events = session.transport_mut().drain_events();
+    if !events.is_empty() {
+        server.push_events(key, events);
+    }
     server.keep_session(key, session);
 }
 
@@ -441,6 +465,300 @@ fn close_tab(server: &mut Server, arguments: &Value) -> Result<Value, ToolError>
     Ok(json!({"closed": closed, "tab_id": target.target_id}))
 }
 
+/// `browser_exec` / `browser_javascript_exec`: Runtime.evaluate, awaitPromise,
+/// returnByValue — the raw CDP escape hatch browser-use exposes.
+fn exec(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let expression = opt_str(arguments, "script")?
+        .or(opt_str(arguments, "expression")?)
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `script`".to_owned()))?
+        .to_owned();
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = session
+        .evaluate(&expression)
+        .map(|result| json!({"result": result}))
+        .map_err(browser_err);
+    keep(server, &key, session);
+    outcome
+}
+
+/// Deterministic DOM→markdown extraction (no model call).
+const EXTRACT_JS: &str = r#"(() => {
+  const out = [];
+  const title = document.title || '';
+  if (title) out.push('# ' + title);
+  document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,a[href],main,article').forEach(el => {
+    const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!t) return;
+    const tag = el.tagName;
+    if (/^H[1-6]$/.test(tag)) out.push('\n' + '#'.repeat(Number(tag[1])) + ' ' + t);
+    else if (tag === 'A' && el.href) out.push('[' + t + '](' + el.href + ')');
+    else if (tag === 'LI') out.push('- ' + t);
+    else if (tag !== 'MAIN' && tag !== 'ARTICLE') out.push(t);
+  });
+  return out.join('\n').slice(0, 30000);
+})()"#;
+
+fn extract_content(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = session
+        .evaluate(EXTRACT_JS)
+        .map(|result| json!({"content": result}))
+        .map_err(browser_err);
+    keep(server, &key, session);
+    outcome
+}
+
+/// Scroll the element at `index` into view via its `data-hu-k` identity.
+fn scroll_to(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let index = opt_usize(arguments, "index")?
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `index`".to_owned()))?;
+    if index == 0 {
+        return Err(ToolError::InvalidArguments("`index` is 1-based".to_owned()));
+    }
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = (|| {
+        let manifold = session.observe().map_err(browser_err)?;
+        let order = interactive_index(manifold);
+        let region_id = order.get(index - 1).cloned().ok_or_else(|| {
+            ToolError::InvalidArguments(format!(
+                "no interactive element at index {index} ({} indexed)",
+                order.len()
+            ))
+        })?;
+        let js = format!(
+            "document.querySelector('[data-hu-k=\"{}\"]')?.scrollIntoView({{block:'center',inline:'nearest'}}) ?? false",
+            region_id.as_str()
+        );
+        session
+            .evaluate(&js)
+            .map(|scrolled| json!({"scrolled": scrolled, "index": index}))
+            .map_err(browser_err)
+    })();
+    keep(server, &key, session);
+    outcome
+}
+
+/// Filter the interactive index by label text and/or role.
+fn find(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let text = opt_str(arguments, "text")?
+        .or(opt_str(arguments, "query")?)
+        .map(str::to_lowercase);
+    let role = opt_str(arguments, "role")?.map(str::to_lowercase);
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = (|| {
+        let manifold = session.observe().map_err(browser_err)?;
+        let order = interactive_index(manifold);
+        let mut matches = Vec::new();
+        for (i, id) in order.iter().enumerate() {
+            let Some(region) = manifold.get(id) else {
+                continue;
+            };
+            let label = region.label().to_lowercase();
+            let region_role = region.role().to_string().to_lowercase();
+            if let Some(query) = &text {
+                if !label.contains(query.as_str()) {
+                    continue;
+                }
+            }
+            if let Some(query) = &role {
+                if !region_role.contains(query.as_str()) {
+                    continue;
+                }
+            }
+            matches.push(element_json(i + 1, region));
+            if matches.len() >= 50 {
+                break;
+            }
+        }
+        Ok::<Value, ToolError>(json!({"matches": matches, "matched": matches.len()}))
+    })();
+    keep(server, &key, session);
+    outcome
+}
+
+/// Lazily enable a diagnostic domain on the session's tab.
+fn enable_diagnostics(
+    server: &mut Server,
+    key: &str,
+    session: &mut crate::server::LiveSession,
+    bit: u8,
+    domains: &[&str],
+) -> Result<(), ToolError> {
+    if server.enabled_domains(key) & bit != 0 {
+        return Ok(());
+    }
+    for domain in domains {
+        session
+            .transport_mut()
+            .call(domain, "{}")
+            .map_err(|err| ToolError::Browser(err.to_string()))?;
+    }
+    server.enable_domain(key, bit);
+    Ok(())
+}
+
+/// Console + log entries buffered since the last read (drains the buffer).
+fn read_console(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let enabled = enable_diagnostics(
+        server,
+        &key,
+        &mut session,
+        CONSOLE_BIT,
+        &["Runtime.enable", "Log.enable"],
+    );
+    let drained = session.transport_mut().drain_events();
+    server.push_events(&key, drained);
+    keep(server, &key, session);
+    enabled?;
+    let mut entries = Vec::new();
+    let mut rest = Vec::new();
+    for event in server.take_events(&key) {
+        if let Some(entry) = console_entry(&event) {
+            entries.push(entry);
+        } else {
+            rest.push(event);
+        }
+    }
+    if !rest.is_empty() {
+        server.push_events(&key, rest);
+    }
+    Ok(json!({"entries": entries}))
+}
+
+/// One console/log entry, when the event is one.
+fn console_entry(event: &aui_cdp::CdpEvent) -> Option<Value> {
+    match event.method.as_str() {
+        "Runtime.consoleAPICalled" => {
+            let params = &event.params;
+            let level = params.get("type").and_then(Value::as_str).unwrap_or("log");
+            let text = params
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|args| {
+                    args.iter()
+                        .map(|arg| {
+                            arg.get("value")
+                                .cloned()
+                                .or_else(|| arg.get("description").cloned())
+                                .map(|v| v.to_string())
+                                .unwrap_or_default()
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            Some(json!({"level": level, "text": text}))
+        }
+        "Runtime.exceptionThrown" => {
+            let details = event
+                .params
+                .get("exceptionDetails")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let text = details
+                .get("exception")
+                .and_then(|e| e.get("description"))
+                .or_else(|| details.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("exception")
+                .to_owned();
+            Some(json!({"level": "error", "text": text}))
+        }
+        "Log.entryAdded" => {
+            let entry = event.params.get("entry")?;
+            Some(json!({
+                "level": entry.get("level").and_then(Value::as_str).unwrap_or("info"),
+                "text": entry.get("text").and_then(Value::as_str).unwrap_or(""),
+                "source": entry.get("source").and_then(Value::as_str).unwrap_or(""),
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// Network entries buffered since the last read, aggregated by requestId.
+fn read_network(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let enabled = enable_diagnostics(server, &key, &mut session, NETWORK_BIT, &["Network.enable"]);
+    let drained = session.transport_mut().drain_events();
+    server.push_events(&key, drained);
+    keep(server, &key, session);
+    enabled?;
+    let mut requests: serde_json::Map<String, Value> = serde_json::Map::new();
+    let mut order = Vec::<String>::new();
+    let mut rest = Vec::new();
+    for event in server.take_events(&key) {
+        let Some(id) = event
+            .params
+            .get("requestId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            rest.push(event);
+            continue;
+        };
+        match event.method.as_str() {
+            "Network.requestWillBeSent" => {
+                let request = event.params.get("request").cloned().unwrap_or(Value::Null);
+                order.push(id.clone());
+                requests.insert(
+                    id,
+                    json!({
+                        "url": request.get("url").and_then(Value::as_str).unwrap_or(""),
+                        "method": request.get("method").and_then(Value::as_str).unwrap_or("GET"),
+                    }),
+                );
+            }
+            "Network.responseReceived" => {
+                let entry = requests.entry(id.clone()).or_insert_with(|| {
+                    order.push(id.clone());
+                    json!({})
+                });
+                let response = event.params.get("response").cloned().unwrap_or(Value::Null);
+                entry["status"] = response.get("status").cloned().unwrap_or(Value::Null);
+                if entry.get("url").is_none() {
+                    entry["url"] = response.get("url").cloned().unwrap_or(Value::Null);
+                }
+            }
+            "Network.loadingFailed" => {
+                if let Some(entry) = requests.get_mut(&id) {
+                    entry["error"] = event
+                        .params
+                        .get("errorText")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                }
+            }
+            _ => rest.push(event),
+        }
+    }
+    if !rest.is_empty() {
+        server.push_events(&key, rest);
+    }
+    let entries: Vec<Value> = order
+        .iter()
+        .filter_map(|id| {
+            requests
+                .get(id)
+                .map(|e| json!({"requestId": id, "entry": e}))
+        })
+        .collect();
+    Ok(json!({"entries": entries}))
+}
+
 /// Tool spec fragments shared by every `browser_*` tool.
 pub(crate) fn spec(name: &str) -> (String, serde_json::Map<String, Value>, Vec<&'static str>) {
     let cdp = || {
@@ -472,6 +790,7 @@ pub(crate) fn spec(name: &str) -> (String, serde_json::Map<String, Value>, Vec<&
             "Page url, title, and interactive elements as 1-based indexes in reading order — the numbers browser_click/browser_type take."
         }
         "browser_get_html" => "document.documentElement.outerHTML of the current tab.",
+        "browser_get_page_text" => "Visible text of the current tab (alias of browser_get_text).",
         "browser_get_text" => "document.body.innerText — visible page text.",
         "browser_screenshot" => "PNG screenshot of the viewport, base64.",
         "browser_scroll" => {
@@ -501,6 +820,31 @@ pub(crate) fn spec(name: &str) -> (String, serde_json::Map<String, Value>, Vec<&
             required.push("tab_id");
             "Close a tab by id; falls back to another tab if it was current."
         }
+        "browser_scroll_to" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            required.push("index");
+            "Scroll the element at a browser_get_state index into view."
+        }
+        "browser_find" => {
+            props.insert("text".into(), json!({"type": "string"}));
+            props.insert("role".into(), json!({"type": "string"}));
+            "Filter the interactive index by label text and/or role; returns matching elements with their indexes."
+        }
+        "browser_exec" | "browser_javascript_exec" => {
+            props.insert("script".into(), json!({"type": "string"}));
+            props.insert("expression".into(), json!({"type": "string"}));
+            required.push("script");
+            "Evaluate JavaScript in the tab (Runtime.evaluate, awaitPromise, returnByValue) and return the result."
+        }
+        "browser_extract_content" => {
+            "Extract readable page content as markdown (deterministic DOM walk, no model call)."
+        }
+        "browser_read_console" => {
+            "Drain console/JS-exception entries buffered since the last read; enables Runtime+Log domains lazily."
+        }
+        "browser_read_network" => {
+            "Drain network entries buffered since the last read, aggregated by requestId; enables Network lazily."
+        }
         other => return (other.to_owned(), props, required),
     };
     (description.to_owned(), props, required)
@@ -524,6 +868,31 @@ mod tests {
             temporal_stability: aui_core::UnitInterval::ONE,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn console_entry_parses_console_and_log_events() {
+        let console = aui_cdp::CdpEvent {
+            method: "Runtime.consoleAPICalled".to_owned(),
+            params: json!({"type": "warn", "args": [{"value": "careful"}, {"description": "obj"}]}),
+        };
+        let entry = console_entry(&console).unwrap();
+        assert_eq!(entry["level"], "warn");
+        assert!(entry["text"].as_str().unwrap().contains("careful"));
+
+        let log = aui_cdp::CdpEvent {
+            method: "Log.entryAdded".to_owned(),
+            params: json!({"entry": {"level": "error", "text": "boom", "source": "network"}}),
+        };
+        let entry = console_entry(&log).unwrap();
+        assert_eq!(entry["level"], "error");
+        assert_eq!(entry["text"], "boom");
+
+        let other = aui_cdp::CdpEvent {
+            method: "Network.requestWillBeSent".to_owned(),
+            params: json!({}),
+        };
+        assert!(console_entry(&other).is_none());
     }
 
     #[test]

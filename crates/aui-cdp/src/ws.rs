@@ -1,6 +1,7 @@
 //! Blocking CDP websocket. Plain `ws://` only. `wss://` is refused: this
 //! crate does not pull a TLS stack. Chrome's local debugging port is `ws`.
 
+use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
@@ -8,7 +9,10 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tungstenite::{Message, WebSocket};
 
-use crate::{CdpError, CdpTransport};
+use crate::{CdpError, CdpEvent, CdpTransport};
+
+/// Buffered unsolicited events kept per transport; oldest drop past this.
+const MAX_BUFFERED_EVENTS: usize = 1024;
 
 /// Documented default. Pass `--cdp` with no value to use it. A live Chrome
 /// must already be listening; ultra-instinct does not launch a browser.
@@ -34,6 +38,7 @@ pub struct WebSocketTransport {
     socket: Socket,
     next_id: i64,
     owned: Option<OwnedTarget>,
+    events: VecDeque<CdpEvent>,
 }
 
 impl WebSocketTransport {
@@ -43,6 +48,7 @@ impl WebSocketTransport {
             socket: connect_socket(&ws_url)?,
             next_id: 1,
             owned: None,
+            events: VecDeque::new(),
         })
     }
 
@@ -65,6 +71,7 @@ impl WebSocketTransport {
                 socket: connect_socket(&page_url)?,
                 next_id: 1,
                 owned: None,
+                events: VecDeque::new(),
             };
             transport.call(
                 "Emulation.setFocusEmulationEnabled",
@@ -149,6 +156,7 @@ fn browser_ws_call(endpoint: &str, method: &str, params: &str) -> Result<String,
         socket: connect_socket(&browser_url)?,
         next_id: 1,
         owned: None,
+        events: VecDeque::new(),
     };
     browser.call(method, params)
 }
@@ -247,6 +255,15 @@ impl CdpTransport for WebSocketTransport {
                     message: err.to_string(),
                 })?;
             if value.get("id").and_then(Value::as_i64) != Some(id) {
+                if let Some(method) = value.get("method").and_then(Value::as_str) {
+                    if self.events.len() >= MAX_BUFFERED_EVENTS {
+                        self.events.pop_front();
+                    }
+                    self.events.push_back(CdpEvent {
+                        method: method.to_owned(),
+                        params: value.get("params").cloned().unwrap_or(Value::Null),
+                    });
+                }
                 continue;
             }
             if let Some(error) = value.get("error") {
@@ -260,6 +277,10 @@ impl CdpTransport for WebSocketTransport {
             let result = value.get("result").cloned().unwrap_or(Value::Null);
             return Ok(result.to_string());
         }
+    }
+
+    fn drain_events(&mut self) -> Vec<CdpEvent> {
+        self.events.drain(..).collect()
     }
 }
 

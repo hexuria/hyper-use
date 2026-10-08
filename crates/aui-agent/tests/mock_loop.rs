@@ -1127,3 +1127,23 @@ fn hidden_disabled_or_zero_area_offscreen_twins_do_not_count() {
         );
     }
 }
+
+#[test]
+fn placeholder_hrefs_are_not_one_destination() {
+    for href in [
+        "https://x.test/rows#",
+        "javascript:void(0)",
+        "JavaScript:del()",
+    ] {
+        let page = with_hrefs(ONE_ARRAY_IN_VIEW, &[("a1", href), ("a2", href)]);
+        let mut agent = AgentBuilder::new(MockBrowser::new(page), InstinctPolicy::default())
+            .max_steps(3)
+            .build("Click Array");
+        let outcome = agent.run();
+        assert!(
+            matches!(&outcome, AgentOutcome::Abstained { reason, .. } if reason.contains("target ambiguous")),
+            "{href}: {outcome:?}"
+        );
+        assert!(agent.browser_mut().press_log().is_empty(), "{href}");
+    }
+}

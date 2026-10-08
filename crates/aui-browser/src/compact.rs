@@ -172,7 +172,10 @@ function visit(el,doc,off){
       var name=el.nodeName.toUpperCase();
       var inputType=(el.getAttribute('type')||'text').toLowerCase();
       if(name==='INPUT')rec.it=inputType;
-      if(name==='A'&&el.href)rec.hr=Array.from(String(el.href)).slice(0,500).join('');
+      // A destination only for real navigations: not `javascript:`, not `#`/`` back to this page.
+      if(name==='A'&&el.href&&/^https?:$/.test(el.protocol)&&!(el.hash===''&&el.href.split('#')[0]===location.href.split('#')[0])){
+        rec.hr=Array.from(String(el.href)).slice(0,500).join('');
+      }
       if((name==='INPUT'&&inputType!=='password'&&inputType!=='hidden'&&inputType!=='file'&&inputType!=='checkbox'&&inputType!=='radio')||name==='TEXTAREA'){
         rec.v=Array.from(String(el.value)).slice(0,200).join('');
       }

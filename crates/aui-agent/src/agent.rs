@@ -181,8 +181,17 @@ fn page_twins(manifold: &InteractionManifold, target: &RegionId, kind: ActionKin
 }
 
 /// Two links to one resolved `href`: clicking either has one consequence.
+/// Placeholder links (`#`, `javascript:`) run script, so they name nothing.
 fn same_destination(a: &InteractionRegion, b: &InteractionRegion) -> bool {
-    matches!((&a.state().href, &b.state().href), (Some(x), Some(y)) if x == y)
+    fn destination(region: &InteractionRegion) -> Option<&str> {
+        let href = region.state().href.as_deref()?;
+        let placeholder = href.ends_with('#')
+            || href
+                .get(..11)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"));
+        (!placeholder).then_some(href)
+    }
+    matches!((destination(a), destination(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// Abstains about *which* target, not about the operation.

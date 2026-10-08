@@ -143,9 +143,10 @@ fn fold_label(label: &str) -> String {
         .join(" ")
 }
 
-/// Other regions anywhere on the observed page (offscreen included) that
-/// carry `target`'s label and one of its action claims — the look-alikes a
-/// scroll moved out of view.
+/// Offscreen regions that carry `target`'s label and one of its action
+/// claims: look-alikes the policy never saw (they are not in the action
+/// space), whether the viewport or a scroll put them out of view. On-screen
+/// twins are in the menu, so choosing between them stays the policy's call.
 fn page_twins(manifold: &InteractionManifold, target: &RegionId) -> usize {
     let Some(region) = manifold.get(target) else {
         return 0;
@@ -159,7 +160,10 @@ fn page_twins(manifold: &InteractionManifold, target: &RegionId) -> usize {
         .filter(|other| other.id() != target)
         .filter(|other| {
             let flags = other.flags();
-            !flags.hidden() && !flags.disabled() && !other.rect().is_zero_area()
+            flags.offscreen()
+                && !flags.hidden()
+                && !flags.disabled()
+                && !other.rect().is_zero_area()
         })
         .filter(|other| other.actions().iter().any(|a| region.actions().contains(a)))
         .filter(|other| fold_label(other.label()) == label)
@@ -671,8 +675,8 @@ where
                 decision.kind
             )));
         }
-        // The target must be the page's only one, offscreen included: one
-        // look-alike on screen (by viewport size or by scrolling) is not a choice.
+        // No offscreen look-alike may exist: one twin on screen (by viewport
+        // size or by scrolling) is not a choice the policy could make.
         if let Some(target) = offered.target() {
             let twins = page_twins(&manifold, target);
             if twins > 0 {

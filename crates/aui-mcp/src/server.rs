@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 
 use aui_browser::{BrowserSession, CdpError, CdpTransport, PageState, WebSocketTransport};
+use aui_cdp::CdpEvent;
 use aui_core::InteractionManifold;
 use aui_guard::TicketLedger;
 use aui_observe::history::{
@@ -29,6 +30,9 @@ use crate::repeat::{LocateRepeats, QueryKey};
 
 /// Live sessions kept at once. Opening another drops the oldest key.
 pub const MAX_LIVE_SESSIONS: usize = 4;
+
+/// Buffered CDP events kept per session key; oldest drop past this.
+const MAX_BUFFERED_EVENTS: usize = 2048;
 
 pub(crate) struct Snapshot {
     pub(crate) origin: String,
@@ -51,6 +55,10 @@ pub struct Server {
     tab_binding: BTreeMap<String, String>,
     /// Session key → one-shot ticket ledger for ticketed browser inputs.
     ledgers: BTreeMap<String, TicketLedger>,
+    /// Session key → CDP events drained from transports between calls.
+    events: BTreeMap<String, Vec<CdpEvent>>,
+    /// Session key → diagnostic domains already enabled (bit0 console, bit1 network).
+    domains: BTreeMap<String, u8>,
 }
 
 impl SignedSnapshot for Snapshot {
@@ -85,6 +93,8 @@ impl Server {
             locate_repeats: LocateRepeats::default(),
             tab_binding: BTreeMap::new(),
             ledgers: BTreeMap::new(),
+            events: BTreeMap::new(),
+            domains: BTreeMap::new(),
         }
     }
 
@@ -212,6 +222,31 @@ impl Server {
     /// Put the ledger back after a ticketed input.
     pub(crate) fn keep_ledger(&mut self, key: &str, ledger: TicketLedger) {
         self.ledgers.insert(key.to_owned(), ledger);
+    }
+
+    /// Buffer events drained from a session's transport under `key`.
+    pub(crate) fn push_events(&mut self, key: &str, events: Vec<CdpEvent>) {
+        let buffer = self.events.entry(key.to_owned()).or_default();
+        buffer.extend(events);
+        if buffer.len() > MAX_BUFFERED_EVENTS {
+            let drop = buffer.len() - MAX_BUFFERED_EVENTS;
+            buffer.drain(..drop);
+        }
+    }
+
+    /// Drain all buffered events for `key`.
+    pub(crate) fn take_events(&mut self, key: &str) -> Vec<CdpEvent> {
+        self.events.remove(key).unwrap_or_default()
+    }
+
+    /// Diagnostic domains already enabled for `key` (bit0 console, bit1 network).
+    pub(crate) fn enabled_domains(&self, key: &str) -> u8 {
+        self.domains.get(key).copied().unwrap_or(0)
+    }
+
+    /// Mark a diagnostic domain bit as enabled for `key`.
+    pub(crate) fn enable_domain(&mut self, key: &str, bit: u8) {
+        *self.domains.entry(key.to_owned()).or_default() |= bit;
     }
 }
 

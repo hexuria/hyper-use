@@ -57,6 +57,8 @@ pub struct Server {
     ledgers: BTreeMap<String, TicketLedger>,
     /// Session key → CDP events drained from transports between calls.
     events: BTreeMap<String, Vec<CdpEvent>>,
+    /// Session key → CDP events dropped by the buffer cap (cumulative).
+    dropped: BTreeMap<String, u64>,
     /// Session key → diagnostic domains already enabled (bit0 console, bit1 network).
     domains: BTreeMap<String, u8>,
 }
@@ -94,6 +96,7 @@ impl Server {
             tab_binding: BTreeMap::new(),
             ledgers: BTreeMap::new(),
             events: BTreeMap::new(),
+            dropped: BTreeMap::new(),
             domains: BTreeMap::new(),
         }
     }
@@ -185,17 +188,28 @@ impl Server {
     pub(crate) fn keep_session(&mut self, url: &str, session: LiveSession) {
         if self.sessions.len() >= MAX_LIVE_SESSIONS && !self.sessions.contains_key(url) {
             let oldest = self.session_order.remove(0);
-            self.sessions.remove(&oldest);
+            self.drop_keyed_state(&oldest);
         }
         self.session_order.retain(|key| key != url);
         self.session_order.push(url.to_owned());
         self.sessions.insert(url.to_owned(), session);
     }
 
-    /// Drop a kept session without keeping a replacement.
+    /// Drop a kept session without keeping a replacement. Also clears the
+    /// key's ticket ledger, buffered events, and diagnostic-domain bits —
+    /// they describe the dropped transport and must not outlive it.
     pub(crate) fn drop_session(&mut self, url: &str) {
+        self.drop_keyed_state(url);
+    }
+
+    /// Remove `url` from the sessions map/order and every per-key state map.
+    fn drop_keyed_state(&mut self, url: &str) {
         self.sessions.remove(url);
         self.session_order.retain(|key| key != url);
+        self.ledgers.remove(url);
+        self.events.remove(url);
+        self.domains.remove(url);
+        self.dropped.remove(url);
     }
 
     /// Page-websocket url `browser_*` tools drive for `endpoint`, when bound.
@@ -231,7 +245,13 @@ impl Server {
         if buffer.len() > MAX_BUFFERED_EVENTS {
             let drop = buffer.len() - MAX_BUFFERED_EVENTS;
             buffer.drain(..drop);
+            *self.dropped.entry(key.to_owned()).or_default() += drop as u64;
         }
+    }
+
+    /// Events dropped for `key` by the buffer cap so far.
+    pub(crate) fn dropped_events(&self, key: &str) -> u64 {
+        self.dropped.get(key).copied().unwrap_or(0)
     }
 
     /// Drain all buffered events for `key`.

@@ -44,12 +44,19 @@ pub struct WebSocketTransport {
 impl WebSocketTransport {
     pub fn connect(endpoint: &str) -> Result<Self, CdpError> {
         let ws_url = resolve_websocket_url(endpoint)?;
-        Ok(Self {
+        let mut transport = Self {
             socket: connect_socket(&ws_url)?,
             next_id: 1,
             owned: None,
             events: VecDeque::new(),
-        })
+        };
+        // Match `open_tab`: trusted key/mouse input needs emulated focus or
+        // it lands on whatever Chrome happens to have focused.
+        transport.call(
+            "Emulation.setFocusEmulationEnabled",
+            &json!({"enabled": true}).to_string(),
+        )?;
+        Ok(transport)
     }
 
     fn open_tab_inner(endpoint: &str) -> Result<Self, CdpError> {
@@ -142,11 +149,6 @@ pub fn page_targets(endpoint: &str) -> Result<Vec<PageTarget>, CdpError> {
         .collect())
 }
 
-/// Page-level websocket URL for a target id on an `http://` endpoint.
-pub fn page_ws_url(endpoint: &str, target_id: &str) -> Result<String, CdpError> {
-    page_socket_url(endpoint, target_id)
-}
-
 /// One CDP call on the browser target (`Target.*`, `Browser.*` domains).
 fn browser_ws_call(endpoint: &str, method: &str, params: &str) -> Result<String, CdpError> {
     let http = http_endpoint(endpoint)?;
@@ -182,10 +184,12 @@ pub fn close_target(endpoint: &str, target_id: &str) -> Result<bool, CdpError> {
     let value: Value = serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
         message: err.to_string(),
     })?;
-    Ok(value
+    value
         .get("success")
         .and_then(Value::as_bool)
-        .unwrap_or(true))
+        .ok_or_else(|| CdpError::BadJson {
+            message: "closeTarget result missing `success`".to_owned(),
+        })
 }
 
 /// Create a page target showing `url`; returns its id and ws url.

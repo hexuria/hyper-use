@@ -12,7 +12,7 @@ pub use error::CdpError;
 pub use replay::ReplayTransport;
 pub use transport::{CdpEvent, CdpTransport};
 pub use ws::{
-    activate_target, close_target, create_target, open_tab, page_targets, page_ws_url, PageTarget,
+    activate_target, close_target, create_target, open_tab, page_targets, PageTarget,
     WebSocketTransport, DEFAULT_CDP_HTTP,
 };
 

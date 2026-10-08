@@ -12,6 +12,19 @@ fn call_waits_past_more_than_64_events_for_its_response() {
     let server = thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         let mut socket = accept(stream).unwrap();
+        // `connect` opens with Emulation.setFocusEmulationEnabled.
+        let request = match socket.read().unwrap() {
+            Message::Text(text) => serde_json::from_str::<Value>(text.as_ref()).unwrap(),
+            message => panic!("expected request text, got {message:?}"),
+        };
+        assert_eq!(request["method"], "Emulation.setFocusEmulationEnabled");
+        socket
+            .send(Message::Text(
+                json!({"id": request["id"].as_i64().unwrap(), "result": {}})
+                    .to_string()
+                    .into(),
+            ))
+            .unwrap();
         let request = match socket.read().unwrap() {
             Message::Text(text) => serde_json::from_str::<Value>(text.as_ref()).unwrap(),
             message => panic!("expected request text, got {message:?}"),

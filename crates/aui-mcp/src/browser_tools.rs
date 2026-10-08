@@ -15,9 +15,10 @@
 use serde_json::{json, Value};
 
 use aui_agent::{execute_ticketed, Input};
+use aui_browser::BrowserError;
 use aui_cdp::{activate_target, close_target, create_target, page_targets, DEFAULT_CDP_HTTP};
 use aui_core::{Action, ActionSpace, InteractionManifold, InteractionRegion, RegionId};
-use aui_guard::gate;
+use aui_guard::{consume_ticket_once, gate};
 
 use crate::error::ToolError;
 use crate::server::Server;
@@ -26,7 +27,7 @@ use crate::server::Server;
 const MAX_WAIT_SECS: u64 = 60;
 
 /// All `browser_*` tool names this module serves.
-pub const BROWSER_TOOLS: [&str; 22] = [
+pub const BROWSER_TOOLS: [&str; 37] = [
     "browser_navigate",
     "browser_new_tab",
     "browser_go_back",
@@ -39,7 +40,22 @@ pub const BROWSER_TOOLS: [&str; 22] = [
     "browser_scroll",
     "browser_scroll_to",
     "browser_click",
+    "browser_right_click",
+    "browser_middle_click",
+    "browser_double_click",
+    "browser_triple_click",
+    "browser_hover",
+    "browser_drag",
     "browser_type",
+    "browser_form_input",
+    "browser_send_key",
+    "browser_hold_key",
+    "browser_file_upload",
+    "browser_save_as_pdf",
+    "browser_get_dropdown_options",
+    "browser_select_dropdown",
+    "browser_search",
+    "browser_zoom",
     "browser_find",
     "browser_list_tabs",
     "browser_switch_tab",
@@ -69,7 +85,21 @@ pub(crate) fn call(server: &mut Server, name: &str, arguments: &Value) -> Result
         "browser_scroll" => scroll(server, arguments),
         "browser_scroll_to" => scroll_to(server, arguments),
         "browser_click" => click(server, arguments),
-        "browser_type" => type_text(server, arguments),
+        "browser_right_click" => gated_press(server, arguments, "right", 1),
+        "browser_middle_click" => gated_press(server, arguments, "middle", 1),
+        "browser_double_click" => gated_press(server, arguments, "left", 2),
+        "browser_triple_click" => gated_press(server, arguments, "left", 3),
+        "browser_hover" => hover(server, arguments),
+        "browser_drag" => drag(server, arguments),
+        "browser_type" | "browser_form_input" => type_text(server, arguments),
+        "browser_send_key" => send_key(server, arguments, 0),
+        "browser_hold_key" => hold_key(server, arguments),
+        "browser_file_upload" => file_upload(server, arguments),
+        "browser_save_as_pdf" => save_as_pdf(server, arguments),
+        "browser_get_dropdown_options" => get_dropdown_options(server, arguments),
+        "browser_select_dropdown" => gated_input(server, arguments, "select"),
+        "browser_search" => search(server, arguments),
+        "browser_zoom" => zoom(server, arguments),
         "browser_find" => find(server, arguments),
         "browser_list_tabs" => list_tabs(arguments),
         "browser_switch_tab" => switch_tab(server, arguments),
@@ -359,6 +389,7 @@ fn gated_input(
     let input = match input_kind {
         "click" => Input::Click,
         "type" => Input::Type(req_str(arguments, "text")?.to_owned()),
+        "select" => Input::Select(req_str(arguments, "text")?.to_owned()),
         other => return Err(ToolError::UnknownTool(other.to_owned())),
     };
     let action = match input {
@@ -408,6 +439,273 @@ fn click(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
 
 fn type_text(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
     gated_input(server, arguments, "type")
+}
+
+/// Gate → ticket → `consume_ticket_once` → `press` on the fresh manifold.
+/// Same consume-before-press order as `execute_ticketed` for inputs the
+/// executor does not carry (right/middle/double/triple click, file upload).
+fn gated_press_at(
+    server: &mut Server,
+    arguments: &Value,
+    mut press: impl FnMut(&mut crate::server::LiveSession, &RegionId) -> Result<(), BrowserError>,
+) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let index = opt_usize(arguments, "index")?
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `index`".into()))?;
+    if index == 0 {
+        return Err(ToolError::InvalidArguments("`index` is 1-based".into()));
+    }
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = (|| {
+        let focused = session.page().and_then(|p| p.focused().cloned());
+        let manifold = session.observe().map_err(browser_err)?.clone();
+        let order = interactive_index(&manifold);
+        let region_id = order.get(index - 1).cloned().ok_or_else(|| {
+            ToolError::InvalidArguments(format!(
+                "no interactive element at index {index} ({} indexed)",
+                order.len()
+            ))
+        })?;
+        let ticket = gate(
+            &manifold,
+            &region_id,
+            Action::Click,
+            focused.clone(),
+            manifold.captured_at_ms(),
+        )
+        .map_err(|reason| ToolError::TicketInvalid(reason.to_string()))?;
+        let mut ledger = server.take_ledger(&key);
+        let result = consume_ticket_once(
+            &mut ledger,
+            &ticket,
+            &manifold,
+            focused,
+            |target: &RegionId, _action: Action| press(&mut session, target),
+        );
+        server.keep_ledger(&key, ledger);
+        result
+            .map(|_| json!({"acted": true, "index": index}))
+            .map_err(|err| ToolError::TicketInvalid(err.to_string()))
+    })();
+    keep(server, &key, session);
+    outcome
+}
+
+fn gated_press(
+    server: &mut Server,
+    arguments: &Value,
+    button: &'static str,
+    count: u32,
+) -> Result<Value, ToolError> {
+    gated_press_at(server, arguments, |session, target| {
+        session.button_click(target, button, count).map(|_| ())
+    })
+}
+
+/// Hover resolves the index on the fresh manifold and moves the pointer —
+/// no press, so no ticket (it reveals state but commits no mutation).
+fn hover(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let index = opt_usize(arguments, "index")?
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `index`".into()))?;
+    if index == 0 {
+        return Err(ToolError::InvalidArguments("`index` is 1-based".into()));
+    }
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = (|| {
+        let manifold = session.observe().map_err(browser_err)?.clone();
+        let order = interactive_index(&manifold);
+        let region_id = order.get(index - 1).cloned().ok_or_else(|| {
+            ToolError::InvalidArguments(format!(
+                "no interactive element at index {index} ({} indexed)",
+                order.len()
+            ))
+        })?;
+        session
+            .hover(&region_id)
+            .map(|_| json!({"hovered": index}))
+            .map_err(browser_err)
+    })();
+    keep(server, &key, session);
+    outcome
+}
+
+/// Element-to-element drag by index (`from_index` → `to_index`).
+fn drag(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let from = opt_usize(arguments, "from_index")?
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `from_index`".into()))?;
+    let to = opt_usize(arguments, "to_index")?
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `to_index`".into()))?;
+    if from == 0 || to == 0 {
+        return Err(ToolError::InvalidArguments("indexes are 1-based".into()));
+    }
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = (|| {
+        let manifold = session.observe().map_err(browser_err)?.clone();
+        let order = interactive_index(&manifold);
+        let resolve = |i: usize| -> Result<RegionId, ToolError> {
+            order.get(i - 1).cloned().ok_or_else(|| {
+                ToolError::InvalidArguments(format!(
+                    "no interactive element at index {i} ({} indexed)",
+                    order.len()
+                ))
+            })
+        };
+        let from_id = resolve(from)?;
+        let to_id = resolve(to)?;
+        session
+            .drag(&from_id, &to_id)
+            .map(|_| json!({"dragged": {"from": from, "to": to}}))
+            .map_err(browser_err)
+    })();
+    keep(server, &key, session);
+    outcome
+}
+
+fn send_key(server: &mut Server, arguments: &Value, hold_ms: u64) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let key_name = req_str(arguments, "key")?.to_owned();
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = session
+        .key_event(&key_name, hold_ms)
+        .map(|_| json!({"key": key_name}))
+        .map_err(browser_err);
+    keep(server, &key, session);
+    outcome
+}
+
+fn hold_key(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let hold_ms = opt_usize(arguments, "hold_ms")?
+        .map(|ms| ms as u64)
+        .or_else(|| {
+            opt_f64(arguments, "seconds")
+                .ok()
+                .flatten()
+                .map(|s| (s * 1000.0) as u64)
+        })
+        .unwrap_or(500);
+    send_key(server, arguments, hold_ms)
+}
+
+fn file_upload(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let mut files: Vec<String> = Vec::new();
+    if let Some(path) = opt_str(arguments, "path")? {
+        files.push(path.to_owned());
+    }
+    if let Some(Value::Array(paths)) = arguments.get("paths") {
+        for path in paths {
+            match path {
+                Value::String(s) => files.push(s.clone()),
+                other => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "`paths` entries must be strings, got {other}"
+                    )))
+                }
+            }
+        }
+    }
+    if files.is_empty() {
+        return Err(ToolError::InvalidArguments(
+            "missing required `path` or `paths`".into(),
+        ));
+    }
+    gated_press_at(server, arguments, move |session, target| {
+        session.set_files(target, &files)
+    })
+}
+
+fn save_as_pdf(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let landscape = opt_bool(arguments, "landscape")?.unwrap_or(false);
+    let print_background = opt_bool(arguments, "print_background")?.unwrap_or(false);
+    let scale = opt_f64(arguments, "scale")?.unwrap_or(1.0);
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = session
+        .save_pdf(landscape, print_background, scale)
+        .map(|data| json!({"data": data}))
+        .map_err(browser_err);
+    keep(server, &key, session);
+    outcome
+}
+
+fn get_dropdown_options(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let index = opt_usize(arguments, "index")?
+        .ok_or_else(|| ToolError::InvalidArguments("missing required `index`".into()))?;
+    if index == 0 {
+        return Err(ToolError::InvalidArguments("`index` is 1-based".into()));
+    }
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = (|| {
+        let manifold = session.observe().map_err(browser_err)?.clone();
+        let order = interactive_index(&manifold);
+        let region_id = order.get(index - 1).cloned().ok_or_else(|| {
+            ToolError::InvalidArguments(format!(
+                "no interactive element at index {index} ({} indexed)",
+                order.len()
+            ))
+        })?;
+        let region = manifold.get(&region_id).ok_or_else(|| {
+            ToolError::InvalidArguments(format!("element {index} resolved to a stale region"))
+        })?;
+        let state = region.state();
+        Ok::<Value, ToolError>(json!({
+            "index": index,
+            "options": state.options,
+            "selected": state.selected,
+        }))
+    })();
+    keep(server, &key, session);
+    outcome
+}
+
+fn search(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let query = req_str(arguments, "query")?;
+    let encoded: String = query
+        .bytes()
+        .flat_map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![b as char]
+            }
+            b' ' => vec!['+'],
+            other => format!("%{other:02X}").chars().collect(),
+        })
+        .collect();
+    let url = format!("https://www.google.com/search?q={encoded}");
+    let args = json!({"url": url, "cdp": opt_str(arguments, "cdp")?});
+    navigate(server, &args)
+}
+
+fn zoom(server: &mut Server, arguments: &Value) -> Result<Value, ToolError> {
+    let endpoint = endpoint_of(arguments)?;
+    let factor = match opt_f64(arguments, "factor")? {
+        Some(f) => f,
+        None => match opt_str(arguments, "direction")?.unwrap_or("reset") {
+            "in" => 1.25,
+            "out" => 0.8,
+            "reset" => 1.0,
+            other => {
+                return Err(ToolError::InvalidArguments(format!(
+                    "`direction` must be in|out|reset, got `{other}`"
+                )))
+            }
+        },
+    };
+    let key = session_key(server, &endpoint);
+    let mut session = take(server, &key)?;
+    let outcome = session
+        .zoom(factor)
+        .map(|_| json!({"zoomed": factor}))
+        .map_err(browser_err);
+    keep(server, &key, session);
+    outcome
 }
 
 fn list_tabs(arguments: &Value) -> Result<Value, ToolError> {
@@ -844,6 +1142,75 @@ pub(crate) fn spec(name: &str) -> (String, serde_json::Map<String, Value>, Vec<&
         }
         "browser_read_network" => {
             "Drain network entries buffered since the last read, aggregated by requestId; enables Network lazily."
+        }
+        "browser_right_click" | "browser_middle_click" | "browser_double_click"
+        | "browser_triple_click" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            required.push("index");
+            "Click the element at a browser_get_state index with the named button/count, through gate + one-shot ticket + consume-before-press."
+        }
+        "browser_hover" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            required.push("index");
+            "Move the pointer to the element at a browser_get_state index (no press)."
+        }
+        "browser_drag" => {
+            props.insert("from_index".into(), json!({"type": "integer"}));
+            props.insert("to_index".into(), json!({"type": "integer"}));
+            required.extend(["from_index", "to_index"]);
+            "Press at one element's center, drag to another's, release — both by index."
+        }
+        "browser_form_input" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            props.insert("text".into(), json!({"type": "string"}));
+            required.extend(["index", "text"]);
+            "Alias of browser_type (browser-use form_input name)."
+        }
+        "browser_send_key" => {
+            props.insert("key".into(), json!({"type": "string"}));
+            required.push("key");
+            "One key event (Enter, Tab, Escape, arrows, letters...) via Input.dispatchKeyEvent."
+        }
+        "browser_hold_key" => {
+            props.insert("key".into(), json!({"type": "string"}));
+            props.insert("seconds".into(), json!({"type": "number"}));
+            props.insert("hold_ms".into(), json!({"type": "integer"}));
+            required.push("key");
+            "Hold a key for a duration (seconds or hold_ms, capped 10s)."
+        }
+        "browser_file_upload" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            props.insert("path".into(), json!({"type": "string"}));
+            props.insert("paths".into(), json!({"type": "array", "items": {"type": "string"}}));
+            required.push("index");
+            "Set files on the file input at a browser_get_state index (DOM.setFileInputFiles; paths resolved by the Chrome process)."
+        }
+        "browser_save_as_pdf" => {
+            props.insert("landscape".into(), json!({"type": "boolean"}));
+            props.insert("print_background".into(), json!({"type": "boolean"}));
+            props.insert("scale".into(), json!({"type": "number"}));
+            "Page.printToPDF → base64 data of the current tab."
+        }
+        "browser_get_dropdown_options" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            required.push("index");
+            "Observed enabled options (+ selected labels) of the <select> at a browser_get_state index."
+        }
+        "browser_select_dropdown" => {
+            props.insert("index".into(), json!({"type": "integer"}));
+            props.insert("text".into(), json!({"type": "string"}));
+            required.extend(["index", "text"]);
+            "Select exactly one option of the <select> at an index by label/value, through the ticketed executor."
+        }
+        "browser_search" => {
+            props.insert("query".into(), json!({"type": "string"}));
+            required.push("query");
+            "Navigate the current tab to a Google results URL for query."
+        }
+        "browser_zoom" => {
+            props.insert("factor".into(), json!({"type": "number"}));
+            props.insert("direction".into(), json!({"type": "string", "enum": ["in", "out", "reset"]}));
+            "Set page zoom: explicit factor (0,10] or direction in(1.25)/out(0.8)/reset(1.0)."
         }
         other => return (other.to_owned(), props, required),
     };

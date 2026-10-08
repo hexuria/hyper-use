@@ -55,7 +55,13 @@ fn stdio_server_lists_tools_and_locates() {
     );
     assert!(lines[1].contains(r#""name":"observe""#), "{}", lines[1]);
     assert!(lines[1].contains(r#""name":"verify""#), "{}", lines[1]);
-    assert!(!lines[1].contains("navigate"), "{}", lines[1]);
+    // There is no bare `navigate` tool; `browser_navigate` is the host surface.
+    assert!(!lines[1].contains(r#""name":"navigate""#), "{}", lines[1]);
+    assert!(
+        lines[1].contains(r#""name":"browser_navigate""#),
+        "{}",
+        lines[1]
+    );
     assert!(lines[2].contains("n100"), "{}", lines[2]);
     assert!(lines[2].contains("weighted"), "{}", lines[2]);
     assert!(lines[2].contains("benchmark"), "{}", lines[2]);

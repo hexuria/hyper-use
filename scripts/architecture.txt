@@ -34,7 +34,7 @@ aui-policy: aui-core
     | tokio axum sqlx reqwest hyper typesafe-sdk
 aui-agent: aui-core aui-browser aui-guard aui-observe aui-policy aui-protocol
     | tokio axum sqlx reqwest hyper typesafe-sdk
-aui-mcp: aui-protocol aui-core aui-resonance aui-browser aui-guard aui-observe
+aui-mcp: aui-protocol aui-core aui-resonance aui-browser aui-guard aui-observe aui-agent aui-cdp
     | tokio axum sqlx reqwest hyper typesafe-sdk
 aui-cli: aui-core aui-resonance aui-browser aui-guard aui-observe aui-mcp aui-protocol aui-agent aui-policy aui-dojo
     | axum sqlx

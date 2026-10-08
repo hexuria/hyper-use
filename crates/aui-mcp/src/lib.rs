@@ -2,7 +2,12 @@
 //!
 //! Product tools: observe, guard, verify. Locate, inspect, and diff remain as
 //! transitional helpers. `act` is accepted as a deprecated alias of `guard` and
-//! never clicks. There is no navigate tool.
+//! never clicks.
+//!
+//! `browser_*` tools are the browser-use-compatible host surface (navigate,
+//! get_state, click, type, scroll, screenshot, tabs). Target-bound input still
+//! goes through gate → ticket → `execute_ticketed`, so a stale page refuses
+//! instead of clicking the wrong element; page-level calls are plain CDP.
 
 #![forbid(unsafe_code)]
 
@@ -30,7 +35,7 @@ pub const TOOL_DIFF: &str = "diff";
 pub const TOOL_VERIFY: &str = "verify";
 
 #[allow(deprecated)]
-pub const TOOLS: [&str; 7] = [
+pub const TOOLS: [&str; 21] = [
     TOOL_OBSERVE,
     TOOL_LOCATE,
     TOOL_INSPECT,
@@ -38,9 +43,26 @@ pub const TOOLS: [&str; 7] = [
     TOOL_ACT,
     TOOL_DIFF,
     TOOL_VERIFY,
+    "browser_navigate",
+    "browser_new_tab",
+    "browser_go_back",
+    "browser_wait",
+    "browser_get_state",
+    "browser_get_html",
+    "browser_get_text",
+    "browser_screenshot",
+    "browser_scroll",
+    "browser_click",
+    "browser_type",
+    "browser_list_tabs",
+    "browser_switch_tab",
+    "browser_close_tab",
 ];
 
 pub const PRODUCT_TOOLS: [&str; 3] = [TOOL_OBSERVE, TOOL_GUARD, TOOL_VERIFY];
+
+mod browser_tools;
+pub use browser_tools::BROWSER_TOOLS;
 
 /// Tool name for a legacy protocol phase.
 pub fn tool_for_phase(phase: aui_protocol::LoopPhase) -> &'static str {
@@ -68,6 +90,12 @@ mod tests {
         }
         assert!(!PRODUCT_TOOLS.contains(&"navigate"));
         assert!(!PRODUCT_TOOLS.contains(&"act"));
+        // The `browser_*` host surface sits beside the firewall tools; it
+        // never enters PRODUCT_TOOLS.
+        for name in crate::browser_tools::BROWSER_TOOLS {
+            assert!(TOOLS.contains(&name));
+            assert!(!PRODUCT_TOOLS.contains(&name));
+        }
     }
 
     #[test]

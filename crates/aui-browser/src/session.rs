@@ -552,6 +552,146 @@ impl<T: CdpTransport> BrowserSession<T> {
             .map(str::to_owned))
     }
 
+    /// `document.documentElement.outerHTML`. The host surface's get_html.
+    pub fn outer_html(&mut self) -> Result<String, BrowserError> {
+        self.eval_string("document.documentElement.outerHTML")
+    }
+
+    /// `document.body.innerText` — visible page text, no markup.
+    pub fn page_text(&mut self) -> Result<String, BrowserError> {
+        self.eval_string("document.body ? document.body.innerText : ''")
+    }
+
+    /// PNG screenshot of the viewport, base64 (`Page.captureScreenshot`).
+    pub fn screenshot_png(&mut self) -> Result<String, BrowserError> {
+        let body = self.call(
+            "Page.captureScreenshot",
+            &json!({"format": "png"}).to_string(),
+        )?;
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        value
+            .get("data")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                BrowserError::Cdp(CdpError::Protocol {
+                    message: "captureScreenshot returned no data".into(),
+                })
+            })
+    }
+
+    /// Back one navigation-history entry. Errors when there is no entry
+    /// behind the current one. The stored observation becomes stale.
+    pub fn go_back(&mut self) -> Result<(), BrowserError> {
+        let body = self.call("Page.getNavigationHistory", "{}")?;
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        let current = value
+            .get("currentIndex")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let entries = value
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let previous = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(serde_json::Value::as_i64) == Some(current - 1))
+            .or_else(|| {
+                entries.iter().rfind(|entry| {
+                    entry
+                        .get("id")
+                        .and_then(serde_json::Value::as_i64)
+                        .is_some_and(|id| id < current)
+                })
+            })
+            .ok_or_else(|| BrowserError::Navigation("no earlier history entry".into()))?;
+        let entry_id = previous
+            .get("id")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(current - 1);
+        self.stale = true;
+        self.call(
+            "Page.navigateToHistoryEntry",
+            &json!({"entryId": entry_id}).to_string(),
+        )?;
+        Ok(())
+    }
+
+    /// Evaluate JavaScript `expression` in the page (`Runtime.evaluate`,
+    /// `returnByValue` + `awaitPromise`). Returns the result value; a thrown
+    /// exception is an error. Marks the observation stale — arbitrary script
+    /// may mutate the page. The host surface's javascript_exec.
+    pub fn evaluate(&mut self, expression: &str) -> Result<serde_json::Value, BrowserError> {
+        let params = json!({
+            "expression": expression,
+            "returnByValue": true,
+            "awaitPromise": true
+        })
+        .to_string();
+        let body = self.call("Runtime.evaluate", &params)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        if value.get("exceptionDetails").is_some() {
+            return Err(BrowserError::InputRejected(thrown_message(&body)));
+        }
+        self.stale = true;
+        Ok(value
+            .get("result")
+            .and_then(|r| r.get("value").cloned())
+            .unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Scroll `pages` viewport heights (0.5 = half page, 10 ≈ to the end)
+    /// down or up. The host surface's scroll tool.
+    pub fn scroll_pages(&mut self, down: bool, pages: f64) -> Result<(), BrowserError> {
+        let viewport = self
+            .manifold
+            .as_ref()
+            .ok_or(BrowserError::NotObserved)?
+            .viewport();
+        let height = viewport.height();
+        let delta = (height * SCROLL_VIEWPORT_FRACTION * pages.max(0.05)).round();
+        let delta_y = if down { delta } else { -delta };
+        self.stale = true;
+        let params = json!({
+            "type": "mouseWheel",
+            "x": (viewport.width() / 2.0).round(),
+            "y": (height / 2.0).round(),
+            "deltaX": 0,
+            "deltaY": delta_y
+        })
+        .to_string();
+        self.call("Input.dispatchMouseEvent", &params)?;
+        Ok(())
+    }
+
+    fn eval_string(&mut self, expression: &str) -> Result<String, BrowserError> {
+        let params = json!({"expression": expression, "returnByValue": true}).to_string();
+        let body = self.call("Runtime.evaluate", &params)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&body).map_err(|err| CdpError::BadJson {
+                message: err.to_string(),
+            })?;
+        if value.get("exceptionDetails").is_some() {
+            return Err(BrowserError::InputRejected(thrown_message(&body)));
+        }
+        Ok(value
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
+    }
+
     /// Format `<o|d><count>:<texts joined by U+001F>`; `o` is the owned popup, `d` document-wide.
     pub fn autocomplete_options_signature(
         &mut self,
